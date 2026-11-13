@@ -115,10 +115,12 @@ Key files in the engine, in reading order: `format.ts` (the on-disk format),
 
 Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org).
 Pull requests are squash-merged and their titles are checked, because the
-title becomes the commit. On each push to `main`, release-please keeps a
-release pull request up to date; merging it tags the release and publishes
-`oi-agent` to npm with provenance, using the `NPM_TOKEN` repository secret. `feat:` bumps the minor version, `fix:` the
-patch, and `feat!:` or a `BREAKING CHANGE:` footer the major.
+title becomes the commit. Releases use [Changesets](https://github.com/changesets/changesets):
+each pull request that changes something users see adds a `.changeset/*.md`
+file (`pnpm changeset`) naming the bump and a release note. On each push to
+`main`, a "version packages" pull request collects them into versions and
+`CHANGELOG.md`; merging it publishes `oi-agent` to npm with provenance,
+using the `NPM_TOKEN` repository secret, and tags a GitHub release.
 
 ```sh
 pnpm dev        # build and link the `oi` command

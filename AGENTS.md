@@ -24,8 +24,15 @@ design. This file is what you would otherwise have to rediscover.
 ## Commits and releases
 
 - Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
-  `ci:`, `chore:`). release-please reads them to version and publish the
-  `oi-agent` npm package; see `.github/workflows/release.yml`.
+  `ci:`, `chore:`). PR titles are checked, since PRs are squash-merged.
+- Every PR gets a changeset unless Tony says otherwise: a
+  `.changeset/<name>.md` file naming the package and bump
+  (`"oi-agent": minor`) above a release note written for users. Changesets
+  turns them into the version, the CHANGELOG and the npm release; see
+  `.github/workflows/release.yml`. Write it by hand (`pnpm changeset` is
+  interactive). Before 1.0, use `minor` for features and breaking changes and
+  `patch` for fixes. A PR with nothing user-facing (CI, internal refactors,
+  tests) gets an empty one: `pnpm changeset --empty`.
 - Only the CLI is published, as one bundled file. The engine is private and
   bundled into it, so runtime dependencies belong to the engine package and
   the CLI package has none.

@@ -1,63 +1,52 @@
 name: Release
 
-# On every push to main, release-please opens or updates a release pull
-# request from the Conventional Commits since the last release. Merging that
-# pull request tags the release, and the publish job sends it to npm.
+# On every push to main, Changesets either opens or updates a "chore: version
+# packages" pull request from the pending .changeset/*.md files, or, when there
+# are none left (that pull request was just merged), publishes any package
+# whose version is not on npm yet, tags it and creates a GitHub release.
+# Running the workflow by hand retries a failed publish: versions already on
+# npm are skipped.
 on:
   push:
     branches: [main]
-  # Publish an existing release tag again, for example after a failed publish.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to publish, for example v0.1.0
-        required: true
-        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  release-please:
-    name: Release pull request
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-    steps:
-      - id: release
-        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-
-  publish:
-    name: Publish to npm
-    needs: release-please
-    # Runs after a release is created, or on its own when started by hand.
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true')
+  release:
+    name: Version or publish
     runs-on: ubuntu-latest
     environment: npm
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
       # Lets npm attach a provenance statement tying the package to this run.
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+          fetch-depth: 0
       - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: .node-version
           registry-url: https://registry.npmjs.org
       - name: Check and test
         run: vp check && vp test run
-      - name: Pack
-        # pnpm builds the tarball (running the build) and resolves workspace versions.
-        run: pnpm pack --pack-destination "$RUNNER_TEMP/pkg"
-        working-directory: packages/cli
-      - name: Publish
-        run: npm publish "$RUNNER_TEMP"/pkg/*.tgz --provenance --access public
+      - uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
+        with:
+          version: pnpm changeset version
+          # pnpm publish runs the CLI's prepack (build, README, LICENSE) and
+          # resolves workspace versions; publishConfig turns on provenance.
+          publish: pnpm changeset publish
+          commit: "chore: version packages"
+          title: "chore: version packages"
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
