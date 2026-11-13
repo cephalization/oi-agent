@@ -9,7 +9,9 @@
     "oi": "node packages/cli/src/main.ts",
     "check": "vp check",
     "fix": "vp check --fix",
-    "test": "vp test run"
+    "test": "vp test run",
+    "dev": "node scripts/dev.ts",
+    "build": "pnpm --filter @oi-agent/cli exec vp pack"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.93.0",

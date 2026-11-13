@@ -16,8 +16,13 @@ Requires Node 26+, pnpm, and an Anthropic API key.
 
 ```sh
 pnpm install
-bin/oi                     # first run walks you through setup, then starts a session
+pnpm dev                   # builds the CLI and links `oi` into ~/.local/bin
+oi                         # first run walks you through setup, then starts a session
 ```
+
+`pnpm dev` bundles the CLI into one file and symlinks it onto your PATH; run
+it again after changing the code. `bin/oi` runs the TypeScript sources
+directly without building.
 
 Setup asks for your name, an Anthropic API key, a model, reasoning effort,
 whether tools need approval, an optional Phoenix server and where sessions
@@ -90,6 +95,7 @@ Key files in the engine, in reading order: `format.ts` (the on-disk format),
 ## Development
 
 ```sh
+pnpm dev        # build and link the `oi` command
 pnpm check      # format, lint and type-check (Vite+)
 pnpm fix        # same, applying fixes
 pnpm test       # Vitest

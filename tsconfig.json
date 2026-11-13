@@ -14,5 +14,12 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["packages/*/src", "packages/*/test", "vite.config.ts"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "packages/*/bench",
+    "packages/*/vite.config.ts",
+    "scripts",
+    "vite.config.ts"
+  ]
 }
