@@ -137,6 +137,11 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string) => {
     if (tool.mutates) {
       const approver = yield* Approver
 
+      // On disk at once, so anyone reading the session (a viewer, a test) can
+      // tell a call waiting for a decision from one that is running.
+      span.patchMetadata({ awaiting_approval: true })
+      span.flush()
+
       const decision = yield* approver.decide({
         tool: tool.name,
         input: use.input,
