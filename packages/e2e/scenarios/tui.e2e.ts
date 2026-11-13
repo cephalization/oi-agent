@@ -5,6 +5,7 @@
  */
 import { describe, expect } from "vite-plus/test"
 import { scenario } from "../src/scenario.ts"
+import { awaitApproval, callBash } from "../src/steps.ts"
 
 const PROMPT = /^›\s*$/m
 
@@ -32,19 +33,16 @@ describe("interactive", () => {
     const term = await s.tui()
 
     await term.waitFor(PROMPT)
-    // Models tend to ask in prose first; say that oi does the asking.
-    await term.line(
-      "Call the bash tool now with the command `echo approved-run`. Don't ask me first: oi asks me itself.",
-    )
-    await term.waitFor(/Allow bash/)
+    await term.line(callBash("echo approved-run"))
+    await awaitApproval(s, term, "echo approved-run")
     await term.key("y")
 
     const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
 
     await s.spans.settledTurns(session, 1)
 
-    await term.line("Now call the bash tool with `echo denied-run`, without asking me first.")
-    await term.waitFor(/Allow bash[\s\S]*denied-run/)
+    await term.line(callBash("echo denied-run"))
+    await awaitApproval(s, term, "echo denied-run")
     await term.key("n")
     await s.spans.settledTurns(session, 2)
 
