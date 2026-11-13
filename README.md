@@ -35,7 +35,8 @@ keychain. Run `oi setup` to change them.
 Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
 `OI_AGENT_HOME`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. `ANTHROPIC_BASE_URL` and
+`OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
 
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |
@@ -175,5 +176,6 @@ pnpm dev        # build and link the `oi` command
 pnpm check      # format, lint and type-check (Vite+)
 pnpm fix        # same, applying fixes
 pnpm test       # Vitest
+pnpm e2e        # end-to-end scenarios against the real CLI (packages/e2e)
 node packages/engine/bench/resume.ts 100 4000   # disk and resume cost
 ```
