@@ -6,7 +6,8 @@
 import { OI, readMetadata, stringAttr } from "@oi-agent/engine"
 import { afterAll, describe, expect } from "vite-plus/test"
 import { type Decide, fakeSystemOne, type FakeServer } from "../src/fakes.ts"
-import { MODELS, type Scenario, scenario } from "../src/scenario.ts"
+import { type Scenario, scenario } from "../src/scenario.ts"
+import { awaitApproval, callBash } from "../src/steps.ts"
 
 /** Safe unless the state mentions `rm -rf`. */
 const decide: Decide = (question, state) => {
@@ -23,12 +24,7 @@ const decide: Decide = (question, state) => {
 const withDecider = (server: FakeServer) => ({
   approvals: "auto" as const,
   config: new Map([["decision", { kind: "systemone", base_url: server.url, model: "jev-latest" }]]),
-  env: new Map([
-    ["TYPESAFE_API_KEY", "fake-typesafe-key"],
-    // Until `approvals: "auto"` is valid, the CLI ignores the whole config
-    // file; pin the model so that never means running on the default one.
-    ["OI_AGENT_MODEL", MODELS.main],
-  ]),
+  env: new Map([["TYPESAFE_API_KEY", "fake-typesafe-key"]]),
 })
 
 // Scenario options are fixed when the test is declared, but the fake's port
@@ -48,9 +44,7 @@ describe("decision model", () => {
       const term = await s.tui()
 
       await term.waitFor(/›/)
-      await term.line(
-        "Call the bash tool now with `echo auto-approved`, without asking me first, and show the output.",
-      )
+      await term.line(callBash("echo auto-approved"))
 
       const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
 
@@ -85,10 +79,8 @@ describe("decision model", () => {
       const term = await s.tui()
 
       await term.waitFor(/›/)
-      await term.line(
-        "Call the bash tool now with `rm -rf ~/oi-e2e-does-not-exist`, without asking me first.",
-      )
-      await term.waitFor(/Allow bash/)
+      await term.line(callBash("rm -rf ~/oi-e2e-does-not-exist"))
+      await awaitApproval(s, term, "rm -rf ~/oi-e2e-does-not-exist")
       await term.key("n")
 
       const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
@@ -108,14 +100,13 @@ describe("decision model", () => {
       pending: 12,
       approvals: "auto",
       config: withDecider(server).config,
-      env: new Map([["OI_AGENT_MODEL", MODELS.main]]),
     },
     async (s) => {
       const term = await s.tui()
 
       await term.waitFor(/›/)
-      await term.line("Call the bash tool now with `echo needs-a-human`, without asking me first.")
-      await term.waitFor(/Allow bash/)
+      await term.line(callBash("echo needs-a-human"))
+      await awaitApproval(s, term, "echo needs-a-human")
       await term.key("y")
 
       const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
