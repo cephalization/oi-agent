@@ -75,6 +75,7 @@ a side effect of tracing.
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
 | Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
+| Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
 | The terminal interface                           | `source/cli/src/tui/`                                                |
 | Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                     |
@@ -110,6 +111,24 @@ These work best on the session you are in, because the evidence is right there.
   `contextFor` reading that session's latest `LLM` span, exactly as for the
   next step of a running turn. `/resume` lists sessions from their root spans
   (`source/cli/src/sessions.ts`) and hides ones with no turns.
+- **"Can I resume from Phoenix?"** Yes, because the raw request and response
+  bodies the fold replays reach Phoenix byte for byte. `oi resume <id or URL>`
+  (`source/engine/src/remote/`) reads a session's spans and annotations back
+  through Phoenix's REST API and writes them to disk as span files; from
+  then on it is an ordinary local session. Phoenix changes three things on
+  the way: it splits JSON-string attributes like `metadata` into dotted keys
+  (re-nested on import), rounds times to the microsecond (so the store
+  matches spans by id, not file name), and gives annotations its own ids
+  (the exporter sends the local id in annotation metadata to restore it). A
+  trace URL continues from that turn by passing it as `previous`, which
+  forks the session. Each turn's root span records its workspace (directory,
+  git remote, commit, dirty), so a resume can say how the checkout differs.
+- **"What does keeping a session only in Phoenix do?"** Tab in the `/resume`
+  list calls `moveToPhoenix` (`source/engine/src/remote/storage.ts`): send
+  anything unsent, query Phoenix until it has every span and annotation,
+  then delete the folder and leave a marker in `<home>/remote/`, outside the
+  session tree. Opening it imports it again; leaving moves it back. The fold
+  never reads Phoenix directly: a session is always run from local files.
 - **"What happens when I switch model or effort mid-session?"** `/model` and
   Shift+Tab call `Engine.configure` (`source/engine/src/engine.ts`), which
   builds a new model for the next turn; nothing stored changes. Each `LLM`

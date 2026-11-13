@@ -24,8 +24,9 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
-import { ago, summarizeSessions, type SessionSummary } from "../sessions.ts"
-import { clip, control, style, width } from "./ansi.ts"
+import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
+import type { Sessions } from "../storage.ts"
+import { clip, control, style, width, wrap } from "./ansi.ts"
 import {
   accept,
   type Command,
@@ -57,6 +58,12 @@ export interface AppOptions {
   readonly models?: (() => ReadonlyArray<ModelOption>) | undefined
   /** Confirms a model id the list does not include. Resolves to its display name. */
   readonly checkModel?: ((id: string) => Promise<string>) | undefined
+  /** Sessions on disk and in Phoenix, for `/resume`. Without it, only those on disk. */
+  readonly sessions?: Sessions | undefined
+  /** A turn to continue from instead of the latest one, for the first prompt only. */
+  readonly from?: string | undefined
+  /** Shown under the banner when the session opens. */
+  readonly notes?: ReadonlyArray<string> | undefined
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -95,11 +102,18 @@ class App {
   private dismissed: string | undefined
   /** Read once per menu opening: listing sessions reads every root span. */
   private sessions: ReadonlyArray<SessionSummary> | undefined
+  /** Phoenix is being asked for its sessions. */
+  private listing = false
+  /** A session is moving between this disk and Phoenix. */
+  private moving = false
+  /** The turn the next prompt continues from, when not the latest. */
+  private from: string | undefined
   /** Ends the app. With a session id, the caller should open that session next. */
   private done: (next?: string) => void = () => undefined
 
   constructor(options: AppOptions) {
     this.options = options
+    this.from = options.from
     this.transcript = new Transcript(this.screen, options.user)
   }
 
@@ -110,25 +124,72 @@ class App {
     return this.options.engine === undefined ? COMMANDS.filter((command) => !command.hostOnly) : COMMANDS
   }
 
+  private listSessions(): ReadonlyArray<SessionSummary> {
+    const { sessions, store } = this.options
+
+    if (this.sessions !== undefined) return this.sessions
+
+    this.sessions = sessions?.all() ?? summarizeSessions(store)
+
+    // Phoenix answers later; the menu fills in when it does.
+    if (sessions?.connected === true && !this.listing) {
+      this.listing = true
+      void sessions.refresh().then((error) => {
+        this.listing = false
+
+        if (error !== undefined) this.notice = `Could not list Phoenix sessions: ${error}`
+
+        if (this.sessions !== undefined) this.sessions = sessions.all()
+
+        this.draw()
+      })
+    }
+
+    return this.sessions
+  }
+
+  /** Sessions the picker offers, in the order it shows them. */
+  private pickable(): Array<SessionSummary> {
+    // Sessions with no turns are launches that never sent a prompt.
+    return this.listSessions().filter((session) => session.id !== this.options.sessionId && session.turns > 0)
+  }
+
   private sessionSuggestions(): Array<Suggestion> {
     const here = this.cwd()
 
-    this.sessions ??= summarizeSessions(this.options.store)
+    return this.pickable().map((session) => {
+      const where = session.cwd === "" || session.cwd === here ? [] : [session.cwd.replace(homedir(), "~")]
+      const turns = `${session.turns} turn${session.turns === 1 ? "" : "s"}`
+      const kept = session.storage === "phoenix" ? ["in Phoenix"] : []
 
-    // Sessions with no turns are launches that never sent a prompt.
-    return this.sessions
-      .filter((session) => session.id !== this.options.sessionId && session.turns > 0)
-      .map((session) => {
-        const where = session.cwd === here ? [] : [session.cwd.replace(homedir(), "~")]
-        const turns = `${session.turns} turn${session.turns === 1 ? "" : "s"}`
+      return {
+        value: session.id,
+        label: session.title === "" ? "(untitled)" : session.title,
+        hint: [...kept, ago(session.activeMs), turns, ...where].join(" · "),
+        keywords: `${session.cwd} ${kept.join("")}`,
+      }
+    })
+  }
 
-        return {
-          value: session.id,
-          label: session.title === "" ? "(untitled)" : session.title,
-          hint: [ago(session.activeMs), turns, ...where].join(" · "),
-          keywords: session.cwd,
-        }
-      })
+  /** Tab in the /resume menu: keep the highlighted session on disk or only in Phoenix. */
+  private toggleStorage(id: string): void {
+    const { sessions } = this.options
+    const session = this.listSessions().find((entry) => entry.id === id)
+
+    if (sessions === undefined || session === undefined || this.moving) return
+
+    this.moving = true
+    this.notice =
+      session.storage === "phoenix"
+        ? `Downloading ${id.slice(0, 13)}…`
+        : `Moving ${id.slice(0, 13)} to Phoenix…`
+
+    void sessions.toggle(session).then((message) => {
+      this.moving = false
+      this.notice = message
+      this.sessions = sessions.all()
+      this.draw()
+    })
   }
 
   private catalog(): ReadonlyArray<ModelOption> {
@@ -208,6 +269,12 @@ class App {
     const count = completion.items.length
 
     if (item === undefined) return false
+
+    if (key === "\t" && completion.command?.name === "/resume") {
+      this.toggleStorage(item.value)
+
+      return true
+    }
 
     if (key === "\t") {
       this.editor.set(accept(this.editor.text, completion, item))
@@ -462,7 +529,7 @@ class App {
 
     if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
 
-    const id = store.resolveSession(argument)
+    const id = this.options.sessions?.resolve(argument) ?? store.resolveSession(argument)
 
     if (id === undefined) return this.say([`No session matches "${argument}".`])
 
@@ -609,7 +676,10 @@ class App {
     }
 
     if (engine !== undefined) {
-      void engine.submit(sessionId, { text, userId: user }).then((outcome) => {
+      const from = this.from
+
+      this.from = undefined
+      void engine.submit(sessionId, { text, userId: user, previous: from }).then((outcome) => {
         if (!outcome.ok && !outcome.interrupted) this.say([outcome.message])
 
         this.draw()
@@ -694,6 +764,9 @@ class App {
     this.screen.commit([
       `${style.bold("oi-agent")} ${style.gray(clip(`· ${label} · session ${sessionId.slice(0, 13)} · ${(header?.cwd ?? "").replace(homedir(), "~")}`, this.screen.columns - 10))}`,
       style.gray("Every step is an OpenInference span on disk. /help for commands."),
+      ...(this.options.notes ?? []).flatMap((note) =>
+        wrap(note, this.screen.columns).map((line) => style.yellow(line)),
+      ),
     ])
     this.editor.seedHistory(this.transcript.replay(store, sessionId))
 

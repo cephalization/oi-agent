@@ -47,3 +47,9 @@ export * from "./peer/protocol.ts"
 export * from "./peer/server.ts"
 
 export * from "./peer/tailcat.ts"
+
+export * from "./workspace.ts"
+
+export * from "./remote/phoenix.ts"
+
+export * from "./remote/storage.ts"

@@ -36,6 +36,7 @@ Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |
 | `oi`                           | Interactive session. `-c` continues the latest, `-s <id>` a specific one. |
+| `oi resume <id or URL>`        | Continue a session from disk or from Phoenix (see below).                 |
 | `oi setup`                     | Run setup again.                                                          |
 | `oi run "<prompt>"`            | One prompt, headless. Add `--yolo` to let tools run unasked.              |
 | `oi join <link>`               | Join a session shared with `/share`.                                      |
@@ -46,7 +47,9 @@ Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
 Inside a session, type `/` for a menu of commands: Tab completes, ↑↓ pick,
 Enter runs. `/resume` switches to an earlier session, picked from a list you
 can filter by its first prompt or directory; `/new` starts a fresh one.
-`/model` switches model from the next turn on, picked from the models your
+With Phoenix connected, the list also has the sessions in your Phoenix
+project, and Tab on a session moves it between this disk and Phoenix-only
+storage. `/model` switches model from the next turn on, picked from the models your
 key can use. With the menu closed, Tab toggles between asking before tools
 and running them unasked (yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
@@ -113,6 +116,20 @@ ordinary work doubles as a way to learn how agents work.
 **Open it in Phoenix.** With the endpoint set, spans and annotations arrive as
 they are written, grouped by session, with model, token and cost data on every
 `LLM` span, including the evaluator's own model calls.
+
+**Resume it from Phoenix.** Phoenix ends up holding everything a session needs
+to continue, so any session traced there can be picked up again, on any
+machine: `oi resume <session id>`, or paste a session URL from the Phoenix UI.
+A trace URL continues from that turn instead of the latest one, forking the
+session there. The spans are written back to disk, and new turns go to the
+same Phoenix session.
+
+To save space, a session can live only in Phoenix: press Tab on it in the
+`/resume` list. Its files are deleted once Phoenix is confirmed to hold every
+span and annotation. Opening it fetches it again, and leaving moves it back
+out. A session from another machine opens with tools asking before they run,
+and the opening notes say if your checkout differs from the one it last ran
+in.
 
 ## Layout
 

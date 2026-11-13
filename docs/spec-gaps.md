@@ -34,6 +34,27 @@ OpenInference team, not proposals.
 | 10  | Who a turn is from, with any assurance                                  | `user.id` as claimed by the peer                                                        | Self-asserted. Role comes from the share token, not identity.                                                                                                         |
 | 11  | Request fields that are not messages (cache control, effort, fallbacks) | raw request body in `input.value`                                                       | The flattened attributes cannot reproduce a request; the raw body is what the fold replays.                                                                           |
 | 12  | How much storage a session occupies                                     | `metadata.session_bytes` on each turn's root span, measured at turn start and end       | Nothing in the spec describes the cost of keeping a trace or session.                                                                                                 |
+| 13  | Where a session ran (directory, repository, commit)                     | `metadata.workspace` on each turn's root span                                           | The spec has no session-level attributes, so facts about the session are repeated per turn. Needed to resume a session from Phoenix on another machine.               |
+| 14  | A stable id for an annotation across systems                            | the local id in the annotation's own `metadata.oi_agent.id`                             | Phoenix assigns annotation ids on ingest; the spec does not say whether a producer's id survives.                                                                     |
+
+## Round trip through Phoenix
+
+Checked by importing a session back from Phoenix's REST API
+(`/v1/projects/{project}/spans/otlpv1`, `/v1/sessions/{id}`) and comparing
+files and the fold's output:
+
+- `input.value` and `output.value` come back byte for byte, so the model
+  context rebuilt from Phoenix was identical for every turn checked.
+- JSON-string attributes (`metadata`, `tool.parameters`,
+  `llm.prompt_template.variables`, `document.metadata`) are parsed on ingest
+  and returned flattened into dotted keys, even by the OTLP-shaped endpoint.
+  They can be re-nested, but `null` values, empty objects and empty arrays are
+  lost, and a key that contains a dot is ambiguous.
+- Times come back at microsecond precision, as nanoseconds computed from a
+  float. Span file names embed the start time, so an imported copy of a span
+  has a different name from the original.
+- An empty status message comes back as `null`; ids, parents, names, status
+  codes and span kinds are unchanged.
 
 ## Not yet checked
 

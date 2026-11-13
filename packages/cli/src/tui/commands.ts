@@ -26,7 +26,7 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/help", summary: "list commands and keys", hostOnly: false },
   {
     name: "/resume",
-    summary: "switch to a prior session from disk",
+    summary: "switch to a prior session, on disk or in Phoenix",
     argument: { name: "session", required: true },
     hostOnly: true,
   },
@@ -71,6 +71,7 @@ export const helpLines = (commands: ReadonlyArray<Command>): Array<string> => {
     ...commands.map((command) => `${usage(command).padEnd(column)}${command.summary}`),
     "",
     "In the / menu: tab complete · ↑↓ pick · enter run · esc close",
+    "In /resume:   tab keeps the session on disk, or only in Phoenix",
     "Otherwise:  tab toggle yolo · shift+tab cycle reasoning effort",
     "            enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
   ]
