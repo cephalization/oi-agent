@@ -1,7 +1,6 @@
 /**
- * Models and providers. `/model` across dialects works today; restoring a
- * session's last-used model on resume is issue #11, written here from its
- * acceptance list and skipped until it lands.
+ * Models and providers: `/model` across dialects, and a session continuing
+ * on the model and effort it last used when switched to or resumed (#11).
  */
 import { describe, expect } from "vite-plus/test"
 import { MODELS, type Scenario, scenario } from "../src/scenario.ts"
@@ -49,7 +48,7 @@ describe("models", () => {
 
   scenario(
     "switching or resuming a session restores the model it last used",
-    { needs: ["rex", "second-model"], pending: 11, timeoutMs: 420_000 },
+    { needs: ["rex", "second-model"], timeoutMs: 420_000 },
     async (s) => {
       const term = await s.tui()
       const ids = () => s.spans.sessions()
@@ -62,28 +61,35 @@ describe("models", () => {
 
       await s.spans.settledTurns(b, 1)
 
-      // Session A switches to the second model at low effort.
+      // Session A switches to the second model, and raises its effort from the sandbox's low.
       await term.line("/new")
       await term.line(`/model ${MODELS.second}`)
       await term.waitFor(/Model is now/)
+      await term.key("shift+tab")
+      await term.waitFor(/effort (?!low)\w+/)
       await term.line("Reply with just: a1")
 
       const a = await s.spans.waitFor("session A", () => ids().find((id) => id !== b))
 
       await s.spans.settledTurns(a, 1)
-      expect(s.spans.lastModel(a)).toEqual({ model: MODELS.second, effort: "low" })
+
+      const aModel = s.spans.lastModel(a)
+
+      expect(aModel?.model).toBe(MODELS.second)
+      expect(aModel?.effort).not.toBe("low")
 
       // Back to B: its next turn is on the main model again.
       await term.line(`/resume ${b}`)
+      await term.waitFor(new RegExp(`Continuing on ${RegExp.escape(MODELS.main)}`))
       await term.line("Reply with just: b2")
       await s.spans.settledTurns(b, 2)
-      expect(modelOf(s, b)).toBe(MODELS.main)
+      expect(s.spans.lastModel(b)).toEqual({ model: MODELS.main, effort: "low" })
 
-      // And back to A: the second model, at low.
+      // And back to A: the second model, at the effort A chose.
       await term.line(`/resume ${a}`)
       await term.line("Reply with just: a2")
       await s.spans.settledTurns(a, 2)
-      expect(s.spans.lastModel(a)).toEqual({ model: MODELS.second, effort: "low" })
+      expect(s.spans.lastModel(a)).toEqual(aModel)
 
       await term.line("/quit")
       await term.exited()
@@ -94,7 +100,7 @@ describe("models", () => {
       await fresh.waitFor(PROMPT)
       await fresh.line("Reply with just: a3")
       await s.spans.settledTurns(a, 3)
-      expect(s.spans.lastModel(a)).toEqual({ model: MODELS.second, effort: "low" })
+      expect(s.spans.lastModel(a)).toEqual(aModel)
       await fresh.line("/quit")
       await fresh.exited()
 

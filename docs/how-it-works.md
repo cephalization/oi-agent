@@ -153,6 +153,18 @@ These work best on the session you are in, because the evidence is right there.
   blocks a different model cannot read. The levels offered come from the
   Models API's `capabilities.effort` (`listModels` in
   `source/engine/src/model.ts`).
+- **"Which model does a resumed session use?"** The one it last used, read
+  back from its spans rather than saved anywhere: `lastModelOf`
+  (`source/engine/src/fold.ts`) takes the newest agent turn's `LLM` span
+  (evaluator traces are skipped, as their judge is a different model), its
+  configured provider from `metadata.oi_agent.provider`, `llm.model_name`,
+  and the effort from the stored request body, which each dialect reads
+  (`effort` in `source/engine/src/dialect.ts`). `restoreModel` in
+  `source/cli/src/main.ts` passes it to `Engine.configure` whenever a session
+  is opened, and says so when the model changes. An explicit `-m` wins for the
+  session the process starts with. A model that can no longer be built
+  (provider removed, no key) leaves the current one, with a note. A new
+  session keeps whatever model is current.
 - **"How do you talk to OpenAI or a local model?"** Each API is a dialect
   (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
   Completions (what "OpenAI-compatible" servers speak) and OpenAI

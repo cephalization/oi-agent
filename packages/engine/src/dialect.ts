@@ -11,6 +11,7 @@
  * cannot read from another (reasoning, signatures, provider-specific blocks).
  */
 import { Option, Schema } from "effect"
+import { Effort } from "./config.ts"
 import type { Api, AttrValue } from "./format.ts"
 import type { Json } from "./wire.ts"
 
@@ -66,7 +67,16 @@ export interface Dialect {
   /** OpenInference attributes for the request; `provider` is `llm.provider`. */
   readonly requestAttributes: (raw: string, provider: string) => Attrs
   readonly responseAttributes: (raw: string) => Attrs
+  /** The reasoning effort a stored request body asked for, if it names one this harness knows. */
+  readonly effort: (raw: string) => Effort | undefined
 }
+
+const decodeEffort = Schema.decodeUnknownOption(Effort)
+const decodeEffortHolder = Schema.decodeUnknownOption(Schema.Struct({ effort: Effort }))
+
+/** An effort given directly (`reasoning_effort: "low"`), or as `{ effort }` (`output_config`, `reasoning`). */
+export const effortIn = (value: Json | undefined): Effort | undefined =>
+  Option.getOrUndefined(decodeEffort(value)) ?? Option.getOrUndefined(decodeEffortHolder(value))?.effort
 
 /** Tool results as the model reads them when one never finished. */
 export const INTERRUPTED_RESULT =
