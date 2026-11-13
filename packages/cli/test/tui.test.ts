@@ -68,6 +68,28 @@ describe("editor", () => {
 })
 
 describe("markdown stream", () => {
+  it("does not advance fence state when partial lines are redrawn", () => {
+    for (const redraws of [1, 2, 3]) {
+      const markdown = new MarkdownStream()
+
+      for (let i = 0; i < redraws; i += 1) {
+        expect(markdown.preview("```ts")).toBe(style.gray("```ts"))
+      }
+
+      expect(markdown.preview("plain")).toBe("plain")
+      markdown.line("```ts")
+      expect(markdown.preview("const x = 1")).toBe(`  ${style.cyan("const x = 1")}`)
+      expect(markdown.line("const x = 1")).toBe(`  ${style.cyan("const x = 1")}`)
+
+      for (let i = 0; i < redraws; i += 1) markdown.preview("```")
+
+      expect(markdown.preview("still code")).toBe(`  ${style.cyan("still code")}`)
+      markdown.line("```")
+      expect(markdown.preview("plain")).toBe("plain")
+      expect(markdown.line("plain")).toBe("plain")
+    }
+  })
+
   it("styles lines one at a time and tracks code fences", () => {
     const markdown = new MarkdownStream()
 
