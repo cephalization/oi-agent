@@ -22,7 +22,9 @@ OI_E2E_MODELS=replay pnpm e2e             # from recordings: no keys, no model c
   under one temp directory. On macOS the CLI runs under `sandbox-exec`: it
   cannot write outside that directory, or read the real `~/.oi-agent` or
   `~/.config/oi-agent`, even with `--yolo`. `scenarios/sandbox.e2e.ts`
-  checks this.
+  checks this. It also hides your own agent instructions and skills
+  (`~/.claude`, `~/.agents`, `~/.config/AGENTS.md`), so oi sees only the
+  fixture's. Elsewhere they are not hidden: run on a machine without them.
 - **Terminals** (`src/term.ts`): `tui()` starts the interactive CLI in a
   headless Rex session (80×24) to type into and read. Every Rex session is
   closed when the scenario ends.

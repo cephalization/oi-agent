@@ -46,6 +46,13 @@ Follow along in `source/engine/src/agent.ts`.
    exact response in `output.value`, with `metadata.oi_agent.api` saying
    which wire format they are in. Token counts, model name and the
    flattened messages are stored beside them as `llm.*` attributes.
+   The system prompt lists the instruction files (`AGENTS.md`, `AGENT.md`,
+   `CLAUDE.md` from the working directory up to the repository root, plus
+   `~/.claude/CLAUDE.md` and `~/.config/AGENTS.md`) and the skills
+   (`.agents/skills`, `.claude/skills`, in the project and the home
+   directory) by path and description only. The model reads them itself
+   with `read_file`, so each read is a `TOOL` span, and the prompt stays
+   identical from request to request for the prompt cache.
 4. **If the reply contains tool calls, each runs in a `TOOL` span**
    (`toolStep`, and `source/engine/src/tools.ts`). Tools that change the
    machine wait for approval first, with `metadata.oi_agent.awaiting_approval`
@@ -79,6 +86,7 @@ a side effect of tracing.
 | Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
 | The tools the model can call                     | `source/engine/src/tools.ts`                                         |
 | The system prompt                                | `source/engine/src/prompt.ts`                                        |
+| Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
 | Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |

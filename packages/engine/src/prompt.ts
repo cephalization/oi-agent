@@ -6,6 +6,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { projectDir } from "./config.ts"
+import { findInstructions, instructionsSection } from "./instructions.ts"
 
 const BASE = `You are oi-agent, a coding agent working in the user's terminal.
 
@@ -52,6 +53,10 @@ export const systemPrompt = (cwd: string, self?: SelfKnowledge): string => {
     BASE,
     `Environment:\n- Working directory: ${cwd}\n- Platform: ${os.platform()} ${os.arch()}`,
   ]
+
+  const instructions = instructionsSection(findInstructions(cwd))
+
+  if (instructions !== undefined) sections.push(instructions)
 
   if (self !== undefined) sections.push(aboutSelf(self))
 

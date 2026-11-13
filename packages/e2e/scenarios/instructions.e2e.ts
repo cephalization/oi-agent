@@ -3,9 +3,11 @@
  * CLAUDE.md whose marker the agent must repeat, a `release-notes` skill in
  * `.claude/skills` and a `sql-style` skill in `.agents/skills`.
  *
- * The system-prompt check runs today: #9 must keep it passing, since a
+ * The system prompt must stay byte-identical across turns, since a
  * stable prompt is what keeps prompt caching working.
  */
+import * as os from "node:os"
+import * as path from "node:path"
 import { describe, expect } from "vite-plus/test"
 import { expectOk, scenario } from "../src/scenario.ts"
 import type { ToolCall } from "../src/spans.ts"
@@ -30,7 +32,7 @@ describe("instructions and skills", () => {
 
   scenario(
     "reads CLAUDE.md before other work and follows it",
-    { fixture: "agents", pending: 9 },
+    { fixture: "agents" },
     async ({ run, spans }) => {
       const result = await run(["run", "What does README.md say? Answer in one sentence."])
 
@@ -49,7 +51,7 @@ describe("instructions and skills", () => {
 
   scenario(
     "reads a skill in full only when the task matches it",
-    { fixture: "agents", pending: 9 },
+    { fixture: "agents" },
     async ({ run, spans }) => {
       const notes = await run([
         "run",
@@ -78,6 +80,17 @@ describe("instructions and skills", () => {
       const later = spans.tools(session).slice(before)
 
       expect(later.filter((tool) => tool.input.includes("SKILL.md"))).toEqual([])
+      // Pointing at instruction files and skills must not cost the prompt cache.
+      const prompts = new Set(spans.ofKind(session, "LLM").map((span) => spans.systemPrompt(span)))
+
+      expect(prompts.size).toBe(1)
+
+      // The fixture's skills are listed; the developer's own (hidden by the sandbox) are not.
+      const [prompt = ""] = prompts
+
+      expect(prompt).toContain("- sql-style: Use when writing or reviewing SQL queries.")
+      expect(prompt).not.toContain(path.join(os.homedir(), ".claude"))
+      expect(prompt).not.toContain(path.join(os.homedir(), ".agents"))
     },
   )
 })
