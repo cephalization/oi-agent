@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { runOnboarding } from "./onboarding.ts"
 import { isCancelled } from "./prompts.ts"
+import { Providers } from "./providers.ts"
 import { ago, summarizeSessions } from "./sessions.ts"
 import { type Opened, type Phoenix, Sessions } from "./storage.ts"
 import { runApp } from "./tui/app.ts"
 import {
-  anthropicModel,
   attachEvals,
   builtinTools,
   createEvalTool,
@@ -19,10 +19,6 @@ import {
   modelDistiller,
   phoenixJudge,
   type ApprovalMode,
-  checkModel,
-  type Config,
-  listModels,
-  type ModelOption,
   Engine,
   getSecret,
   hasConfig,
@@ -34,7 +30,9 @@ import {
   stringAttr,
   OI,
   Redactor,
-  setSecret,
+  splitModel,
+  type ModelLayer,
+  openBrowser,
   Store,
   type StoreEvent,
 } from "@oi-agent/engine"
@@ -51,13 +49,17 @@ Usage:
   oi show <session>          Print a session's turns
   oi export [session]        Send sessions to the configured Phoenix server
   oi setup                   Choose a model, store keys, connect Phoenix
-  oi auth login              Store an Anthropic API key in the keychain
+  oi auth login [provider]   Store a provider's API key in the keychain (default
+                             anthropic); \`oi auth login chatgpt\` signs in with
+                             a ChatGPT plan in the browser
+  oi auth logout <provider>  Forget a provider's key, or sign out of ChatGPT
   oi where                   Print the directory sessions are stored in
 
 Options:
   -s, --session <id>         Continue a session (id, unique prefix or Phoenix URL)
   -c, --continue             Continue the most recent session
-  -m, --model <id>           Model to use (default from config: claude-opus-5-5)
+  -m, --model <id>           Model to use, as provider/model or a model of the
+                             configured provider (default: claude-opus-5-5)
       --yolo                 Run tools that change the machine without asking
   -h, --help                 Show this help
 `
@@ -100,22 +102,29 @@ const SELF_DIR = fileURLToPath(new URL("../self", import.meta.url))
 
 const store = new Store()
 
+const providers = new Providers()
+
 const buildEngine = (override?: ApprovalMode): Engine => {
   const base = loadConfig()
   const approvals = override ?? base.approvals
-  const config = values.model === undefined ? base : { ...base, model: values.model }
-  const apiKey = getSecret("anthropic") ?? fail("No Anthropic API key found. Run `oi auth login`.")
+
+  // `-m openai/gpt-5.1` picks the provider too; a bare id stays with the configured one.
+  const config =
+    values.model === undefined
+      ? base
+      : { ...base, ...splitModel(base.providers, values.model, base.provider) }
+
   const redactor = new Redactor()
 
-  redactor.add(apiKey)
+  for (const key of providers.keys()) redactor.add(key)
 
-  const modelFor = (settings: Config) =>
-    anthropicModel({
-      model: settings.model,
-      effort: settings.effort,
-      maxTokens: settings.max_tokens,
-      apiKey,
-    })
+  let model: ModelLayer
+
+  try {
+    model = providers.modelFor(config)
+  } catch (error) {
+    return fail(`${error instanceof Error ? error.message : String(error)} (or \`oi auth login\`)`)
+  }
 
   const engine = new Engine({
     store,
@@ -124,15 +133,19 @@ const buildEngine = (override?: ApprovalMode): Engine => {
     redactor,
     tools: [...builtinTools, createEvalTool],
     selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
-    model: modelFor(config),
-    modelFor,
+    model,
+    modelFor: (settings) => providers.modelFor(settings),
   })
 
-  attachEvals(engine, {
-    store,
-    judge: phoenixJudge(apiKey, config.judge_model),
-    distill: modelDistiller(apiKey, config.judge_model),
-  })
+  // Evaluators judge with an Anthropic model, so they run only with an Anthropic key.
+  const judgeKey = getSecret("anthropic")
+
+  if (judgeKey !== undefined)
+    attachEvals(engine, {
+      store,
+      judge: phoenixJudge(judgeKey, config.judge_model),
+      distill: modelDistiller(judgeKey, config.judge_model),
+    })
 
   return engine
 }
@@ -315,12 +328,9 @@ const interactive = async (): Promise<void> => {
   const sessions = new Sessions(store, remote)
   let target: Target | undefined = await initialTarget(engine, remote)
   let opened = await open(sessions, target)
-  const catalog: Array<ModelOption> = []
 
-  // Listed in the background for /model and effort cycling; offline just means no list.
-  listModels(getSecret("anthropic") ?? "")
-    .then((list) => catalog.push(...list))
-    .catch(() => undefined)
+  // Listed in the background for /model and effort cycling; a provider that fails just has no list.
+  void providers.refresh()
 
   // `/resume` and `/new` end the app with the session to open next.
   while (target !== undefined) {
@@ -332,14 +342,13 @@ const interactive = async (): Promise<void> => {
       store,
       sessionId,
       user: engine.config.user,
-      label: engine.config.model,
+      label: `${engine.config.provider}/${engine.config.model}`,
       engine,
       phoenix: remote?.exporter,
       sessions,
       from: target.from,
       notes: guard(engine, opened, true),
-      models: () => catalog,
-      checkModel: (id) => checkModel(getSecret("anthropic") ?? "", id),
+      providers,
     })
 
     const away = await sessions.putAway(sessionId)
@@ -389,18 +398,53 @@ const join = async (text: string): Promise<void> => {
   store.close()
 }
 
-const authLogin = async (): Promise<void> => {
-  process.stderr.write("Paste your Anthropic API key and press return: ")
+/** The first line of standard input (a pasted key), without echoing anything else. */
+const readLine = async (): Promise<string> => {
+  let text = ""
 
-  const chunks: Array<Buffer> = []
+  for await (const chunk of process.stdin) {
+    text += Buffer.from(chunk).toString("utf8")
 
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
+    if (text.includes("\n")) break
+  }
 
-  const key = Buffer.concat(chunks).toString("utf8").trim()
+  return text.split("\n")[0]?.trim() ?? ""
+}
 
-  if (key === "" || !setSecret("anthropic", key)) fail("Could not store the key.")
+const authLogin = async (id: string): Promise<void> => {
+  const provider =
+    providers.find(id) ?? fail(`No provider named ${id}. Built in: anthropic, openai, chatgpt.`)
+
+  if (provider.kind === "chatgpt") {
+    const account = await providers
+      .login((url) => {
+        openBrowser(url)
+        process.stderr.write(`Sign in with ChatGPT in your browser. If it did not open, visit:\n${url}\n`)
+      })
+      .catch((error: Error) => fail(error.message))
+
+    process.stderr.write(`Signed in to ChatGPT as ${account}. Use it with: oi -m chatgpt/<model>\n`)
+
+    return
+  }
+
+  process.stderr.write(`Paste your ${provider.name} API key and press return: `)
+
+  const failed = providers.setKey(provider.id, await readLine())
+
+  if (failed !== undefined) fail(failed)
 
   process.stderr.write("Stored in the system keychain.\n")
+}
+
+const authLogout = async (id: string): Promise<void> => {
+  const failed = await providers.forget(id)
+
+  if (failed !== undefined) fail(failed)
+
+  process.stderr.write(
+    id === "chatgpt" ? "Signed out of ChatGPT.\n" : `Removed ${id}'s key from the keychain.\n`,
+  )
 }
 
 if (values.help) {
@@ -418,7 +462,9 @@ if (values.help) {
 } else if (command === "export") {
   await exportSessions(rest[0])
 } else if (command === "auth" && rest[0] === "login") {
-  await authLogin()
+  await authLogin(rest[1] ?? "anthropic")
+} else if (command === "auth" && rest[0] === "logout") {
+  await authLogout(rest[1] ?? fail("Usage: oi auth logout <provider>"))
 } else if (command === "where") {
   process.stdout.write(`${store.sessionsDir}\n`)
 } else {

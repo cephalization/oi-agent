@@ -64,6 +64,7 @@ interface Running {
 
 /** Settings that can change while the engine runs. */
 export interface ModelChoice {
+  readonly provider?: string
   readonly model?: string
   readonly effort?: Config["effort"]
 }
@@ -106,14 +107,17 @@ export class Engine {
   }
 
   /**
-   * Switch model or effort. A turn already running keeps what it started
-   * with; the next turn uses the new settings. Returns false when this engine
-   * was built with a fixed model.
+   * Switch provider, model or effort. A turn already running keeps what it
+   * started with; the next turn uses the new settings. Returns false when
+   * this engine was built with a fixed model. Throws, changing nothing, when
+   * the new model cannot be built (a provider without credentials, say).
    */
   configure(choice: ModelChoice): boolean {
     if (this.modelFor === undefined) return false
 
     const next = { ...this.settings }
+
+    if (choice.provider !== undefined) next.provider = choice.provider
 
     if (choice.model !== undefined) next.model = choice.model
 

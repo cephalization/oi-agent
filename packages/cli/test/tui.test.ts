@@ -144,22 +144,25 @@ describe("slash command completion", () => {
 
 describe("effort cycling", () => {
   const catalog = [
-    { id: "big", name: "Big", efforts: EFFORTS },
-    { id: "mid", name: "Mid", efforts: ["low", "medium", "high"] as const },
-    { id: "old", name: "Old", efforts: [] },
+    { id: "big", name: "Big", provider: "anthropic", efforts: EFFORTS },
+    { id: "mid", name: "Mid", provider: "anthropic", efforts: ["low", "medium", "high"] as const },
+    { id: "old", name: "Old", provider: "anthropic", efforts: [] },
   ]
 
   it("steps through the levels a model accepts and wraps", () => {
-    expect(nextEffort("high", effortsFor(catalog, "big"))).toBe("xhigh")
-    expect(nextEffort("max", effortsFor(catalog, "big"))).toBe("low")
-    expect(nextEffort("high", effortsFor(catalog, "mid"))).toBe("low")
-    expect(nextEffort("high", effortsFor(catalog, "old"))).toBeUndefined()
-    expect(effortsFor([], "anything")).toEqual(EFFORTS)
+    expect(nextEffort("high", effortsFor(catalog, { provider: "anthropic", model: "big" }))).toBe("xhigh")
+    expect(nextEffort("max", effortsFor(catalog, { provider: "anthropic", model: "big" }))).toBe("low")
+    expect(nextEffort("high", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("low")
+    expect(nextEffort("high", effortsFor(catalog, { provider: "anthropic", model: "old" }))).toBeUndefined()
+    expect(effortsFor([], { provider: "anthropic", model: "anything" })).toEqual(EFFORTS)
+    expect(effortsFor([], { provider: "openai", model: "gpt-5.1" })).toEqual(["low", "medium", "high"])
+    expect(effortsFor([], { provider: "openai", model: "gpt-4.1" })).toEqual([])
+    expect(effortsFor([], { provider: "ollama", model: "qwen3" })).toEqual([])
   })
 
   it("keeps effort across a model switch, or steps down to what the new model accepts", () => {
-    expect(fitEffort("high", effortsFor(catalog, "mid"))).toBe("high")
-    expect(fitEffort("max", effortsFor(catalog, "mid"))).toBe("high")
-    expect(fitEffort("max", effortsFor(catalog, "old"))).toBeUndefined()
+    expect(fitEffort("high", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
+    expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
+    expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "old" }))).toBeUndefined()
   })
 })

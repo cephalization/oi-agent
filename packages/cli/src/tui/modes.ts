@@ -1,9 +1,19 @@
 /** Effort-level rules for Shift+Tab and `/model`, kept pure for tests. */
-import { type Effort, EFFORTS, type ModelOption } from "@oi-agent/engine"
+import { type Effort, EFFORTS, type ModelOption, type ModelRef, openaiEfforts } from "@oi-agent/engine"
 
-/** The levels a model accepts. Unknown models (or no catalog yet) get the full ladder. */
-export const effortsFor = (catalog: ReadonlyArray<ModelOption>, model: string): ReadonlyArray<Effort> =>
-  catalog.find((option) => option.id === model)?.efforts ?? EFFORTS
+/**
+ * The levels a model accepts. A model the catalog has not listed (yet) gets
+ * Claude's full ladder, OpenAI's reasoning levels, or none for other servers.
+ */
+export const effortsFor = (catalog: ReadonlyArray<ModelOption>, ref: ModelRef): ReadonlyArray<Effort> => {
+  const listed = catalog.find((option) => option.provider === ref.provider && option.id === ref.model)
+
+  if (listed !== undefined) return listed.efforts
+
+  if (ref.provider === "anthropic") return EFFORTS
+
+  return ref.provider === "openai" || ref.provider === "chatgpt" ? openaiEfforts(ref.model) : []
+}
 
 /** The next level up, wrapping to the lowest. Undefined when the model has no effort setting. */
 export const nextEffort = (current: Effort, levels: ReadonlyArray<Effort>): Effort | undefined => {

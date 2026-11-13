@@ -8,6 +8,8 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import { type Effort, EFFORTS } from "./config.ts"
+import type { Dialect } from "./dialect.ts"
+import { anthropicMessages, openaiChat, openaiResponses } from "./dialects/index.ts"
 import type { StreamDelta } from "./format.ts"
 import type { ToolSpec } from "./tools.ts"
 import type { Json } from "./wire.ts"
@@ -15,6 +17,7 @@ import type { Json } from "./wire.ts"
 export interface ModelCall {
   readonly system: string
   readonly tools: ReadonlyArray<ToolSpec>
+  /** The conversation, in the model's dialect. */
   readonly messages: ReadonlyArray<Json>
 }
 
@@ -34,8 +37,15 @@ export class Model extends Context.Service<
   {
     /** Run one request. Resolves to the raw response body as JSON text. */
     readonly run: (call: ModelCall, hooks: ModelHooks) => Effect.Effect<string, ModelError>
+    /** The wire format this model's requests and responses are in. */
+    readonly dialect: Dialect
+    /** The configured provider, recorded as `llm.provider`. */
+    readonly provider: string
   }
 >()("oi-agent/Model") {}
+
+/** A model, ready to provide to a turn. */
+export type ModelLayer = Layer.Layer<Model>
 
 export interface ModelSettings {
   readonly model: string
@@ -152,7 +162,42 @@ export const anthropicModel = (settings: ModelSettings): Layer.Layer<Model> => {
       catch: describe,
     })
 
-  return Layer.succeed(Model, { run })
+  return Layer.succeed(Model, { run, dialect: anthropicMessages, provider: "anthropic" })
+}
+
+/** The request body a real model of this dialect would have sent. */
+const scriptedRequest = (call: ModelCall, dialect: Dialect): Json => {
+  const tools = call.tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }))
+
+  if (dialect === openaiChat)
+    return {
+      model: "scripted",
+      messages: [{ role: "system", content: call.system }, ...call.messages],
+      tools: tools.map((tool) => ({ type: "function", function: tool })),
+    }
+
+  if (dialect === openaiResponses)
+    return {
+      model: "scripted",
+      instructions: call.system,
+      input: [...call.messages],
+      tools: tools.map((tool) => ({ type: "function", ...tool })),
+    }
+
+  return {
+    model: "scripted",
+    system: call.system,
+    tools: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.parameters,
+    })),
+    messages: [...call.messages],
+  }
 }
 
 /**
@@ -162,24 +207,16 @@ export const anthropicModel = (settings: ModelSettings): Layer.Layer<Model> => {
 export const scriptedModel = (
   respond: (call: ModelCall, step: number) => Json,
   delayMs: number = 0,
+  dialect: Dialect = anthropicMessages,
 ): Layer.Layer<Model> => {
   let step = 0
 
   return Layer.succeed(Model, {
+    dialect,
+    provider: "scripted",
     run: (call, hooks) =>
       Effect.gen(function* () {
-        hooks.onRequest(
-          JSON.stringify({
-            model: "scripted",
-            system: call.system,
-            tools: call.tools.map((tool) => ({
-              name: tool.name,
-              description: tool.description,
-              input_schema: tool.parameters,
-            })),
-            messages: call.messages,
-          }),
-        )
+        hooks.onRequest(JSON.stringify(scriptedRequest(call, dialect)))
 
         const response = respond(call, step)
 
@@ -211,6 +248,8 @@ export const checkModel = async (apiKey: string, model: string): Promise<string>
 export interface ModelOption {
   readonly id: string
   readonly name: string
+  /** The configured provider that serves it. */
+  readonly provider: string
   /** Supported effort levels, in order. Empty when the model has no effort setting. */
   readonly efforts: ReadonlyArray<Effort>
 }
@@ -238,7 +277,7 @@ export const listModels = async (apiKey: string): Promise<Array<ModelOption>> =>
     for await (const info of new Anthropic({ apiKey, maxRetries: 0 }).models.list()) {
       if (info.capabilities?.thinking.types.adaptive.supported === false) continue
 
-      options.push({ id: info.id, name: info.display_name, efforts: effortsOf(info) })
+      options.push({ id: info.id, name: info.display_name, provider: "anthropic", efforts: effortsOf(info) })
     }
   } catch (error) {
     throw new Error(describe(error).message, { cause: error })

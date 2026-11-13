@@ -33,8 +33,14 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
   {
     name: "/model",
-    summary: "switch model from the next turn on",
+    summary: "switch model or provider from the next turn on",
     argument: { name: "model", required: true },
+    hostOnly: true,
+  },
+  {
+    name: "/provider",
+    summary: "list providers, add one, set a key, or sign in with ChatGPT",
+    argument: { name: "action", required: false },
     hostOnly: true,
   },
   { name: "/tour", summary: "have the agent explain how it works, using this session", hostOnly: false },

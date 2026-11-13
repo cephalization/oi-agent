@@ -14,7 +14,9 @@ Experimental. See [PLAN.md](PLAN.md) for the design and
 
 ## Try it
 
-Requires Node 24+ and an Anthropic API key.
+Requires Node 24+ and one of: an Anthropic API key, an OpenAI API key, a
+ChatGPT plan, or any OpenAI-compatible server (Ollama, vLLM, LM Studio,
+OpenRouter, …).
 
 ```sh
 npm install -g oi-agent    # installs the `oi` command
@@ -23,15 +25,17 @@ oi                         # first run walks you through setup, then starts a se
 
 Or run it once without installing: `npx oi-agent`.
 
-Setup asks for your name, an Anthropic API key, a model, reasoning effort,
-whether tools need approval, an optional Phoenix server and where sessions
-live. It checks the key and model against the API and looks for Phoenix on
-`localhost:6006`. Settings are saved to `~/.config/oi-agent/config.json`;
-keys go to the system keychain. Run `oi setup` to change them.
+Setup asks for your name, a provider and its key (or a ChatGPT sign-in), a
+model, reasoning effort, whether tools need approval, an optional Phoenix
+server and where sessions live. It lists the provider's models, checks the
+key, and looks for Phoenix on `localhost:6006`. Settings are saved to
+`~/.config/oi-agent/config.json`; keys and sign-ins go to the system
+keychain. Run `oi setup` to change them.
 
-Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
-`OI_AGENT_USER`, `OI_AGENT_HOME`, `PHOENIX_COLLECTOR_ENDPOINT`,
-`PHOENIX_PROJECT_NAME`, `ANTHROPIC_API_KEY`.
+Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
+`provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
+`OI_AGENT_HOME`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
 
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |
@@ -42,6 +46,7 @@ Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
 | `oi join <link>`               | Join a session shared with `/share`.                                      |
 | `oi sessions` / `oi show <id>` | List sessions; print one.                                                 |
 | `oi export [id]`               | Send sessions to Phoenix. Safe to repeat.                                 |
+| `oi auth login [provider]`     | Store a provider's key; `oi auth login chatgpt` signs in with ChatGPT.    |
 | `oi where`                     | Print the sessions directory.                                             |
 
 Inside a session, type `/` for a menu of commands: Tab completes, ↑↓ pick,
@@ -49,8 +54,14 @@ Enter runs. `/resume` switches to an earlier session, picked from a list you
 can filter by its first prompt or directory; `/new` starts a fresh one.
 With Phoenix connected, the list also has the sessions in your Phoenix
 project, and Tab on a session moves it between this disk and Phoenix-only
-storage. `/model` switches model from the next turn on, picked from the models your
-key can use. With the menu closed, Tab toggles between asking before tools
+storage. `/model` switches model, or provider, from the next turn on, picked
+from every provider's models (`anthropic/claude-opus-5-5`,
+`openai/gpt-5.1`, `ollama/qwen3`, …). `/provider` lists providers and their
+status; `/provider add <id> <base-url>` adds an OpenAI-compatible server and
+asks for its key (hidden, stored in the keychain), `/provider key <id>`
+replaces a key, and `/provider login` signs in with a ChatGPT plan in the
+browser. Switching provider mid-session works: the conversation carries over
+as text, tool calls and tool results. With the menu closed, Tab toggles between asking before tools
 and running them unasked (yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,

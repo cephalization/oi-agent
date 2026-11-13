@@ -6,26 +6,18 @@
  * step asks the fold what to send next, so what the model sees is always
  * exactly what is on disk.
  */
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { contextFor } from "./fold.ts"
 import { type AnnotationFile, type EngineMetadata, OI, writeMetadata } from "./format.ts"
 import { Model, type ModelError } from "./model.ts"
-import { requestAttributes, responseAttributes } from "./oi.ts"
 import { systemPrompt } from "./prompt.ts"
 import type { Redactor } from "./redact.ts"
 import { rulesVersion } from "./rules.ts"
 import type { Store } from "./store.ts"
 import type { ToolSpec } from "./tools.ts"
 import { DiskSpan, diskTracer } from "./tracer.ts"
-import {
-  type Json,
-  parseRequest,
-  parseResponse,
-  type ResponseBody,
-  textOf,
-  toolUses,
-  type ToolUseBlock,
-} from "./wire.ts"
+import type { Reply, ToolCall } from "./dialect.ts"
+import type { Json } from "./wire.ts"
 import { workspaceOf } from "./workspace.ts"
 
 export const AGENT_NAME = "oi-agent"
@@ -99,7 +91,7 @@ const currentDiskSpan: Effect.Effect<DiskSpan> = Effect.gen(function* () {
   return span instanceof DiskSpan ? span : yield* Effect.die("the agent loop must run under the disk tracer")
 })
 
-const EMPTY_RESPONSE: ResponseBody = { content: [], stop_reason: "error" }
+const EMPTY_REPLY: Reply = { text: "", calls: [], wantsTools: false, paused: false, stopReason: "error" }
 
 const modelStep = (env: TurnEnv, traceId: string) =>
   Effect.gen(function* () {
@@ -115,28 +107,24 @@ const modelStep = (env: TurnEnv, traceId: string) =>
             : { selfDir: env.selfDir, sessionDir: env.store.sessionDir(env.sessionId) },
         ),
         tools: env.tools,
-        messages: contextFor(env.store, env.sessionId, traceId),
+        messages: contextFor(env.store, env.sessionId, traceId, model.dialect),
       },
       {
         onRequest: (body) => {
-          const request = Option.getOrUndefined(parseRequest(body))
-
-          if (request !== undefined) span.assign(requestAttributes(request, body))
-
+          span.assign(model.dialect.requestAttributes(body, model.provider))
+          span.patchMetadata({ api: model.dialect.api, provider: model.provider })
           span.flush()
         },
         onDelta: (delta) => span.delta(delta),
       },
     )
 
-    const response = Option.getOrElse(parseResponse(raw), () => EMPTY_RESPONSE)
+    span.assign(model.dialect.responseAttributes(raw))
 
-    span.assign(responseAttributes(response, raw))
-
-    return response
+    return model.dialect.reply(raw) ?? EMPTY_REPLY
   }).pipe(Effect.withSpan("llm", { attributes: { [OI.SPAN_KIND]: "LLM" } }, UNTRACED))
 
-const toolStep = (env: TurnEnv, use: ToolUseBlock, userId: string) => {
+const toolStep = (env: TurnEnv, use: ToolCall, userId: string) => {
   const tool = env.tools.find((candidate) => candidate.name === use.name)
 
   return Effect.gen(function* () {
@@ -208,7 +196,7 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
     const root = yield* currentDiskSpan
     const traceId = root.traceId
     let steps = 0
-    let response = EMPTY_RESPONSE
+    let response = EMPTY_REPLY
 
     // The fold reads this turn's input from the root span's in-flight file.
     root.flush()
@@ -217,10 +205,8 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       steps += 1
       response = yield* modelStep(env, traceId)
 
-      const uses = toolUses(response.content)
-
-      if (response.stop_reason === "tool_use" && uses.length > 0) {
-        yield* Effect.forEach(uses, (use) => toolStep(env, use, input.userId), {
+      if (response.wantsTools) {
+        yield* Effect.forEach(response.calls, (use) => toolStep(env, use, input.userId), {
           concurrency: "unbounded",
           discard: true,
         })
@@ -228,17 +214,22 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       }
 
       // A paused server-side tool resumes when the conversation is sent back as is.
-      if (response.stop_reason !== "pause_turn") break
+      if (!response.paused) break
     }
 
-    const output = textOf(response.content)
+    const output = response.text
 
     root.attribute(OI.OUTPUT_VALUE, output)
     root.attribute(OI.OUTPUT_MIME, "text/plain")
     // Everything but this root span is on disk by now, so this is the turn's footprint.
     root.patchMetadata({ session_bytes: env.store.sessionBytes(env.sessionId) })
 
-    return { traceId, output, stopReason: response.stop_reason ?? "unknown", steps }
+    return {
+      traceId,
+      output,
+      stopReason: response.stopReason === "" ? "unknown" : response.stopReason,
+      steps,
+    }
   })
 
 /** Run one turn to completion. Everything it does is recorded as spans. */

@@ -186,6 +186,11 @@ export const stringAttr = (span: SpanFile, key: string): string | undefined =>
 
 const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })
 
+/** The wire format of a model call's stored request and response bodies (see `dialect.ts`). */
+export const Api = Schema.Literals(["anthropic-messages", "openai-chat", "openai-responses"])
+
+export type Api = typeof Api.Type
+
 /** Where a turn ran. The spans hold the conversation, not the files. */
 export const Workspace = Schema.Struct({
   cwd: Schema.String,
@@ -229,6 +234,10 @@ export const EngineMetadata = Schema.Struct({
   ),
   /** The trace an `EVALUATOR` span judged. */
   evaluates: Schema.optionalKey(Schema.String),
+  /** On an `LLM` span: the wire format of its request and response bodies. Absent means Anthropic Messages. */
+  api: Schema.optionalKey(Api),
+  /** On an `LLM` span: the configured provider that served it. */
+  provider: Schema.optionalKey(Schema.String),
   /** On a turn's root span: the directory and checkout it ran in. */
   workspace: Schema.optionalKey(Workspace),
   /** Version of the learned-rules prompt section in effect. */

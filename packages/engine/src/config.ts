@@ -7,6 +7,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { Option, Schema } from "effect"
+import { ProviderConfig, splitModel } from "./providers.ts"
 
 export const Effort = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
 
@@ -20,8 +21,12 @@ export const Approvals = Schema.Literals(["ask", "allow"])
 export type Approvals = typeof Approvals.Type
 
 export const Config = Schema.Struct({
-  /** Model id, for example `claude-opus-5-5`. */
+  /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
+  provider: Schema.String,
+  /** Model id at that provider, for example `claude-opus-5-5`. */
   model: Schema.String,
+  /** OpenAI-compatible servers added with `/provider add`. */
+  providers: Schema.Array(ProviderConfig),
   effort: Effort,
   max_tokens: Schema.Int,
   /** Display name recorded as `user.id` on turns started from this machine. */
@@ -43,7 +48,9 @@ export type Config = typeof Config.Type
 
 const PartialConfig = Schema.fromJsonString(
   Schema.Struct({
+    provider: Schema.optionalKey(Schema.String),
     model: Schema.optionalKey(Schema.String),
+    providers: Schema.optionalKey(Schema.Array(ProviderConfig)),
     effort: Schema.optionalKey(Effort),
     max_tokens: Schema.optionalKey(Schema.Int),
     user: Schema.optionalKey(Schema.String),
@@ -101,9 +108,19 @@ export const defaultHome = (): string => path.join(os.homedir(), ".oi-agent")
 /** Settings from the config file, with environment variables taking precedence. */
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
   const file = Option.getOrUndefined(decodePartial(readFile(configPath(env))))
+  const providers = file?.providers ?? []
+
+  // `OI_AGENT_MODEL=openai/gpt-5.1` picks the provider as well as the model.
+  const choice = splitModel(
+    providers,
+    env["OI_AGENT_MODEL"] ?? file?.model ?? "claude-opus-5-5",
+    env["OI_AGENT_PROVIDER"] ?? file?.provider ?? "anthropic",
+  )
 
   return {
-    model: env["OI_AGENT_MODEL"] ?? file?.model ?? "claude-opus-5-5",
+    provider: choice.provider,
+    model: choice.model,
+    providers,
     effort: Option.getOrUndefined(decodeEffort(env["OI_AGENT_EFFORT"])) ?? file?.effort ?? "high",
     max_tokens: file?.max_tokens ?? 64_000,
     user: env["OI_AGENT_USER"] ?? file?.user ?? env["USER"] ?? "user",
@@ -124,4 +141,27 @@ export const saveConfig = (config: Config, env: NodeJS.ProcessEnv = process.env)
   fs.writeFileSync(file, `${JSON.stringify(encodeConfig(config), null, 2)}\n`)
 
   return file
+}
+
+const JsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
+const decodeObject = Schema.decodeUnknownOption(JsonObject)
+const encodeProviders = Schema.encodeSync(Schema.Array(ProviderConfig))
+
+/**
+ * Replace the `providers` list in the config file, leaving every other key
+ * as written. (Saving a whole loaded config would also write environment
+ * overrides into the file.)
+ */
+export const saveProviders = (
+  providers: ReadonlyArray<ProviderConfig>,
+  env: NodeJS.ProcessEnv = process.env,
+): void => {
+  const file = configPath(env)
+  const current = Option.getOrElse(decodeObject(readFile(file)), () => ({}))
+
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ ...current, providers: encodeProviders(providers) }, null, 2)}\n`,
+  )
 }
