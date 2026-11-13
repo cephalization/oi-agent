@@ -46,8 +46,11 @@ Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
 
 Inside a session, type `/` for a menu of commands: Tab completes, ↑↓ pick,
 Enter runs. `/resume` switches to an earlier session, picked from a list you
-can filter by its first prompt or directory; `/new` starts a fresh one. The
-others are `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
+can filter by its first prompt or directory; `/new` starts a fresh one.
+`/model` switches model from the next turn on, picked from the models your
+key can use. With the menu closed, Tab toggles between asking before tools
+and running them unasked (yolo), and Shift+Tab cycles reasoning effort
+through the levels the current model accepts. The others are `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
 `/revert`, `/export`, `/yolo`, `/tour`, `/help` and `/quit`.
 
 ## Things to try

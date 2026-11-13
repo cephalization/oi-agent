@@ -110,6 +110,15 @@ These work best on the session you are in, because the evidence is right there.
   `contextFor` reading that session's latest `LLM` span, exactly as for the
   next step of a running turn. `/resume` lists sessions from their root spans
   (`source/cli/src/sessions.ts`) and hides ones with no turns.
+- **"What happens when I switch model or effort mid-session?"** `/model` and
+  Shift+Tab call `Engine.configure` (`source/engine/src/engine.ts`), which
+  builds a new model for the next turn; nothing stored changes. Each `LLM`
+  span records the model in `llm.model_name` and the effort in
+  `llm.invocation_parameters`, so the switch is visible span by span. The
+  history is replayed verbatim to the new model, and the API drops thinking
+  blocks a different model cannot read. The levels offered come from the
+  Models API's `capabilities.effort` (`listModels` in
+  `source/engine/src/model.ts`).
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge.

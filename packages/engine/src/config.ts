@@ -12,6 +12,9 @@ export const Effort = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
 
 export type Effort = typeof Effort.Type
 
+/** Effort levels from least to most. */
+export const EFFORTS: ReadonlyArray<Effort> = Effort.literals
+
 export const Approvals = Schema.Literals(["ask", "allow"])
 
 export type Approvals = typeof Approvals.Type
