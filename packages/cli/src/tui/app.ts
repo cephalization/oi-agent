@@ -7,6 +7,7 @@
  */
 import {
   type ApprovalRequest,
+  chatgptAccount,
   type Engine,
   type ModelChoice,
   type ModelRef,
@@ -20,6 +21,7 @@ import {
   type PeerConnection,
   type PeerServer,
   type PhoenixExporter,
+  type ProviderConfig,
   readRules,
   revertRules,
   servePeers,
@@ -29,7 +31,7 @@ import {
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
-import type { Providers } from "../providers.ts"
+import type { Providers, ServerForm } from "../providers.ts"
 import type { Sessions } from "../storage.ts"
 import { clip, control, style, width, wrap } from "./ansi.ts"
 import {
@@ -93,6 +95,14 @@ interface Question {
   readonly answer: (value: string | undefined) => void
 }
 
+/** A list the user picks from with the arrows (the /provider menus). */
+interface Picker {
+  readonly title: string
+  readonly items: ReadonlyArray<Suggestion>
+  selected: number
+  readonly answer: (value: string | undefined) => void
+}
+
 interface Share {
   readonly server: PeerServer
   readonly tunnel: Tunnel
@@ -121,6 +131,8 @@ class App {
   private from: string | undefined
   /** A question the input line is answering instead of taking a prompt (an API key, say). */
   private question: Question | undefined
+  /** A menu the keys move through instead of editing the prompt. */
+  private picker: Picker | undefined
   /** Ends the app. With a session id, the caller should open that session next. */
   private done: (next?: string) => void = () => undefined
 
@@ -232,39 +244,10 @@ class App {
     })
   }
 
-  private providerSuggestions(): Array<Suggestion> {
-    const providers = this.options.providers?.all() ?? []
-    const added = providers.filter((provider) => provider.kind === "openai-compatible")
-
-    return [
-      { value: "add", label: "add <id> <base-url>", hint: "add an OpenAI-compatible server" },
-      { value: "login", label: "login", hint: "sign in with your ChatGPT plan" },
-      ...providers
-        .filter((provider) => provider.kind !== "chatgpt")
-        .map((provider) => ({
-          value: `key ${provider.id}`,
-          label: `key ${provider.id}`,
-          hint: `set ${provider.name}'s API key`,
-        })),
-      ...providers.map((provider) => ({
-        value: `logout ${provider.id}`,
-        label: `logout ${provider.id}`,
-        hint: provider.kind === "chatgpt" ? "sign out of ChatGPT" : `forget ${provider.name}'s key`,
-      })),
-      ...added.map((provider) => ({
-        value: `remove ${provider.id}`,
-        label: `remove ${provider.id}`,
-        hint: "remove this server",
-      })),
-    ]
-  }
-
   private argumentsFor(command: Command): ReadonlyArray<Suggestion> {
     if (command.name === "/resume") return this.sessionSuggestions()
 
     if (command.name === "/model") return this.modelSuggestions()
-
-    if (command.name === "/provider") return this.providerSuggestions()
 
     if (command.name === "/share") return SHARE_ARGUMENTS
 
@@ -287,9 +270,7 @@ class App {
     return Math.min(this.selected, completion.items.length - 1)
   }
 
-  private menuLines(completion: Completion): Array<string> {
-    const { items } = completion
-    const selected = this.highlighted(completion)
+  private menuLines(items: ReadonlyArray<Suggestion>, selected: number): Array<string> {
     const start = Math.max(0, Math.min(selected - Math.floor(MENU_ROWS / 2), items.length - MENU_ROWS))
     const visible = items.slice(start, start + MENU_ROWS)
     const labelWidth = Math.min(Math.max(...visible.map((item) => width(item.label))), 48)
@@ -471,6 +452,19 @@ class App {
       return
     }
 
+    const picker = this.picker
+
+    if (picker !== undefined) {
+      const title = `${style.cyan("?")} ${picker.title} ${style.gray("· enter to choose, esc to go back")}`
+
+      this.screen.render({
+        lines: [...lines, title, ...this.menuLines(picker.items, picker.selected)],
+        cursor: { line: lines.length, column: 1 },
+      })
+
+      return
+    }
+
     const canPrompt = this.options.peer === undefined || this.options.peer.info.role === "driver"
     const before = this.editor.text.slice(0, this.editor.cursor).split("\n")
     const input = this.editor.text.split("\n")
@@ -495,7 +489,8 @@ class App {
 
     const cursorLine = first + before.length - 1
 
-    if (completion !== undefined) lines.push(...this.menuLines(completion))
+    if (completion !== undefined)
+      lines.push(...this.menuLines(completion.items, this.highlighted(completion)))
 
     this.screen.render({
       lines,
@@ -694,12 +689,12 @@ class App {
   }
 
   /** Ask for a line of input (an API key, say). Resolves to undefined on esc. */
-  private ask(label: string, secret: boolean): Promise<string | undefined> {
+  private ask(label: string, secret: boolean, initial = ""): Promise<string | undefined> {
     return new Promise((resolve) => {
       this.question = {
         label,
         secret,
-        value: "",
+        value: initial,
         answer: (value) => {
           this.question = undefined
           resolve(value)
@@ -719,8 +714,9 @@ class App {
 
     if (data === "\u001B" || data === "\u0003") return question.answer(undefined)
 
-    if (data === "\u007F" || data === "\b") {
-      question.value = question.value.slice(0, -1)
+    // Held backspace can arrive as several in one chunk.
+    if (/^[\u007F\b]+$/.test(data)) {
+      question.value = question.value.slice(0, -data.length)
 
       return this.draw()
     }
@@ -739,99 +735,286 @@ class App {
     this.draw()
   }
 
-  private async provider(argument: string): Promise<void> {
+  /** Show a menu and wait for a choice. Resolves to undefined on esc. */
+  private pick(title: string, items: ReadonlyArray<Suggestion>): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      this.picker = {
+        title,
+        items,
+        selected: 0,
+        answer: (value) => {
+          this.picker = undefined
+          resolve(value)
+          this.draw()
+        },
+      }
+      this.draw()
+    })
+  }
+
+  private pickerKey(data: string): void {
+    const picker = this.picker
+
+    if (picker === undefined) return
+
+    const count = picker.items.length
+
+    if (data === UP || data === SHIFT_TAB || data === DOWN || data === "\t") {
+      const step = data === UP || data === SHIFT_TAB ? -1 : 1
+
+      picker.selected = (picker.selected + step + count) % count
+
+      return this.draw()
+    }
+
+    if (data === "\r") return picker.answer(picker.items[picker.selected]?.value)
+
+    if (data === "\u001B" || data === "\u0003") picker.answer(undefined)
+  }
+
+  // --- /provider ------------------------------------------------------------
+  //
+  // Each menu resolves to true when it did something (the menus then close, so
+  // the result shows), or false when the user backed out with esc.
+
+  /** `/provider`: pick a provider, then what to do with it. Esc goes back a level. */
+  private async providerMenu(): Promise<void> {
     const providers = this.options.providers
 
     if (providers === undefined) return
 
-    const [action = "", id = "", url = ""] = argument.split(/\s+/)
+    const menus = new Map<string, () => Promise<boolean>>([
+      ["anthropic", () => this.anthropicMenu(providers)],
+      ["openai", () => this.openaiMenu(providers)],
+      ["compatible", () => this.compatibleMenu(providers)],
+    ])
 
-    if (action === "") {
-      const width = Math.max(...providers.all().map((provider) => provider.id.length))
+    const picked = await this.pick("Which provider?", this.providerItems(providers))
 
-      return this.say([
-        ...providers.status().map(({ provider, credentials, models }) => {
-          const where = provider.kind === "openai-compatible" ? ` · ${provider.base_url ?? ""}` : ""
+    if (picked === undefined) return
 
-          return `${provider.id.padEnd(width)}  ${provider.name} · ${credentials}${models === "" ? "" : ` · ${models}`}${where}`
-        }),
-        "",
-        "/provider add <id> <base-url> · key <id> · login · logout <id> · remove <id>",
-      ])
+    if ((await menus.get(picked)?.()) === false) return this.providerMenu()
+  }
+
+  private providerItems(providers: Providers): Array<Suggestion> {
+    const status = new Map(providers.status().map((entry) => [entry.provider.id, entry]))
+
+    const describe = (id: string): string => {
+      const entry = status.get(id)
+
+      return [entry?.credentials ?? "", entry?.models ?? ""].filter((part) => part !== "").join(" · ")
     }
 
-    if (action === "add") {
-      const failed = providers.add(id, url)
+    const servers = this.servers(providers).map((server) => server.name)
 
-      if (failed !== undefined) return this.say([failed])
+    return [
+      { value: "anthropic", label: "Anthropic", hint: describe("anthropic") },
+      { value: "openai", label: "OpenAI", hint: this.openaiHint(providers) },
+      {
+        value: "compatible",
+        label: "OpenAI-compatible",
+        hint: servers.length === 0 ? "Ollama, vLLM, LM Studio, OpenRouter, …" : servers.join(", "),
+      },
+    ]
+  }
 
-      const key = await this.ask(`API key for ${id} (enter if it needs none)`, true)
+  /** "API key set · signed in to ChatGPT as …", and so on. */
+  private openaiHint(providers: Providers): string {
+    const openai = providers.find("openai")
+    const account = chatgptAccount()
 
-      if (key !== undefined && key !== "") providers.setKey(id, key)
+    return [
+      openai !== undefined && providers.key(openai) !== undefined ? "API key set" : "no API key",
+      account === undefined ? "not signed in to ChatGPT" : `signed in to ChatGPT as ${account}`,
+    ].join(" · ")
+  }
 
-      return this.listed(id, `Added ${id}.`)
+  private servers(providers: Providers): Array<ProviderConfig> {
+    return providers.configured().filter((provider) => provider.kind === "openai-compatible")
+  }
+
+  /** Add or replace a provider's key, and forget it once there is one. */
+  private keyItems(providers: Providers, id: string): Array<Suggestion> {
+    const provider = providers.find(id)
+    const key = provider === undefined ? undefined : providers.key(provider)
+
+    if (key === undefined)
+      return [{ value: "key", label: "Add an API key", hint: "kept in the system keychain" }]
+
+    return [
+      { value: "key", label: "Replace the API key", hint: `the stored key ends in …${key.slice(-4)}` },
+      { value: "forget", label: "Forget the API key", hint: "remove it from the keychain" },
+    ]
+  }
+
+  private async keyAction(providers: Providers, id: string, action: string): Promise<boolean> {
+    if (action === "forget") {
+      this.say([(await providers.forget(id)) ?? `Forgot ${id}'s key.`])
+
+      return true
     }
 
-    if (action === "key") {
-      if (providers.find(id) === undefined)
-        return this.say([`No provider named ${id}. /provider lists them.`])
+    const key = await this.ask(`API key for ${id} (hidden)`, true)
 
-      const key = await this.ask(`API key for ${id}`, true)
+    if (key === undefined) return false
 
-      if (key === undefined || key === "") return this.say(["No key stored."])
+    const failed = key === "" ? "No key stored." : providers.setKey(id, key)
 
-      const failed = providers.setKey(id, key)
+    if (failed !== undefined) this.say([failed])
+    else await this.listed(id, `Stored ${id}'s key in the keychain.`)
 
-      return failed === undefined
-        ? this.listed(id, `Stored ${id}'s key in the keychain.`)
-        : this.say([failed])
-    }
+    return true
+  }
 
-    if (action === "login") {
-      this.notice = "Opening your browser to sign in with ChatGPT… (esc to cancel)"
-      this.draw()
+  private async anthropicMenu(providers: Providers): Promise<boolean> {
+    const action = await this.pick("Anthropic", this.keyItems(providers, "anthropic"))
 
-      const cancel = new AbortController()
+    return action === undefined ? false : this.keyAction(providers, "anthropic", action)
+  }
 
-      const waiting = this.ask("Waiting for the browser. Press esc to cancel", false).then(() =>
-        cancel.abort(),
-      )
+  private async openaiMenu(providers: Providers): Promise<boolean> {
+    const account = chatgptAccount()
 
-      const account = await providers
-        .login((url) => {
-          openBrowser(url)
-          this.say(["If the browser did not open, visit:", url])
-        }, cancel.signal)
-        .then(
-          (who) => ({ who }),
-          (error: Error) => ({ error: error.message }),
-        )
+    const plan =
+      account === undefined
+        ? { value: "login", label: "Sign in with ChatGPT", hint: "use your ChatGPT plan instead of a key" }
+        : { value: "logout", label: "Sign out of ChatGPT", hint: `signed in as ${account}` }
 
-      this.question?.answer(undefined)
-      await waiting
-      this.notice = ""
+    const action = await this.pick("OpenAI", [plan, ...this.keyItems(providers, "openai")])
 
-      return "error" in account
-        ? this.say([account.error])
-        : this.listed(
-            "chatgpt",
-            `Signed in to ChatGPT as ${account.who}. Its models are under chatgpt/ in /model.`,
-          )
-    }
+    if (action === undefined) return false
 
-    if (action === "logout") {
-      const failed = await providers.forget(id)
+    if (action === "login") await this.login(providers)
+    else if (action === "logout") this.say([(await providers.forget("chatgpt")) ?? "Signed out of ChatGPT."])
+    else return this.keyAction(providers, "openai", action)
 
-      return this.say([failed ?? (id === "chatgpt" ? "Signed out of ChatGPT." : `Forgot ${id}'s key.`)])
-    }
+    return true
+  }
+
+  private async compatibleMenu(providers: Providers): Promise<boolean> {
+    const servers = this.servers(providers)
+
+    const picked = await this.pick("OpenAI-compatible servers", [
+      { value: "", label: "Add a server", hint: "name, base URL, an API key if it needs one, models" },
+      ...servers.map((server) => {
+        const models = server.models?.map((model) => model.id).join(", ") ?? "models from the server"
+
+        return { value: server.id, label: server.name, hint: `${server.base_url ?? ""} · ${models}` }
+      }),
+    ])
+
+    if (picked === undefined) return false
+
+    const done = picked === "" ? await this.addServer(providers) : await this.serverMenu(providers, picked)
+
+    return done || this.compatibleMenu(providers)
+  }
+
+  private async addServer(providers: Providers): Promise<boolean> {
+    const name = await this.ask("Name, like Ollama or DwarfStar", false)
+
+    if (name === undefined || name === "") return false
+
+    const baseUrl = await this.ask("Base URL, like http://localhost:11434/v1", false)
+
+    if (baseUrl === undefined || baseUrl === "") return false
+
+    const key = await this.ask("API key (hidden; enter if it needs none)", true)
+
+    if (key === undefined) return false
+
+    const models = await this.ask("Models, comma-separated (enter to use the server's own list)", false)
+
+    if (models === undefined) return false
+
+    return this.saveServer(providers, { name, baseUrl, key, models })
+  }
+
+  private async serverMenu(providers: Providers, id: string): Promise<boolean> {
+    const server = this.servers(providers).find((entry) => entry.id === id)
+
+    if (server === undefined) return false
+
+    const models = server.models?.map((model) => model.id).join(", ") ?? ""
+
+    const action = await this.pick(`${server.name} (${server.id})`, [
+      { value: "models", label: "Edit models", hint: models === "" ? "using the server's own list" : models },
+      { value: "url", label: "Change the base URL", hint: server.base_url ?? "" },
+      ...this.keyItems(providers, id),
+      { value: "remove", label: "Remove", hint: "forget this server and its key" },
+    ])
+
+    if (action === undefined) return false
 
     if (action === "remove") {
-      const failed = providers.remove(id)
+      this.say([providers.remove(id) ?? `Removed ${server.name}.`])
 
-      return this.say([failed ?? `Removed ${id}.`])
+      return true
     }
 
-    this.say([`Unknown /provider action ${action}. Try /provider.`])
+    if (action !== "models" && action !== "url") return this.keyAction(providers, id, action)
+
+    const form: ServerForm = { name: server.name, baseUrl: server.base_url ?? "", key: "", models }
+
+    const value =
+      action === "url"
+        ? await this.ask("Base URL", false, form.baseUrl)
+        : await this.ask("Models, comma-separated (empty to use the server's own list)", false, models)
+
+    if (value === undefined) return this.serverMenu(providers, id)
+
+    return this.saveServer(
+      providers,
+      action === "url" ? { ...form, baseUrl: value } : { ...form, models: value },
+      id,
+    )
+  }
+
+  private async saveServer(providers: Providers, form: ServerForm, id?: string): Promise<boolean> {
+    const saved = await providers.saveServer(form, id).then(
+      (value) => ({ value }),
+      (error: Error) => ({ error: error.message }),
+    )
+
+    if ("error" in saved) this.say([saved.error])
+    else
+      await this.listed(
+        saved.value,
+        id === undefined ? `Added ${form.name} as ${saved.value}.` : `Saved ${form.name}.`,
+      )
+
+    return true
+  }
+
+  /** Sign in with ChatGPT in the browser; esc cancels. */
+  private async login(providers: Providers): Promise<void> {
+    this.notice = "Opening your browser to sign in with ChatGPT…"
+    this.draw()
+
+    const cancel = new AbortController()
+
+    const waiting = this.ask("Waiting for the browser. Press esc to cancel", false).then(() => cancel.abort())
+
+    const account = await providers
+      .login((url) => {
+        openBrowser(url)
+        this.say(["If the browser did not open, visit:", url])
+      }, cancel.signal)
+      .then(
+        (who) => ({ who }),
+        (error: Error) => ({ error: error.message }),
+      )
+
+    this.question?.answer(undefined)
+    await waiting
+    this.notice = ""
+
+    if ("error" in account) return this.say([account.error])
+
+    await this.listed(
+      "chatgpt",
+      `Signed in to ChatGPT as ${account.who}. Its models are under chatgpt/ in /model.`,
+    )
   }
 
   /** List a provider's models after a change, and say how it went. */
@@ -916,7 +1099,7 @@ class App {
 
     if (name === "/model") return this.switchModel(argument)
 
-    if (name === "/provider") return this.provider(argument)
+    if (name === "/provider") return this.providerMenu()
   }
 
   private submit(text: string): void {
@@ -964,6 +1147,8 @@ class App {
 
   private input(data: string): void {
     if (this.question !== undefined) return this.answerQuestion(data)
+
+    if (this.picker !== undefined) return this.pickerKey(data)
 
     if (this.approvals.length > 0 && data !== "\u0003") {
       this.answer(data)

@@ -23,11 +23,13 @@ import {
   loadConfig,
   type ModelLayer,
   type ModelOption,
+  describeModels,
   OPENAI_BASE_URL,
   openaiEfforts,
   openaiModel,
-  PROVIDER_ID,
   type ProviderConfig,
+  parseModelIds,
+  providerIdFrom,
   saveProviders,
   secretAccount,
   setSecret,
@@ -45,6 +47,17 @@ export interface ProviderStatus {
   readonly models: string
 }
 
+/** What the user fills in to add or change an OpenAI-compatible server. */
+export interface ServerForm {
+  /** Shown in lists; the provider id is made from it. */
+  readonly name: string
+  readonly baseUrl: string
+  /** Empty when the server needs none, or to keep the stored one. */
+  readonly key: string
+  /** Comma-separated model ids. Empty to use the server's own list. */
+  readonly models: string
+}
+
 const withTimeout = <A>(promise: Promise<A>, ms: number): Promise<A> =>
   Promise.race([
     promise,
@@ -55,6 +68,8 @@ export class Providers {
   /** Every model listed so far, across providers. */
   readonly catalog: Array<ModelOption> = []
   private readonly errors = new Map<string, string>()
+  /** Told of every key stored, so tool output can be scrubbed of it. */
+  onKey: (key: string) => void = () => undefined
 
   /** Providers from config, re-read so additions show up at once. */
   configured(): ReadonlyArray<ProviderConfig> {
@@ -105,12 +120,22 @@ export class Providers {
       return {
         provider,
         credentials: this.credentials(provider),
-        models: error ?? (count === 0 ? "" : `${count} models`),
+        models: error ?? (count === 0 ? "" : `${count} model${count === 1 ? "" : "s"}`),
       }
     })
   }
 
   private async list(provider: ProviderConfig): Promise<Array<ModelOption>> {
+    // A server with models of its own in config offers just those.
+    if (provider.models !== undefined && provider.models.length > 0)
+      return provider.models.map((model) => ({
+        id: model.id,
+        name: model.name ?? model.id,
+        provider: provider.id,
+        efforts: [],
+        maxOutput: model.max_output,
+      }))
+
     if (provider.kind === "anthropic") return listModels(this.key(provider) ?? "")
 
     const token = provider.kind === "chatgpt" ? await chatgptToken() : this.key(provider)
@@ -186,13 +211,18 @@ export class Providers {
     // Only OpenAI's reasoning models take an effort; other servers get none.
     const levels = provider.kind === "openai-compatible" ? [] : openaiEfforts(settings.model)
 
+    // Ask for no more than the model can write; servers reject a larger max_tokens.
+    const limit =
+      provider.models?.find((model) => model.id === settings.model)?.max_output ??
+      this.catalog.find((model) => model.provider === provider.id && model.id === settings.model)?.maxOutput
+
     return openaiModel({
       provider: provider.id,
       api: provider.api ?? (provider.kind === "openai-compatible" ? "chat" : "responses"),
       baseUrl: provider.base_url ?? OPENAI_BASE_URL,
       model: settings.model,
       effort: fitEffort(settings.effort, levels),
-      maxTokens: settings.max_tokens,
+      maxTokens: Math.min(settings.max_tokens, limit ?? settings.max_tokens),
       token: provider.kind === "chatgpt" ? chatgptToken : () => Promise.resolve(key),
       onUnauthorized:
         provider.kind === "chatgpt"
@@ -215,22 +245,64 @@ export class Providers {
 
   // --- managing providers ------------------------------------------------------
 
-  /** Add an OpenAI-compatible server. Resolves to an error message, or undefined. */
-  add(id: string, baseUrl: string): string | undefined {
-    if (!PROVIDER_ID.test(id))
-      return "A provider id is lower-case letters, digits and dashes, like ollama or my-vllm."
+  /**
+   * Add an OpenAI-compatible server, or change one (`id`). The server is asked
+   * for its models so the names and output limits of the ones listed can be
+   * saved too; it need not answer. Resolves to the provider id.
+   */
+  async saveServer(form: ServerForm, id?: string): Promise<string> {
+    const name = form.name.trim()
+    const baseUrl = form.baseUrl.trim().replace(/\/+$/, "")
+    const existing = id === undefined ? undefined : this.configured().find((entry) => entry.id === id)
+    const target = existing?.id ?? providerIdFrom(name)
 
-    if (this.find(id) !== undefined) return `There is already a provider named ${id}.`
+    if (id !== undefined && existing === undefined) throw new Error(`No added provider named ${id}.`)
+
+    if (target === undefined) throw new Error("The name needs a letter or a digit.")
+
+    if (existing === undefined && this.find(target) !== undefined)
+      throw new Error(`There is already a provider named ${target}. Pick another name.`)
 
     if (!URL.canParse(baseUrl) || !/^https?:$/.test(new URL(baseUrl).protocol))
-      return `${baseUrl} is not an http(s) URL. It should be the API root, like http://localhost:11434/v1.`
+      throw new Error(
+        `${baseUrl} is not an http(s) URL. It should be the API root, like http://localhost:11434/v1.`,
+      )
 
-    saveProviders([
-      ...this.configured(),
-      { id, name: id, kind: "openai-compatible", base_url: baseUrl.replace(/\/+$/, "") },
-    ])
+    const key = form.key.trim()
 
-    return undefined
+    if (key !== "") {
+      const failed = this.setKey(target, key, true)
+
+      if (failed !== undefined) throw new Error(failed)
+    }
+
+    const ids = parseModelIds(form.models)
+
+    const listed =
+      ids.length === 0
+        ? []
+        : await withTimeout(
+            listOpenAIModels({
+              provider: target,
+              baseUrl,
+              token: key === "" ? getSecret(`provider:${target}`) : key,
+              openaiCatalog: false,
+            }),
+            LIST_TIMEOUT_MS,
+          ).catch(() => [])
+
+    const server: ProviderConfig = {
+      id: target,
+      name: name === "" ? target : name,
+      kind: "openai-compatible",
+      base_url: baseUrl,
+    }
+
+    const saved = ids.length === 0 ? server : { ...server, models: describeModels(ids, listed) }
+
+    saveProviders([...this.configured().filter((entry) => entry.id !== target), saved])
+
+    return target
   }
 
   /** Remove an added provider and its key. Built-in providers cannot be removed. */
@@ -249,12 +321,16 @@ export class Providers {
     return undefined
   }
 
-  setKey(id: string, key: string): string | undefined {
-    const provider = this.find(id)
+  /** Store a provider's API key. `unsaved` allows a server not yet in config. */
+  setKey(id: string, key: string, unsaved = false): string | undefined {
+    const provider: ProviderConfig | undefined =
+      this.find(id) ?? (unsaved ? { id, name: id, kind: "openai-compatible" } : undefined)
 
     if (provider === undefined) return `No provider named ${id}.`
 
-    if (provider.kind === "chatgpt") return "ChatGPT uses sign-in, not a key: /provider login."
+    if (provider.kind === "chatgpt") return "ChatGPT uses sign-in, not a key."
+
+    this.onKey(key)
 
     return setSecret(secretAccount(provider), key) ? undefined : "The keychain did not accept the key."
   }

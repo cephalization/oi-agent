@@ -118,6 +118,9 @@ const buildEngine = (override?: ApprovalMode): Engine => {
 
   for (const key of providers.keys()) redactor.add(key)
 
+  // Keys added in /provider during the session are scrubbed too.
+  providers.onKey = (key) => redactor.add(key)
+
   let model: ModelLayer
 
   try {

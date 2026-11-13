@@ -11,7 +11,6 @@ import {
   chatgptToken,
   OPENAI_BASE_URL,
   openBrowser,
-  PROVIDER_ID,
   type ProviderConfig,
   configPath,
   defaultHome,
@@ -24,6 +23,7 @@ import {
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { ask, askSecret, choose, confirm, say } from "./prompts.ts"
+import { Providers } from "./providers.ts"
 import { style, wrap } from "./tui/ansi.ts"
 
 const MODELS: ReadonlyArray<{ value: string; label: string; hint?: string }> = [
@@ -85,23 +85,25 @@ const providerStep = async (current: Config): Promise<ProviderChoice> => {
       ? current.provider
       : "compatible"
 
-  return choose<ProviderChoice>(
+  const top = await choose<ProviderChoice>(
     "Which provider?",
     [
       { value: "anthropic", label: "Anthropic", hint: "Claude, with an API key" },
-      { value: "openai", label: "OpenAI", hint: "with an API key" },
-      {
-        value: "chatgpt",
-        label: "ChatGPT plan",
-        hint: "sign in with ChatGPT; uses your plan instead of a key",
-      },
-      {
-        value: "compatible",
-        label: "Another OpenAI-compatible server",
-        hint: "Ollama, vLLM, LM Studio, OpenRouter, …",
-      },
+      { value: "openai", label: "OpenAI", hint: "sign in with ChatGPT, or an API key" },
+      { value: "compatible", label: "OpenAI-compatible", hint: "Ollama, vLLM, LM Studio, OpenRouter, …" },
     ],
-    initial,
+    initial === "chatgpt" ? "openai" : initial,
+  )
+
+  if (top !== "openai") return top
+
+  return choose<ProviderChoice>(
+    "How do you want to use OpenAI?",
+    [
+      { value: "chatgpt", label: "Sign in with ChatGPT", hint: "uses your plan instead of a key" },
+      { value: "openai", label: "API key", hint: "billed to your API account" },
+    ],
+    initial === "openai" ? "openai" : "chatgpt",
   )
 }
 
@@ -159,18 +161,41 @@ const signInStep = async (): Promise<boolean> => {
   }
 }
 
-const compatibleStep = async (current: Config): Promise<ProviderConfig> => {
-  step("Server", "Any server with an OpenAI-style /chat/completions endpoint.")
+/** Add or change an OpenAI-compatible server. Resolves to its provider id. */
+const compatibleStep = async (current: Config, providers: Providers): Promise<string> => {
+  step(
+    "Server",
+    "Any server with an OpenAI-style /chat/completions endpoint. The key, if any, goes to the keychain.",
+  )
 
   const existing = current.providers.find((provider) => provider.id === current.provider)
-  let id = await ask("A short name for it", existing?.id ?? "ollama")
 
-  while (!PROVIDER_ID.test(id) || ["anthropic", "openai", "chatgpt"].includes(id))
-    id = await ask("Lower-case letters, digits and dashes, not a built-in name", "ollama")
+  for (;;) {
+    const name = await ask("Name", existing?.name ?? "Ollama")
+    const baseUrl = await ask("Base URL", existing?.base_url ?? "http://localhost:11434/v1")
 
-  const baseUrl = await ask("API root", existing?.base_url ?? "http://localhost:11434/v1")
+    const key = await askSecret(
+      "API key (input is hidden; leave empty if it needs none, or to keep the stored one)",
+    )
 
-  return { id, name: id, kind: "openai-compatible", base_url: baseUrl.replace(/\/+$/, "") }
+    const models = await ask(
+      "Models, comma-separated (type `none` to use the server's own list)",
+      existing?.models?.map((model) => model.id).join(", ") ?? "none",
+    )
+
+    try {
+      const id = await providers.saveServer(
+        { name, baseUrl, key, models: models === "none" ? "" : models },
+        existing !== undefined && existing.name === name ? existing.id : undefined,
+      )
+
+      ok(`Saved ${name} as ${id}.`)
+
+      return id
+    } catch (error) {
+      warn(error instanceof Error ? error.message : String(error))
+    }
+  }
 }
 
 const ANTHROPIC_MODELS = MODELS
@@ -258,6 +283,7 @@ export const runOnboarding = async (): Promise<Config> => {
 
   const user = await ask("Your name", current.user)
   const choice = await providerStep(current)
+  const servers = new Providers()
   let provider: string = choice
   let providers = current.providers
   let model: string
@@ -271,10 +297,10 @@ export const runOnboarding = async (): Promise<Config> => {
     let token: string | undefined
 
     if (choice === "compatible") {
-      server = await compatibleStep(current)
-      provider = server.id
-      providers = [...providers.filter((entry) => entry.id !== server?.id), server]
-      token = await apiKeyStep(`provider:${server.id}`, server.id, true)
+      provider = await compatibleStep(current, servers)
+      providers = loadConfig().providers
+      server = providers.find((entry) => entry.id === provider)
+      token = server === undefined ? undefined : servers.key(server)
     } else if (choice === "openai") {
       token = await apiKeyStep("openai", "OpenAI", false)
     } else if (await signInStep()) {
@@ -283,13 +309,21 @@ export const runOnboarding = async (): Promise<Config> => {
 
     const baseUrl = server?.base_url ?? OPENAI_BASE_URL
 
-    model = await listedModelStep(current.provider === provider ? current.model : "", async () =>
-      choice !== "compatible" && token === undefined
-        ? []
-        : (await listOpenAIModels({ provider, baseUrl, token, openaiCatalog: choice !== "compatible" })).map(
-            (entry) => entry.id,
-          ),
-    )
+    model = await listedModelStep(current.provider === provider ? current.model : "", async () => {
+      if (server?.models !== undefined && server.models.length > 0)
+        return server.models.map((entry) => entry.id)
+
+      if (choice !== "compatible" && token === undefined) return []
+
+      const listed = await listOpenAIModels({
+        provider,
+        baseUrl,
+        token,
+        openaiCatalog: choice !== "compatible",
+      })
+
+      return listed.map((entry) => entry.id)
+    })
   }
 
   step("Effort", "How hard the model works on each turn.")
