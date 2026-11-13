@@ -227,6 +227,8 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
 
     root.attribute(OI.OUTPUT_VALUE, output)
     root.attribute(OI.OUTPUT_MIME, "text/plain")
+    // Everything but this root span is on disk by now, so this is the turn's footprint.
+    root.patchMetadata({ session_bytes: env.store.sessionBytes(env.sessionId) })
 
     return { traceId, output, stopReason: response.stop_reason ?? "unknown", steps }
   })
@@ -241,6 +243,7 @@ export const runTurn = (
     device: env.store.device().id,
     pid: process.pid,
     prompt_version: rulesVersion(env.cwd),
+    session_bytes: env.store.sessionBytes(env.sessionId),
   }
 
   const injected = (input.injected ?? []).map((entry) => ({

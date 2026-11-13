@@ -58,6 +58,7 @@ export class Transcript {
   private tokens = 0
   private startedMs = 0
   private active = 0
+  private bytes = 0
 
   constructor(screen: Screen, self: string) {
     this.screen = screen
@@ -70,6 +71,11 @@ export class Transcript {
 
   get elapsedSeconds(): number {
     return this.running ? Math.floor((Date.now() - this.startedMs) / 1000) : 0
+  }
+
+  /** Bytes the session occupies on disk, as of the last finished turn. */
+  get sessionBytes(): number {
+    return this.bytes
   }
 
   get totalTokens(): number {
@@ -159,6 +165,7 @@ export class Transcript {
   private turnEnded(span: EndedSpan): void {
     this.flushText()
     this.active = Math.max(this.active - 1, 0)
+    this.bytes = readMetadata(span).session_bytes ?? this.bytes
     this.tools.clear()
 
     if (span.status_code === "ERROR") {
@@ -256,6 +263,7 @@ export class Transcript {
 
     for (const turn of branch) {
       this.turns.add(turn.trace_id)
+      this.bytes = readMetadata(turn.root).session_bytes ?? this.bytes
       this.prompt(turn.root)
       this.screen.commit(this.prose((turn.output ?? "").split("\n")))
       this.markdown.reset()

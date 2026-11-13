@@ -8,6 +8,7 @@
 import {
   type ApprovalRequest,
   type Engine,
+  formatBytes,
   formatShareLink,
   listRuleVersions,
   loadEvals,
@@ -84,6 +85,8 @@ class App {
     const parts = [style.gray(options.label)]
 
     if (transcript.totalTokens > 0) parts.push(style.gray(`${compact(transcript.totalTokens)} tokens`))
+
+    if (transcript.sessionBytes > 0) parts.push(style.gray(formatBytes(transcript.sessionBytes)))
 
     if (options.phoenix !== undefined) parts.push(style.gray("→ phoenix"))
 

@@ -69,6 +69,12 @@ Phoenix, a failure is shown to the agent at the start of its next turn, and
 the failure is distilled into a standing rule in `.oi/rules.md`. `/revert`
 undoes the latest rule.
 
+Evaluators can also put a limit on something the harness measures. Each turn's
+root span records the session's size on disk (`metadata.oi_agent.session_bytes`),
+so "warn me when this conversation is larger than 100 MB" becomes a threshold
+evaluator: once the session is over the limit, the agent is told at the start
+of its next turn and warns you.
+
 **Share a session.** `/share` opens a [tailcat](https://github.com/tailscale/tailcat)
 tunnel (`brew install tailcat`) and prints two links: one that can send
 prompts and one that is view-only. On another machine, `oi join <link>` copies

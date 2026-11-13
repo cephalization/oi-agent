@@ -258,6 +258,24 @@ export class Store {
     return matches.length === 1 ? matches[0] : undefined
   }
 
+  /** Bytes a session occupies on disk: every file under its directory. */
+  sessionBytes(sessionId: string): number {
+    const root = this.sessionDir(sessionId)
+    let total = 0
+
+    try {
+      for (const entry of fs.readdirSync(root, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile()) continue
+
+        total += fs.statSync(path.join(entry.parentPath, entry.name), { throwIfNoEntry: false })?.size ?? 0
+      }
+    } catch {
+      return 0
+    }
+
+    return total
+  }
+
   listTraceIds(sessionId: string): Array<string> {
     return listDir(path.join(this.sessionDir(sessionId), "traces")).filter((name) => TRACE_NAME.test(name))
   }

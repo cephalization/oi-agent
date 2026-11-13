@@ -33,6 +33,7 @@ OpenInference team, not proposals.
 | 9   | Which version of the standing prompt a turn ran under                   | `metadata.prompt_version` (content hash of the rules file)                              | `llm.prompt_template.version` is about templates, not an evolving system prompt.                                                                                      |
 | 10  | Who a turn is from, with any assurance                                  | `user.id` as claimed by the peer                                                        | Self-asserted. Role comes from the share token, not identity.                                                                                                         |
 | 11  | Request fields that are not messages (cache control, effort, fallbacks) | raw request body in `input.value`                                                       | The flattened attributes cannot reproduce a request; the raw body is what the fold replays.                                                                           |
+| 12  | How much storage a session occupies                                     | `metadata.session_bytes` on each turn's root span, measured at turn start and end       | Nothing in the spec describes the cost of keeping a trace or session.                                                                                                 |
 
 ## Not yet checked
 

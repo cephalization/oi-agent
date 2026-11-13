@@ -44,6 +44,46 @@ const setup = (respond: (call: ModelCall, step: number) => Json) => {
 }
 
 describe("evaluators", () => {
+  it("records session size on each turn and fails a threshold evaluator when it is exceeded", async () => {
+    const seen: Array<ReadonlyArray<Json>> = []
+
+    const { engine, store, sessionId, cwd } = setup((call) => {
+      seen.push(call.messages)
+
+      return say("Done.")
+    })
+
+    saveEval(cwd, {
+      name: "session_size",
+      description: "Warn the user that the session is over the size limit.",
+      kind: "threshold",
+      metric: "session_bytes",
+      max: 1000,
+      fail_labels: ["fail"],
+      feedback: true,
+      learn: false,
+    })
+
+    await engine.submit(sessionId, { text: "hello", userId: "tony" })
+    await engine.idle(sessionId)
+
+    const turn = loadSession(store, sessionId).head
+    const recorded = turn === undefined ? 0 : (readMetadata(turn.root).session_bytes ?? 0)
+    const [annotation] = store.listAnnotations(sessionId)
+
+    // The size on the span is the real footprint, short of the root span file itself.
+    expect(recorded).toBeGreaterThan(1000)
+    expect(recorded).toBeLessThanOrEqual(store.sessionBytes(sessionId))
+    expect(annotation?.annotation).toMatchObject({ name: "session_size", label: "fail", score: recorded })
+    expect(annotation?.annotation.explanation).toContain("over the limit of 1.0 kB")
+
+    await engine.submit(sessionId, { text: "next", userId: "tony" })
+
+    expect(JSON.stringify(seen[1])).toContain(
+      "session_size: fail — Warn the user that the session is over the size limit.",
+    )
+  })
+
   it("lets the agent create an evaluator with a tool call", async () => {
     const { engine, sessionId, cwd } = setup((_call, step) =>
       step === 0

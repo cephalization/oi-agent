@@ -15,6 +15,9 @@ const JUDGE_TEMPLATE = `You are reviewing one turn of a coding agent's work.
 
 Criterion: {{instructions}}
 
+Facts about the session, measured by the harness:
+{{facts}}
+
 The turn:
 <turn>
 {{transcript}}
@@ -63,6 +66,7 @@ export const phoenixJudge =
     const result = await evaluator.evaluate({
       instructions: definition.instructions,
       transcript: record.transcript,
+      facts: record.facts,
     })
 
     return {

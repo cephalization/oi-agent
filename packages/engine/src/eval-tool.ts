@@ -3,14 +3,23 @@
  * standing evaluator. This is what "prompt an eval into existence" means.
  */
 import { Effect, Schema } from "effect"
-import { type EvalDefinition, type EvalRuntime, pendingFeedback, runEvals, saveEval } from "./evals.ts"
+import {
+  type EvalDefinition,
+  type EvalRuntime,
+  Metric,
+  pendingFeedback,
+  runEvals,
+  saveEval,
+} from "./evals.ts"
 import type { Engine } from "./engine.ts"
 import { defineTool, failed, ok, type ToolSpec } from "./tools.ts"
 
 const Input = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
-  kind: Schema.Literals(["llm", "code"]),
+  kind: Schema.Literals(["llm", "code", "threshold"]),
+  metric: Schema.optionalKey(Metric),
+  max: Schema.optionalKey(Schema.Finite),
   instructions: Schema.optionalKey(Schema.String),
   pattern: Schema.optionalKey(Schema.String),
   target: Schema.optionalKey(Schema.Literals(["output", "tool_input", "tool_output", "transcript"])),
@@ -30,6 +39,13 @@ const toDefinition = (input: typeof Input.Type): EvalDefinition | string => {
     return input.instructions === undefined
       ? "An llm evaluator needs instructions."
       : { ...common, kind: "llm", instructions: input.instructions, choices: { pass: 1, fail: 0 } }
+  }
+
+  if (input.kind === "threshold") {
+    return input.metric === undefined || input.max === undefined
+      ? "A threshold evaluator needs a metric and a max."
+      : // A limit is not something the agent can learn its way under, so it only gives feedback.
+        { ...common, learn: input.learn ?? false, kind: "threshold", metric: input.metric, max: input.max }
   }
 
   if (input.pattern === undefined) return "A code evaluator needs a pattern."
@@ -61,7 +77,18 @@ export const createEvalTool: ToolSpec = defineTool({
     properties: {
       name: { type: "string", description: "Short snake_case name, for example ran_tests." },
       description: { type: "string", description: "One sentence saying what the evaluator checks." },
-      kind: { type: "string", enum: ["llm", "code"] },
+      kind: { type: "string", enum: ["llm", "code", "threshold"] },
+      metric: {
+        type: "string",
+        enum: ["session_bytes", "tool_calls"],
+        description:
+          "For kind threshold: session_bytes is the size of this session's span files on disk, in bytes; tool_calls is the number of tool calls in the turn.",
+      },
+      max: {
+        type: "number",
+        description:
+          "For kind threshold: the turn fails when the metric is greater than this. Use bytes for session_bytes (100 MB is 100000000).",
+      },
       instructions: {
         type: "string",
         description:

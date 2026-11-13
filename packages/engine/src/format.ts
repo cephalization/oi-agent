@@ -215,6 +215,11 @@ export const EngineMetadata = Schema.Struct({
   evaluates: Schema.optionalKey(Schema.String),
   /** Version of the learned-rules prompt section in effect. */
   prompt_version: Schema.optionalKey(Schema.String),
+  /**
+   * Bytes the whole session occupies on disk. On a turn's root span: measured
+   * when the turn starts and again when it ends.
+   */
+  session_bytes: Schema.optionalKey(Schema.Int),
 })
 
 export type EngineMetadata = {

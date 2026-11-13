@@ -9,7 +9,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Match, Option, Schema } from "effect"
 import { loadSession } from "./fold.ts"
 import {
   type AnnotationBody,
@@ -65,7 +65,22 @@ export const CodeEval = Schema.Struct({
 
 export type CodeEval = typeof CodeEval.Type
 
-export const EvalDefinition = Schema.Union([LlmEval, CodeEval])
+/** A numeric fact about the turn that an evaluator can put a limit on. */
+export const Metric = Schema.Literals(["session_bytes", "tool_calls"])
+
+export type Metric = typeof Metric.Type
+
+export const ThresholdEval = Schema.Struct({
+  ...common,
+  kind: Schema.Literal("threshold"),
+  metric: Metric,
+  /** The turn fails when the metric is greater than this. */
+  max: Schema.Finite,
+})
+
+export type ThresholdEval = typeof ThresholdEval.Type
+
+export const EvalDefinition = Schema.Union([LlmEval, CodeEval, ThresholdEval])
 
 export type EvalDefinition = typeof EvalDefinition.Type
 
@@ -112,6 +127,17 @@ export interface TurnRecord {
   readonly tool_input: string
   readonly tool_output: string
   readonly transcript: string
+  /** Numeric facts about the turn and its session. */
+  readonly metrics: { readonly [M in Metric]: number }
+  /** The same facts as text, for a judge to read. */
+  readonly facts: string
+}
+
+/** `104857600` as `100.0 MB`. */
+export const formatBytes = (bytes: number): string => {
+  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} kB`
+
+  return bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : `${(bytes / 1e9).toFixed(2)} GB`
 }
 
 /** A turn rendered as text, from its spans. */
@@ -129,7 +155,12 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
       `[tool call] ${calls[index] ?? ""}\n[tool result] ${truncate(results[index] ?? "", 2000)}`,
   )
 
+  const sessionBytes =
+    (root === undefined ? undefined : readMetadata(root).session_bytes) ?? store.sessionBytes(sessionId)
+
   return {
+    metrics: { session_bytes: sessionBytes, tool_calls: tools.length },
+    facts: `Session storage on disk: ${formatBytes(sessionBytes)} (${sessionBytes} bytes). Tool calls this turn: ${tools.length}.`,
     input,
     output,
     tool_input: calls.join("\n"),
@@ -236,15 +267,38 @@ const reporterFor = (runtime: EvalRuntime, sessionId: string) =>
     return (usage: ModelUsage): void => runtime.store.endSpan(sessionId, usageSpan(sessionId, span, usage))
   })
 
+const describeMetric = (metric: Metric, value: number): string =>
+  metric === "session_bytes"
+    ? `session storage is ${formatBytes(value)}`
+    : `the turn made ${value} tool calls`
+
+const limitOf = (definition: ThresholdEval): string =>
+  definition.metric === "session_bytes" ? formatBytes(definition.max) : String(definition.max)
+
+const runThreshold = (definition: ThresholdEval, record: TurnRecord): Verdict => {
+  const value = record.metrics[definition.metric]
+  const over = value > definition.max
+
+  return {
+    label: over ? "fail" : "pass",
+    score: value,
+    explanation: `${definition.description} Currently ${describeMetric(definition.metric, value)}, ${over ? "over" : "within"} the limit of ${limitOf(definition)}.`,
+  }
+}
+
 const evaluate = (
   runtime: EvalRuntime,
   definition: EvalDefinition,
   record: TurnRecord,
   report: UsageReporter,
 ): Promise<Verdict> =>
-  definition.kind === "code"
-    ? Promise.resolve(runCode(definition, record))
-    : runtime.judge(definition, record, report)
+  Match.value(definition).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      code: (code) => Promise.resolve(runCode(code, record)),
+      threshold: (threshold) => Promise.resolve(runThreshold(threshold, record)),
+      llm: (llm) => runtime.judge(llm, record, report),
+    }),
+  )
 
 type MutableAnnotation = { -readonly [K in keyof AnnotationBody]: AnnotationBody[K] }
 
