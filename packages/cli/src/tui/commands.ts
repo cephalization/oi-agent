@@ -39,8 +39,7 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   {
     name: "/provider",
-    summary: "list providers, add one, set a key, or sign in with ChatGPT",
-    argument: { name: "action", required: false },
+    summary: "set up Anthropic, OpenAI (key or ChatGPT sign-in), or an OpenAI-compatible server",
     hostOnly: true,
   },
   { name: "/tour", summary: "have the agent explain how it works, using this session", hostOnly: false },

@@ -252,6 +252,8 @@ export interface ModelOption {
   readonly provider: string
   /** Supported effort levels, in order. Empty when the model has no effort setting. */
   readonly efforts: ReadonlyArray<Effort>
+  /** The most tokens it writes in one reply, when the provider says. */
+  readonly maxOutput?: number | undefined
 }
 
 const effortsOf = (info: Anthropic.ModelInfo): ReadonlyArray<Effort> => {

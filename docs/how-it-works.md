@@ -153,8 +153,10 @@ These work best on the session you are in, because the evidence is right there.
   parts stay behind. Responses requests use `store: false` and carry
   reasoning forward as `encrypted_content`, so OpenAI holds no state either.
   Providers are config entries without secrets
-  (`source/engine/src/providers.ts`); keys are keychain accounts named after
-  them, and a ChatGPT sign-in (OAuth with PKCE, `source/engine/src/chatgpt.ts`)
+  (`source/engine/src/providers.ts`). An OpenAI-compatible entry can name
+  its `models`; then `/model` offers those rather than the server's own
+  list, and requests ask for no more than each model's `max_output`. Keys are
+  keychain accounts named after the providers, and a ChatGPT sign-in (OAuth with PKCE, `source/engine/src/chatgpt.ts`)
   is a keychain entry holding a refreshable token.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.

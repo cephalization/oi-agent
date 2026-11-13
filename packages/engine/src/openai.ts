@@ -415,7 +415,15 @@ export const openaiModel = (settings: OpenAISettings): Layer.Layer<Model> =>
 const ModelList = Schema.Union([
   /** OpenAI and most compatible servers. */
   Schema.Struct({
-    data: Schema.Array(Schema.Struct({ id: Schema.String, display_name: Nullable(Schema.String) })),
+    data: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        display_name: Nullable(Schema.String),
+        /** OpenRouter-style servers (llama.cpp, ds4, …) name the model and its output limit. */
+        name: Nullable(Schema.String),
+        top_provider: Nullable(Schema.Struct({ max_completion_tokens: Nullable(Schema.Number) })),
+      }),
+    ),
   }),
   /** ChatGPT plan usage. */
   Schema.Struct({
@@ -471,13 +479,17 @@ export const listOpenAIModels = async (options: ListOptions): Promise<Array<Mode
 
   const entries =
     "data" in list
-      ? list.data.map((model) => ({ id: model.id, name: model.display_name ?? model.id }))
+      ? list.data.map((model) => ({
+          id: model.id,
+          name: model.display_name ?? model.name ?? model.id,
+          maxOutput: model.top_provider?.max_completion_tokens ?? undefined,
+        }))
       : list.models
           .filter(
             (model) =>
               model.visibility === undefined || model.visibility === null || model.visibility === "list",
           )
-          .map((model) => ({ id: model.slug, name: model.display_name ?? model.slug }))
+          .map((model) => ({ id: model.slug, name: model.display_name ?? model.slug, maxOutput: undefined }))
 
   return entries
     .filter((entry) => !options.openaiCatalog || !NOT_CHAT.test(entry.id))
@@ -486,6 +498,7 @@ export const listOpenAIModels = async (options: ListOptions): Promise<Array<Mode
       name: entry.name,
       provider: options.provider,
       efforts: options.openaiCatalog ? openaiEfforts(entry.id) : [],
+      maxOutput: entry.maxOutput,
     }))
     .toSorted((a, b) => a.id.localeCompare(b.id))
 }
