@@ -186,6 +186,22 @@ export const stringAttr = (span: SpanFile, key: string): string | undefined =>
 
 const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })
 
+/** Where a turn ran. The spans hold the conversation, not the files. */
+export const Workspace = Schema.Struct({
+  cwd: Schema.String,
+  git: Schema.optionalKey(
+    Schema.Struct({
+      /** The `origin` remote, with any credentials removed. */
+      remote: Schema.optionalKey(Schema.String),
+      commit: Schema.String,
+      /** Tracked files had uncommitted changes. */
+      dirty: Schema.Boolean,
+    }),
+  ),
+})
+
+export type Workspace = typeof Workspace.Type
+
 /**
  * Engine-specific state rides in the OpenInference `metadata` attribute (a
  * JSON string) under one key, so it never collides with user metadata.
@@ -213,6 +229,8 @@ export const EngineMetadata = Schema.Struct({
   ),
   /** The trace an `EVALUATOR` span judged. */
   evaluates: Schema.optionalKey(Schema.String),
+  /** On a turn's root span: the directory and checkout it ran in. */
+  workspace: Schema.optionalKey(Workspace),
   /** Version of the learned-rules prompt section in effect. */
   prompt_version: Schema.optionalKey(Schema.String),
   /**

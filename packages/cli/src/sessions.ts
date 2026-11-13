@@ -1,5 +1,14 @@
 /** Session summaries for `oi sessions` and the `/resume` picker. */
-import { loadSession, type Store } from "@oi-agent/engine"
+import {
+  listMarkers,
+  readMarker,
+  type SessionSummary as Summary,
+  type Store,
+  summarizeSession,
+} from "@oi-agent/engine"
+
+/** Where a session's files are kept between uses. */
+export type Storage = "local" | "phoenix"
 
 export interface SessionSummary {
   readonly id: string
@@ -9,6 +18,7 @@ export interface SessionSummary {
   readonly title: string
   /** When the latest turn started, or the session was created if it has none. */
   readonly activeMs: number
+  readonly storage: Storage
 }
 
 const timeOf = (iso: string | undefined): number => {
@@ -17,22 +27,39 @@ const timeOf = (iso: string | undefined): number => {
   return Number.isFinite(ms) ? ms : 0
 }
 
-/** Every session, most recently active first. */
-export const summarizeSessions = (store: Store): Array<SessionSummary> =>
-  store
-    .listSessionIds()
-    .map((id) => {
-      const view = loadSession(store, id)
+export const fromSummary = (summary: Summary, storage: Storage): SessionSummary => ({
+  id: summary.id,
+  cwd: summary.cwd,
+  turns: summary.turns,
+  title: summary.title,
+  activeMs: timeOf(summary.active_at),
+  storage,
+})
 
-      return {
-        id,
-        cwd: view.header?.cwd ?? "",
-        turns: view.turns.length,
-        title: view.turns[0]?.input.split("\n")[0]?.trim() ?? "",
-        activeMs: timeOf(view.turns.at(-1)?.root.start_time ?? view.header?.created_at),
-      }
-    })
-    .toSorted((a, b) => b.activeMs - a.activeMs)
+/** The first summary of each session wins, so pass the most authoritative list first. */
+export const mergeSessions = (
+  ...lists: ReadonlyArray<ReadonlyArray<SessionSummary>>
+): Array<SessionSummary> => {
+  const byId = new Map<string, SessionSummary>()
+
+  for (const session of lists.flat()) if (!byId.has(session.id)) byId.set(session.id, session)
+
+  return [...byId.values()].toSorted((a, b) => b.activeMs - a.activeMs)
+}
+
+/**
+ * Every session this machine knows without asking Phoenix: the ones on disk,
+ * and the ones moved to Phoenix-only storage. Most recently active first.
+ */
+export const summarizeSessions = (store: Store): Array<SessionSummary> =>
+  mergeSessions(
+    store
+      .listSessionIds()
+      .map((id) =>
+        fromSummary(summarizeSession(store, id), readMarker(store, id) === undefined ? "local" : "phoenix"),
+      ),
+    listMarkers(store).map((marker) => fromSummary(marker.summary, "phoenix")),
+  )
 
 /** "just now", "5m ago", "3h ago", "2d ago", or a date for anything older than a month. */
 export const ago = (ms: number, nowMs: number = Date.now()): string => {

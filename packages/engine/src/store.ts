@@ -359,7 +359,9 @@ export class Store {
     for (const name of names) {
       const span = ENDED_NAME.test(name) ? readWith(parseEndedSpan, path.join(dir, name)) : undefined
 
-      if (span === undefined) continue
+      // The same span can arrive twice under different names (an import rounds
+      // its start time), so the span id decides.
+      if (span === undefined || endedIds.has(span.context.span_id)) continue
 
       ended.push(span)
       endedIds.add(span.context.span_id)
@@ -410,14 +412,54 @@ export class Store {
     return { trace_id: traceId, ended: [], open: [] }
   }
 
+  // --- import -------------------------------------------------------------
+
+  /**
+   * Write an ended span that came from elsewhere (Phoenix). Nothing is
+   * announced, and a span this session already has is left alone.
+   * Returns whether a file was written.
+   */
+  importSpan(sessionId: string, span: EndedSpan): boolean {
+    const dir = this.traceDir(sessionId, span.context.trace_id)
+    const suffix = `-${span.context.span_id}.json`
+
+    if (listDir(dir).some((name) => name.endsWith(suffix))) return false
+
+    writeAtomic(`${this.spanBase(sessionId, span)}.json`, printSpan(span), true)
+
+    return true
+  }
+
+  /** Write a session header that came from elsewhere, unless the session has one. */
+  importHeader(header: SessionHeader): void {
+    const file = path.join(this.sessionDir(header.id), "session.json")
+
+    if (fs.existsSync(file)) return
+
+    writeAtomic(file, printHeader(header), true)
+    fs.mkdirSync(path.join(this.sessionDir(header.id), "traces"), { recursive: true })
+  }
+
+  /**
+   * Delete a session's directory. Only for a session that is safely
+   * elsewhere: moving it to Phoenix-only storage verifies that first.
+   */
+  removeSession(sessionId: string): void {
+    if (!this.listSessionIds().includes(sessionId)) return
+
+    fs.rmSync(this.sessionDir(sessionId), { recursive: true, force: true })
+  }
+
   // --- annotations --------------------------------------------------------
 
-  writeAnnotation(annotation: AnnotationFile): void {
+  /** `announce: false` for an annotation imported from Phoenix rather than produced here. */
+  writeAnnotation(annotation: AnnotationFile, announce = true): void {
     const sessionId = annotation.target.session_id
     const file = path.join(this.sessionDir(sessionId), "annotations", `${annotation.id}.json`)
 
     writeAtomic(file, printAnnotation(annotation), true)
-    this.emit({ type: "annotation", session_id: sessionId, annotation })
+
+    if (announce) this.emit({ type: "annotation", session_id: sessionId, annotation })
   }
 
   listAnnotations(sessionId: string): Array<AnnotationFile> {

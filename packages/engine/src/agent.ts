@@ -26,6 +26,7 @@ import {
   toolUses,
   type ToolUseBlock,
 } from "./wire.ts"
+import { workspaceOf } from "./workspace.ts"
 
 export const AGENT_NAME = "oi-agent"
 
@@ -251,6 +252,7 @@ export const runTurn = (
     pid: process.pid,
     prompt_version: rulesVersion(env.cwd),
     session_bytes: env.store.sessionBytes(env.sessionId),
+    workspace: workspaceOf(env.cwd),
   }
 
   const injected = (input.injected ?? []).map((entry) => ({

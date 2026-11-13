@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import type { AnnotationFile, EndedSpan } from "../format.ts"
+import { type AnnotationFile, type EndedSpan, METADATA_KEY } from "../format.ts"
 import type { Store, StoreEvent } from "../store.ts"
 import { encodeTraceRequest } from "./otlp.ts"
 
@@ -45,7 +45,7 @@ const targetFor = (annotation: AnnotationFile) => {
 
 export class PhoenixExporter {
   private readonly store: Store
-  private readonly target: PhoenixTarget
+  private readonly destination: PhoenixTarget
   private readonly logFile: string
   private readonly sent: Set<string>
   private readonly spans: Array<EndedSpan> = []
@@ -63,7 +63,7 @@ export class PhoenixExporter {
       .slice(0, 16)
 
     this.store = store
-    this.target = { ...target, endpoint: target.endpoint.replace(/\/+$/, "") }
+    this.destination = { ...target, endpoint: target.endpoint.replace(/\/+$/, "") }
     this.logFile = path.join(store.home, "export", `${key}.log`)
     this.sent = new Set(this.readLog())
   }
@@ -83,6 +83,20 @@ export class PhoenixExporter {
 
     fs.mkdirSync(path.dirname(this.logFile), { recursive: true })
     fs.appendFileSync(this.logFile, `${ids.join("\n")}\n`)
+  }
+
+  /** Record ids Phoenix already has (because they were imported from it), so they are not sent back. */
+  markSent(ids: ReadonlyArray<string>): void {
+    this.remember(ids.filter((id) => !this.sent.has(id)))
+  }
+
+  /** Ids in this list that this collector has not been sent. */
+  unsent(ids: ReadonlyArray<string>): Array<string> {
+    return ids.filter((id) => !this.sent.has(id))
+  }
+
+  get target(): PhoenixTarget {
+    return this.destination
   }
 
   /** Export spans and annotations as they are written. Returns a stop function. */
@@ -129,7 +143,8 @@ export class PhoenixExporter {
   private headers(contentType: string): Headers {
     const headers = new Headers({ "content-type": contentType })
 
-    if (this.target.apiKey !== undefined) headers.set("authorization", `Bearer ${this.target.apiKey}`)
+    if (this.destination.apiKey !== undefined)
+      headers.set("authorization", `Bearer ${this.destination.apiKey}`)
 
     return headers
   }
@@ -140,7 +155,7 @@ export class PhoenixExporter {
     body: string | Uint8Array<ArrayBuffer>,
   ): Promise<string | undefined> {
     try {
-      const response = await fetch(`${this.target.endpoint}/v1/${route}`, {
+      const response = await fetch(`${this.destination.endpoint}/v1/${route}`, {
         method: "POST",
         headers: this.headers(contentType),
         body,
@@ -159,7 +174,7 @@ export class PhoenixExporter {
 
     if (batch.length === 0) return
 
-    const body = encodeTraceRequest(batch, { project: this.target.project, serviceName: "oi-agent" })
+    const body = encodeTraceRequest(batch, { project: this.destination.project, serviceName: "oi-agent" })
     const error = await this.post("traces", "application/x-protobuf", new Uint8Array(body))
 
     if (error !== undefined) {
@@ -185,7 +200,8 @@ export class PhoenixExporter {
         name: file.annotation.name,
         annotator_kind: file.annotation.annotator_kind,
         identifier: file.annotation.identifier ?? "",
-        metadata: file.annotation.metadata ?? {},
+        // The local id rides along so an import can restore it: Phoenix assigns its own.
+        metadata: { ...file.annotation.metadata, [METADATA_KEY]: { id: file.id } },
         result: {
           label: file.annotation.label,
           score: file.annotation.score,
