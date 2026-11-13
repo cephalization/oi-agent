@@ -36,7 +36,9 @@ Before opening a PR:
 3. **Run everything:** `pnpm check && pnpm test && pnpm e2e`. All of it runs
    live on the cheap default models (`chatgpt/gpt-5.6-luna`, and
    `claude-haiku-5-5` where Anthropic is needed); the whole suite takes one
-   to four minutes. Do not switch scenarios to expensive models.
+   to four minutes. Do not switch scenarios to expensive models. From
+   oi's bash tool, pass `timeout_ms: 600000`: the default two minutes
+   kills the suite partway through.
 4. **Check it is stable.** Run a new or changed scenario at least three
    times. If a model sometimes does something else, fix the prompt (ask for
    something checkable; tell it to call tools rather than ask whether it
@@ -53,6 +55,12 @@ When a scenario fails, its error has the session outline (turns, model
 calls, tool calls) and the last screen of each terminal. `OI_E2E_KEEP=1`
 keeps the sandbox for inspection. The scenario's span in Phoenix
 (`oi-agent-e2e` project) links to the sessions it drove.
+
+If you are oi working on oi: the `oi` you are running is an installed
+copy, and nothing you build in this checkout changes it. Try your change
+with `bin/oi` or the e2e scenarios, never by running `pnpm dev`, which would
+install your unfinished work as everyone's `oi` (it refuses under oi unless
+given `--force`).
 
 Housekeeping: scenarios close their own Rex sessions and sandboxes. After an
 interrupted run, check `rex ls` for leftover `oi-e2e-*` sessions and kill
@@ -107,7 +115,7 @@ pnpm check     # format + lint + type-check; run before every commit
 pnpm fix       # same, applying fixes (it rewrites files: re-read before editing)
 pnpm test      # unit tests
 pnpm e2e       # end-to-end scenarios, live (see "Verifying a change")
-pnpm dev       # bundle the CLI and relink ~/.local/bin/oi; rerun after changes
+pnpm dev       # build the CLI and install a copy as ~/.local/bin/oi; rerun after changes
 bin/oi         # run from source without building
 ```
 
