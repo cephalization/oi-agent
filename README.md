@@ -102,6 +102,13 @@ Key files in the engine, in reading order: `format.ts` (the on-disk format),
 
 ## Development
 
+Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org).
+Pull requests are squash-merged and their titles are checked, because the
+title becomes the commit. On each push to `main`, release-please keeps a
+release pull request up to date; merging it tags the release and publishes
+`oi-agent` to npm with provenance. `feat:` bumps the minor version, `fix:` the
+patch, and `feat!:` or a `BREAKING CHANGE:` footer the major.
+
 ```sh
 pnpm dev        # build and link the `oi` command
 pnpm check      # format, lint and type-check (Vite+)

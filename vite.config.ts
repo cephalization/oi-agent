@@ -2,7 +2,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defineConfig } from "vite-plus"
 
-const ignored = [".claude/**", "tools/oxlint/anti-slop/**", "dist/**", "**/dist/**"]
+const ignored = [
+  ".claude/**",
+  "CHANGELOG.md",
+  ".release-please-manifest.json",
+  "tools/oxlint/anti-slop/**",
+  "dist/**",
+  "**/dist/**",
+]
 
 export default defineConfig({
   fmt: {

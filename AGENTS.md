@@ -21,6 +21,15 @@ design. This file is what you would otherwise have to rediscover.
   reopen them without new evidence. One is flagged for revisiting: disk cost
   of self-contained spans (see "Status" in PLAN.md).
 
+## Commits and releases
+
+- Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
+  `ci:`, `chore:`). release-please reads them to version and publish the
+  `oi-agent` npm package; see `.github/workflows/release.yml`.
+- Only the CLI is published, as one bundled file. The engine is private and
+  bundled into it, so runtime dependencies belong to the engine package and
+  the CLI package has none.
+
 ## Invariants
 
 - **Spans are the state.** The agent loop derives every model request from

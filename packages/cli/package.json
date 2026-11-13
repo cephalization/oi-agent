@@ -1,11 +1,41 @@
 {
-  "name": "@oi-agent/cli",
-  "version": "0.0.1",
-  "bin": {
-    "oi": "./src/main.ts"
+  "name": "oi-agent",
+  "version": "0.0.0",
+  "description": "A coding agent whose entire runtime state is OpenInference spans on disk.",
+  "keywords": [
+    "agent",
+    "cli",
+    "llm",
+    "openinference",
+    "opentelemetry",
+    "phoenix"
+  ],
+  "homepage": "https://github.com/cephalization/oi-agent#readme",
+  "bugs": "https://github.com/cephalization/oi-agent/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cephalization/oi-agent.git",
+    "directory": "packages/cli"
   },
+  "bin": {
+    "oi": "./dist/oi.mjs"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
-  "dependencies": {
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "vp pack",
+    "prepack": "vp pack && cp ../../README.md README.md"
+  },
+  "devDependencies": {
     "@oi-agent/engine": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
