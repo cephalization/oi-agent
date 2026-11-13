@@ -48,7 +48,9 @@ Follow along in `source/engine/src/agent.ts`.
    flattened messages are stored beside them as `llm.*` attributes.
 4. **If the reply contains tool calls, each runs in a `TOOL` span**
    (`toolStep`, and `source/engine/src/tools.ts`). Tools that change the
-   machine wait for approval first. Output is scrubbed of secrets
+   machine wait for approval first, with `metadata.oi_agent.awaiting_approval`
+   set on the in-flight span until the decision is recorded beside it.
+   Output is scrubbed of secrets
    (`source/engine/src/redact.ts`) before it is written.
 5. **Back to step 2.** The loop keeps no variables holding the conversation.
    Each pass re-derives it from disk, which is why killing the process
