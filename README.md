@@ -115,6 +115,13 @@ so "warn me when this conversation is larger than 100 MB" becomes a threshold
 evaluator: once the session is over the limit, the agent is told at the start
 of its next turn and warns you.
 
+**Bring your agent files.** In a project set up for other coding agents, oi
+reads the nearest `AGENTS.md`, `AGENT.md` or `CLAUDE.md` (up to the repository
+root, plus `~/.claude/CLAUDE.md` and `~/.config/AGENTS.md`) at the start of a
+session and follows it. Skills in `.agents/skills/` and `.claude/skills/`, in
+the project or your home directory, are listed by description and read in full
+only when a task calls for one.
+
 **Share a session.** `/share` opens a [tailcat](https://github.com/tailscale/tailcat)
 tunnel (`brew install tailcat`) and prints two links: one that can send
 prompts and one that is view-only. On another machine, `oi join <link>` copies

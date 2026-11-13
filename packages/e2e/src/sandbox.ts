@@ -52,7 +52,7 @@ const sbString = (value: string): string => JSON.stringify(value)
 /**
  * The sandbox profile. Everything is allowed except writing outside the
  * sandbox (plus the few system places a process must write) and reading the
- * developer's real oi-agent state.
+ * developer's real oi-agent state and their user-level agent instructions.
  */
 const profile = (root: string): string => {
   const home = os.homedir()
@@ -70,6 +70,10 @@ const profile = (root: string): string => {
     path.join(home, ".oi-agent"),
     path.join(home, ".config/oi-agent"),
     path.join(home, "Library/Preferences/oi-agent"),
+    // The developer's own instructions and skills for coding agents, which oi would otherwise find.
+    path.join(home, ".claude"),
+    path.join(home, ".agents"),
+    path.join(home, ".config/AGENTS.md"),
   ]
 
   return [

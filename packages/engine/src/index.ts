@@ -16,6 +16,8 @@ export * from "./oi.ts"
 
 export * from "./prompt.ts"
 
+export * from "./instructions.ts"
+
 export * from "./redact.ts"
 
 export * from "./secrets.ts"
