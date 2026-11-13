@@ -1,5 +1,19 @@
 # oi-agent
 
+## 0.3.0
+
+### Minor Changes
+
+- [#17](https://github.com/cephalization/oi-agent/pull/17) [`c8ba77d`](https://github.com/cephalization/oi-agent/commit/c8ba77d33768d40080c2487b7f39fb6c8c56d3ae) Thanks [@cephalization](https://github.com/cephalization)! - oi now follows the instruction files and skills you keep for other coding agents. At the start of a session it reads the nearest `AGENTS.md`, `AGENT.md` or `CLAUDE.md` (from the working directory up to the repository root, plus `~/.claude/CLAUDE.md` and `~/.config/AGENTS.md`). Skills in `.agents/skills/` and `.claude/skills/`, in the project or your home directory, are listed by description, and a skill is read in full only when a task calls for it. Each read shows up as a tool call in the session's spans.
+
+- [#15](https://github.com/cephalization/oi-agent/pull/15) [`3c8cfa1`](https://github.com/cephalization/oi-agent/commit/3c8cfa1f3e0ba60f5643b46552e5625614cfefe9) Thanks [@cephalization](https://github.com/cephalization)! - - **Point model requests at a proxy:** `OPENAI_BASE_URL` now overrides the API root for the OpenAI and ChatGPT providers, as `ANTHROPIC_BASE_URL` already did for Anthropic.
+  - **See pending approvals in the trace:** a tool call waiting for you to allow or deny it is now marked `awaiting_approval` on its in-flight `TOOL` span. Viewers and anything else reading the session can tell it apart from a tool that is running.
+  - **A bad value in `config.json` no longer resets everything:** a value oi does not accept (a typo, or a setting from a newer version) used to make it ignore the whole file silently, so every setting went back to its default, model included. Now only that key is ignored, and oi says which one, under the banner or on stderr for `oi run`.
+
+### Patch Changes
+
+- [#17](https://github.com/cephalization/oi-agent/pull/17) [`5a7ea88`](https://github.com/cephalization/oi-agent/commit/5a7ea888e93096b6f538e881383b441c4ff259bd) Thanks [@cephalization](https://github.com/cephalization)! - The bash tool now says when it killed a command for running past its time limit, and how to give the command longer, instead of leaving the model to read the kill as a failure. Commands it runs see `OI_AGENT=1`, so scripts can tell they run under oi.
+
 ## 0.2.0
 
 ### Minor Changes
