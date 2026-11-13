@@ -211,6 +211,8 @@ export const EngineMetadata = Schema.Struct({
   approval: Schema.optionalKey(
     Schema.Struct({ decision: Schema.Literals(["allow", "deny"]), by: Schema.String }),
   ),
+  /** The trace an `EVALUATOR` span judged. */
+  evaluates: Schema.optionalKey(Schema.String),
   /** Version of the learned-rules prompt section in effect. */
   prompt_version: Schema.optionalKey(Schema.String),
 })

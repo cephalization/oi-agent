@@ -91,7 +91,9 @@ export const loadSession = (store: Store, sessionId: string, nowMs: number = Dat
   for (const traceId of store.listTraceIds(sessionId)) {
     const found = rootOf(store.readTraceRoots(sessionId, traceId))
 
-    if (found !== undefined) turns.push(summarize(found.root, found.open?.heartbeat_ms, nowMs))
+    // Evaluator runs are traces too, but only agent turns are conversation.
+    if (found !== undefined && kindOf(found.root) === "AGENT")
+      turns.push(summarize(found.root, found.open?.heartbeat_ms, nowMs))
   }
 
   const continued = new Set(turns.map((turn) => turn.previous))

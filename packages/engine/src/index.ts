@@ -31,3 +31,11 @@ export * from "./wire.ts"
 export * from "./export/otlp.ts"
 
 export * from "./export/phoenix.ts"
+
+export * from "./eval-tool.ts"
+
+export * from "./evals.ts"
+
+export * from "./judge.ts"
+
+export * from "./rules.ts"

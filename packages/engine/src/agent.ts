@@ -13,6 +13,7 @@ import { Model, type ModelError } from "./model.ts"
 import { requestAttributes, responseAttributes } from "./oi.ts"
 import { systemPrompt } from "./prompt.ts"
 import type { Redactor } from "./redact.ts"
+import { rulesVersion } from "./rules.ts"
 import type { Store } from "./store.ts"
 import type { ToolSpec } from "./tools.ts"
 import { DiskSpan, diskTracer } from "./tracer.ts"
@@ -239,6 +240,7 @@ export const runTurn = (
     previous: input.previous,
     device: env.store.device().id,
     pid: process.pid,
+    prompt_version: rulesVersion(env.cwd),
   }
 
   const injected = (input.injected ?? []).map((entry) => ({

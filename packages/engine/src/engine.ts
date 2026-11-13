@@ -152,12 +152,19 @@ export class Engine {
     const previous = this.queues.get(sessionId) ?? Promise.resolve()
     const outcome = previous.then(() => this.execute(sessionId, prompt))
 
-    this.queues.set(
-      sessionId,
-      outcome.then(() => undefined),
+    // Evaluators run after the answer is delivered but before the next turn starts.
+    const settled = outcome.then((result) =>
+      result.ok ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined) : undefined,
     )
 
+    this.queues.set(sessionId, settled)
+
     return outcome
+  }
+
+  /** Resolves when a session has no turn or evaluator still running. */
+  idle(sessionId: string): Promise<void> {
+    return this.queues.get(sessionId) ?? Promise.resolve()
   }
 
   private resolvePrevious(sessionId: string, prompt: Prompt): { trace_id: string; span_id: string } | null {
@@ -203,11 +210,7 @@ export class Engine {
 
     this.running.delete(sessionId)
 
-    if (Exit.isSuccess(exit)) {
-      await this.hooks.afterTurn(sessionId, exit.value.traceId)
-
-      return { ok: true, result: exit.value }
-    }
+    if (Exit.isSuccess(exit)) return { ok: true, result: exit.value }
 
     const interrupted = Exit.hasInterrupts(exit)
 

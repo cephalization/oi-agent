@@ -29,10 +29,10 @@ export interface ToolSpec {
   readonly run: (input: Json, context: ToolContext) => Effect.Effect<ToolOutcome>
 }
 
-const ok = (output: string): ToolOutcome => ({ output, isError: false })
-const failed = (output: string): ToolOutcome => ({ output, isError: true })
+export const ok = (output: string): ToolOutcome => ({ output, isError: false })
+export const failed = (output: string): ToolOutcome => ({ output, isError: true })
 
-interface ToolDefinition<S extends Schema.Codec<unknown, unknown>> {
+export interface ToolDefinition<S extends Schema.Codec<unknown, unknown>> {
   readonly name: string
   readonly description: string
   readonly parameters: Json
@@ -41,7 +41,9 @@ interface ToolDefinition<S extends Schema.Codec<unknown, unknown>> {
   readonly run: (input: S["Type"], context: ToolContext) => Effect.Effect<ToolOutcome>
 }
 
-const defineTool = <S extends Schema.Codec<unknown, unknown>>(definition: ToolDefinition<S>): ToolSpec => {
+export const defineTool = <S extends Schema.Codec<unknown, unknown>>(
+  definition: ToolDefinition<S>,
+): ToolSpec => {
   const decode = Schema.decodeUnknownOption(definition.input)
 
   return {

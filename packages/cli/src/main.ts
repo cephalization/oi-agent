@@ -2,6 +2,11 @@
 import { parseArgs } from "node:util"
 import {
   anthropicModel,
+  attachEvals,
+  builtinTools,
+  createEvalTool,
+  modelDistiller,
+  phoenixJudge,
   type ApprovalMode,
   Engine,
   getSecret,
@@ -48,6 +53,11 @@ const fail = (message: string): never => {
   process.exit(1)
 }
 
+// The AI SDK prints deprecation notices from inside phoenix-evals; keep the terminal clean.
+process.env["AI_SDK_LOG_WARNINGS"] = "false"
+
+process.removeAllListeners("warning")
+
 const store = new Store()
 
 const buildEngine = (approvals: ApprovalMode): Engine => {
@@ -58,11 +68,12 @@ const buildEngine = (approvals: ApprovalMode): Engine => {
 
   redactor.add(apiKey)
 
-  return new Engine({
+  const engine = new Engine({
     store,
     config,
     approvals,
     redactor,
+    tools: [...builtinTools, createEvalTool],
     model: anthropicModel({
       model: config.model,
       effort: config.effort,
@@ -70,6 +81,10 @@ const buildEngine = (approvals: ApprovalMode): Engine => {
       apiKey,
     }),
   })
+
+  attachEvals(engine, { store, judge: phoenixJudge(apiKey), distill: modelDistiller(apiKey) })
+
+  return engine
 }
 
 const pickSession = (engine: Engine): string => {
@@ -104,11 +119,21 @@ const run = async (prompt: string): Promise<void> => {
   const stopExport = phoenix?.watch()
   const outcome = await engine.submit(sessionId, { text: prompt, userId: engine.config.user })
 
+  process.stdout.write("\n")
+  await engine.idle(sessionId)
+
+  for (const annotation of store.listAnnotations(sessionId)) {
+    if (!outcome.ok || annotation.target.trace_id !== outcome.result.traceId) continue
+
+    const { name, label, explanation } = annotation.annotation
+
+    process.stderr.write(`\u001B[2m◆ eval ${name}: ${label ?? ""} ${explanation ?? ""}\u001B[0m\n`)
+  }
+
   unsubscribe()
   stopExport?.()
   await phoenix?.flush()
   store.close()
-  process.stdout.write("\n")
   process.stderr.write(`\u001B[2msession ${sessionId}\u001B[0m\n`)
 
   if (!outcome.ok) fail(`Turn failed: ${outcome.message}`)
