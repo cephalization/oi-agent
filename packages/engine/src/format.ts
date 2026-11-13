@@ -213,7 +213,9 @@ export const EngineMetadata = Schema.Struct({
   prompt_version: Schema.optionalKey(Schema.String),
 })
 
-export type EngineMetadata = typeof EngineMetadata.Type
+export type EngineMetadata = {
+  -readonly [K in keyof typeof EngineMetadata.Type]: (typeof EngineMetadata.Type)[K]
+}
 
 export const METADATA_KEY = "oi_agent"
 

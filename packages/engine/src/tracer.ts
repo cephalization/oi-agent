@@ -3,11 +3,13 @@ import {
   AttrValue,
   type Attributes,
   type EndedSpan,
+  type EngineMetadata,
   OI,
   type SpanEvent,
   type SpanFile,
   type StatusCode,
   type StreamDelta,
+  writeMetadata,
 } from "./format.ts"
 import { newSpanId, newTraceId, nsToIso } from "./ids.ts"
 import type { Store } from "./store.ts"
@@ -186,6 +188,16 @@ export class DiskSpan implements Tracer.Span {
     this.queueFlush()
   }
 
+  /** Merge engine metadata into the span's `metadata` attribute. */
+  patchMetadata(patch: EngineMetadata): void {
+    this.attribute(OI.METADATA, writeMetadata(this.attrs[OI.METADATA], patch))
+  }
+
+  /** Set several attributes at once. */
+  assign(attributes: ReadonlyMap<string, AttrValue>): void {
+    for (const [key, value] of attributes) this.attribute(key, value)
+  }
+
   addLinks(links: ReadonlyArray<Tracer.SpanLink>): void {
     if (this.ended !== undefined) return
 
@@ -225,5 +237,5 @@ export class DiskSpan implements Tracer.Span {
 
 export type { Attributes }
 
-export const makeDiskTracer = (store: Store, sessionId: string): Tracer.Tracer =>
+export const diskTracer = (store: Store, sessionId: string): Tracer.Tracer =>
   Tracer.make({ span: (options) => new DiskSpan(store, sessionId, options) })

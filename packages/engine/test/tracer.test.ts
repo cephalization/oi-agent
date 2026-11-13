@@ -1,17 +1,18 @@
 import { Effect } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { OI } from "../src/format.ts"
-import { makeDiskTracer } from "../src/tracer.ts"
+import { diskTracer } from "../src/tracer.ts"
 import { tempStore, tree } from "./helpers.ts"
 
 describe("disk tracer", () => {
   it("writes one immutable file per ended span and leaves nothing in flight", async () => {
     const store = tempStore()
     const session = store.createSession("/tmp/project")
+
     const program = Effect.succeed("done").pipe(
       Effect.withSpan("child", { attributes: { [OI.SPAN_KIND]: "TOOL", "tool.name": "read" } }),
       Effect.withSpan("turn", { attributes: { [OI.SPAN_KIND]: "AGENT", [OI.INPUT_VALUE]: "hi" } }),
-      Effect.withTracer(makeDiskTracer(store, session.id)),
+      Effect.withTracer(diskTracer(store, session.id)),
     )
 
     await Effect.runPromise(program)
@@ -34,9 +35,10 @@ describe("disk tracer", () => {
   it("records a failure as an ERROR span with an exception event", async () => {
     const store = tempStore()
     const session = store.createSession("/tmp/project")
+
     const program = Effect.fail(new Error("boom")).pipe(
       Effect.withSpan("turn"),
-      Effect.withTracer(makeDiskTracer(store, session.id)),
+      Effect.withTracer(diskTracer(store, session.id)),
     )
 
     await Effect.runPromiseExit(program)
@@ -53,6 +55,7 @@ describe("disk tracer", () => {
     const store = tempStore()
     const session = store.createSession("/tmp/project")
     const seen: Array<string> = []
+
     const program = Effect.sync(() => {
       const [traceId] = store.listTraceIds(session.id)
 
@@ -60,7 +63,7 @@ describe("disk tracer", () => {
     }).pipe(
       Effect.delay("5 millis"),
       Effect.withSpan("turn"),
-      Effect.withTracer(makeDiskTracer(store, session.id)),
+      Effect.withTracer(diskTracer(store, session.id)),
     )
 
     await Effect.runPromise(program)

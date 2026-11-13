@@ -366,18 +366,29 @@ export class Store {
    * Read only the root span of a trace. The root starts first, so it is the
    * first span file in name order and the rest of the trace is never parsed.
    */
-  readRoot(sessionId: string, traceId: string): SpanFile | undefined {
+  readTraceRoots(sessionId: string, traceId: string): TraceFiles {
     const dir = this.traceDir(sessionId, traceId)
 
     for (const name of listDir(dir)) {
-      if (!ENDED_NAME.test(name) && !OPEN_NAME.test(name)) continue
+      const file = path.join(dir, name)
 
-      const span = readWith(parseSpan, path.join(dir, name))
+      if (ENDED_NAME.test(name)) {
+        const span = readWith(parseEndedSpan, file)
 
-      if (span !== undefined && span.parent_id === null) return span
+        if (span?.parent_id === null) return { trace_id: traceId, ended: [span], open: [] }
+      }
+
+      if (OPEN_NAME.test(name)) {
+        const span = readWith(parseSpan, file)
+        const heartbeat = fs.statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? 0
+
+        if (span?.parent_id === null) {
+          return { trace_id: traceId, ended: [], open: [{ span, heartbeat_ms: heartbeat, deltas: [] }] }
+        }
+      }
     }
 
-    return undefined
+    return { trace_id: traceId, ended: [], open: [] }
   }
 
   // --- annotations --------------------------------------------------------
