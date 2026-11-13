@@ -206,6 +206,8 @@ export const EngineMetadata = Schema.Struct({
   ),
   /** A tool call whose result is an error. */
   is_error: Schema.optionalKey(Schema.Boolean),
+  /** A tool call that is waiting for the host to allow or deny it. */
+  awaiting_approval: Schema.optionalKey(Schema.Boolean),
   approval: Schema.optionalKey(
     Schema.Struct({ decision: Schema.Literals(["allow", "deny"]), by: Schema.String }),
   ),

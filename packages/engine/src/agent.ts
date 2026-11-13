@@ -75,7 +75,7 @@ export interface TurnInput {
   readonly userId: string
   /** The turn to continue from; `null` starts the conversation. */
   readonly previous: { readonly trace_id: string; readonly span_id: string } | null
-  readonly inboxId?: string
+  readonly inboxId?: string | undefined
   /** Eval feedback to put in front of the user's text. */
   readonly injected?: ReadonlyArray<AnnotationFile>
 }
@@ -148,7 +148,7 @@ const toolStep = (env: TurnEnv, use: ToolUseBlock, userId: string) => {
         user_id: userId,
       })
 
-      span.patchMetadata({ approval: { decision, by: env.store.device().name } })
+      span.patchMetadata({ awaiting_approval: false, approval: { decision, by: env.store.device().name } })
 
       if (decision === "deny")
         return yield* new ToolFailed({ message: "The user declined to run this tool call." })

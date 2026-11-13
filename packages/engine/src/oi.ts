@@ -114,6 +114,15 @@ export const requestAttributes = (body: RequestBody, raw: string): Attrs => {
 
   let index = 0
 
+  out.set(
+    OI.LLM_INVOCATION_PARAMETERS,
+    JSON.stringify({
+      max_tokens: body.max_tokens,
+      thinking: body.thinking,
+      output_config: body.output_config,
+    }),
+  )
+
   if (body.system !== undefined) {
     out.set(`${OI.LLM_INPUT_MESSAGES}.0.message.role`, "system")
     out.set(`${OI.LLM_INPUT_MESSAGES}.0.message.content`, text(body.system))

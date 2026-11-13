@@ -90,6 +90,9 @@ export const RequestBody = Schema.Struct({
   system: Schema.optionalKey(Schema.Json),
   messages: Schema.Array(Schema.Json),
   tools: Schema.optionalKey(Schema.Array(ToolDefinition)),
+  max_tokens: Schema.optionalKey(Schema.Json),
+  thinking: Schema.optionalKey(Schema.Json),
+  output_config: Schema.optionalKey(Schema.Json),
 })
 
 export type RequestBody = typeof RequestBody.Type
