@@ -98,7 +98,9 @@ making its scenarios pass, then removing `pending`.
 - Assert on spans first and on the screen second. Never assert on a model's
   exact wording; ask for something checkable ("reply with just the number").
 - Tell the model to call a tool rather than ask whether it may: some models
-  ask in prose, and oi does the asking.
+  ask in prose, and oi does the asking. `src/steps.ts` has `callBash()` for
+  the prompt and `awaitApproval()`, which fails at once, with the model's
+  answer, if the turn ends without the tool call.
 - Wait on spans (`settledTurns`) rather than sleeping.
 - Keep secrets out of fixtures. Use `FAKE_SECRET`, which is built at run
   time.
