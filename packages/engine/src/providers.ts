@@ -40,7 +40,13 @@ export const ProviderConfig = Schema.Struct({
 
 export type ProviderConfig = typeof ProviderConfig.Type
 
-export const OPENAI_BASE_URL = "https://api.openai.com/v1"
+/**
+ * OpenAI's API root, for the OpenAI and ChatGPT providers. `$OPENAI_BASE_URL`
+ * overrides it, as it does for OpenAI's own SDKs (Anthropic's SDK reads
+ * `$ANTHROPIC_BASE_URL` the same way); the end-to-end tests use both to put
+ * a recording proxy in front of the real APIs.
+ */
+export const OPENAI_BASE_URL = process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1"
 
 export const BUILTIN_PROVIDERS: ReadonlyArray<ProviderConfig> = [
   { id: "anthropic", name: "Anthropic", kind: "anthropic" },
