@@ -1,0 +1,11 @@
+{
+  "name": "@oi-agent/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end scenarios that drive the real oi CLI in a sandbox and check the spans it writes.",
+  "type": "module",
+  "dependencies": {
+    "@oi-agent/engine": "workspace:*",
+    "effect": "^4.1.4"
+  }
+}
