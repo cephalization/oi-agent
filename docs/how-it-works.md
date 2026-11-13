@@ -51,7 +51,9 @@ Follow along in `source/engine/src/agent.ts`.
    machine wait for approval first, with `metadata.oi_agent.awaiting_approval`
    set on the in-flight span until the decision is recorded beside it.
    Output is scrubbed of secrets
-   (`source/engine/src/redact.ts`) before it is written.
+   (`source/engine/src/redact.ts`) before it is written. `bash` kills a
+   command after two minutes unless the model asks for longer, and says
+   so in the result; the commands it runs see `OI_AGENT=1`.
 5. **Back to step 2.** The loop keeps no variables holding the conversation.
    Each pass re-derives it from disk, which is why killing the process
    mid-turn loses nothing: restarting takes the same path.
