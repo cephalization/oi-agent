@@ -2,6 +2,7 @@
 import { Option } from "effect"
 import {
   type Dialect,
+  effortIn,
   mergeAssistant,
   type ToolCall,
   type ToolResult,
@@ -201,5 +202,10 @@ export const anthropicMessages: Dialect = {
     Option.match(parseResponse(raw), {
       onNone: () => new Map(),
       onSome: (response) => responseAttributes(response, raw),
+    }),
+  effort: (raw) =>
+    Option.match(parseRequest(raw), {
+      onNone: () => undefined,
+      onSome: (request) => effortIn(request.output_config),
     }),
 }

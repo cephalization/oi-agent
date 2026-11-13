@@ -5,6 +5,7 @@
  * step, a resumed session and a crash recovery all take the same path. There
  * is no in-memory conversation to fall out of sync with disk.
  */
+import type { Effort } from "./config.ts"
 import { type Dialect, INTERRUPTED_RESULT, type Reply, type ToolResult } from "./dialect.ts"
 import { dialectFor, translate } from "./dialects/index.ts"
 import {
@@ -225,3 +226,41 @@ export const contextFor = (
 /** The stop reason of a turn's most recent model call, if it has one. */
 export const lastStopReason = (store: Store, sessionId: string, traceId: string): string | undefined =>
   lastModelCall(store.readTrace(sessionId, traceId))?.reply.stopReason
+
+// --- the session's model -----------------------------------------------------
+
+/** The provider, model and effort of a model call, as `Engine.configure` takes them. */
+export interface SessionModel {
+  readonly provider: string
+  readonly model: string
+  readonly effort?: Effort
+}
+
+/**
+ * The model of a session's most recent model call: what resuming the session
+ * should continue with. Only agent turns count, not evaluator runs, which
+ * call a judge model of their own. Undefined for a session no model has served.
+ */
+export const lastModelOf = (store: Store, sessionId: string): SessionModel | undefined => {
+  const turns = [...loadSession(store, sessionId).turns].sort((a, b) => byStart(a.root, b.root))
+
+  for (const turn of turns.toReversed()) {
+    const calls = store
+      .readTrace(sessionId, turn.trace_id)
+      .ended.filter((span) => kindOf(span) === "LLM")
+      .sort(byStart)
+
+    for (const span of calls.toReversed()) {
+      const provider = readMetadata(span).provider ?? stringAttr(span, OI.LLM_PROVIDER)
+      const model = stringAttr(span, OI.LLM_MODEL)
+
+      if (provider === undefined || model === undefined) continue
+
+      const effort = dialectFor(readMetadata(span).api).effort(stringAttr(span, OI.INPUT_VALUE) ?? "")
+
+      return effort === undefined ? { provider, model } : { provider, model, effort }
+    }
+  }
+
+  return undefined
+}

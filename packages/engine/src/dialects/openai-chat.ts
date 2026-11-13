@@ -10,6 +10,7 @@ import { Option, Schema } from "effect"
 import {
   type Attrs,
   type Dialect,
+  effortIn,
   flattenTranscript,
   mergeAssistant,
   parseArguments,
@@ -297,4 +298,9 @@ export const openaiChat: Dialect = {
   fromTranscript,
   requestAttributes,
   responseAttributes,
+  effort: (raw) =>
+    Option.match(parseRequest(raw), {
+      onNone: () => undefined,
+      onSome: (request) => effortIn(request.reasoning_effort),
+    }),
 }

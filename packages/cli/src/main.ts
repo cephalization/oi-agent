@@ -24,6 +24,7 @@ import {
   configProblems,
   hasConfig,
   loadConfig,
+  lastModelOf,
   loadSession,
   parsePhoenixLink,
   PhoenixClient,
@@ -220,6 +221,45 @@ const guard = (engine: Engine, opened: Opened, interactive: boolean): Array<stri
   ]
 }
 
+/**
+ * Continue a session on the model, provider and effort it last used, so
+ * that resuming it does not quietly swap the model. Returns a note when the
+ * model changed, or when the session's model is not available here.
+ */
+const restoreModel = (engine: Engine, sessionId: string): string | undefined => {
+  const last = lastModelOf(store, sessionId)
+  const current = engine.config
+
+  if (last === undefined) return undefined
+
+  const sameModel = last.provider === current.provider && last.model === current.model
+
+  if (sameModel && (last.effort === undefined || last.effort === current.effort)) return undefined
+
+  const name = `${last.provider}/${last.model}`
+
+  try {
+    engine.configure(last)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+
+    return `This session used ${name}, which is not available (${reason}). Using ${current.provider}/${current.model}.`
+  }
+
+  const effort = last.effort === undefined ? "" : ` at effort ${last.effort}`
+
+  return `Continuing on ${name}${effort}, the model this session last used.`
+}
+
+/** Restore the session's model unless `-m` chose one for the session this process opened with. */
+const modelNotes = (engine: Engine, sessionId: string, first: boolean): Array<string> => {
+  if (first && values.model !== undefined) return []
+
+  const note = restoreModel(engine, sessionId)
+
+  return note === undefined ? [] : [note]
+}
+
 const printEvents =
   (sessionId: string) =>
   (event: StoreEvent): void => {
@@ -242,8 +282,9 @@ const run = async (prompt: string): Promise<void> => {
   const opened = await open(sessions, target)
   const sessionId = opened.sessionId
 
-  for (const note of [...configProblems(), ...guard(engine, opened, false)])
-    process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
+  const notes = [...configProblems(), ...modelNotes(engine, sessionId, true), ...guard(engine, opened, false)]
+
+  for (const note of notes) process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
 
   const unsubscribe = store.subscribe(printEvents(sessionId))
   const phoenix = remote?.exporter
@@ -335,6 +376,7 @@ const interactive = async (): Promise<void> => {
   let opened = await open(sessions, target)
   // Shown under the banner of the first session opened.
   let problems = configProblems()
+  let first = true
 
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
@@ -345,6 +387,10 @@ const interactive = async (): Promise<void> => {
 
     drainInbox(engine, sessionId)
 
+    const notes = [...problems, ...modelNotes(engine, sessionId, first), ...guard(engine, opened, true)]
+
+    first = false
+
     const next = await runApp({
       store,
       sessionId,
@@ -354,7 +400,7 @@ const interactive = async (): Promise<void> => {
       phoenix: remote?.exporter,
       sessions,
       from: target.from,
-      notes: [...problems, ...guard(engine, opened, true)],
+      notes,
       providers,
     })
 
