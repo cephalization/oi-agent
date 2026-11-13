@@ -87,7 +87,7 @@ export class Transcript {
     const lines: Array<string> = []
     const columns = this.screen.columns
 
-    if (this.pending !== "") lines.push(this.markdown.line(this.pending))
+    if (this.pending !== "") lines.push(this.markdown.preview(this.pending))
 
     if (this.thinking !== "") lines.push(style.dim(style.italic(`✻ ${clip(this.thinking, columns - 4)}`)))
 

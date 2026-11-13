@@ -34,6 +34,15 @@ export class MarkdownStream {
     return this.inline(text)
   }
 
+  /** Style an unfinished line without advancing the committed fence state. */
+  preview(text: string): string {
+    const preview = new MarkdownStream()
+
+    preview.fenced = this.fenced
+
+    return preview.line(text)
+  }
+
   reset(): void {
     this.fenced = false
   }
