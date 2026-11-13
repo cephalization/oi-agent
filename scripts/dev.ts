@@ -80,7 +80,8 @@ fs.cpSync(path.join(cli, "dist"), path.join(build, "dist"), { recursive: true })
 
 fs.cpSync(path.join(cli, "self"), path.join(build, "self"), { recursive: true })
 
-const built = path.join(build, "dist", "oi.mjs")
+// `oi` runs the launcher, which runs `oi.mjs` beside it and restarts it on /reload.
+const built = path.join(build, "dist", "launcher.mjs")
 
 fs.mkdirSync(binDir, { recursive: true })
 

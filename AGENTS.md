@@ -61,6 +61,8 @@ copy, and nothing you build in this checkout changes it. Try your change
 with `bin/oi` or the e2e scenarios, never by running `pnpm dev`, which would
 install your unfinished work as everyone's `oi` (it refuses under oi unless
 given `--force`).
+Under `bin/oi`, `/reload` restarts on your edited sources in the same
+session, and falls back to the last `pnpm build` if they fail to start.
 
 Housekeeping: scenarios close their own Rex sessions and sandboxes. After an
 interrupted run, check `rex ls` for leftover `oi-e2e-*` sessions and kill
@@ -116,7 +118,7 @@ pnpm fix       # same, applying fixes (it rewrites files: re-read before editing
 pnpm test      # unit tests
 pnpm e2e       # end-to-end scenarios, live (see "Verifying a change")
 pnpm dev       # build the CLI and install a copy as ~/.local/bin/oi; rerun after changes
-bin/oi         # run from source without building
+bin/oi         # run from source without building; /reload picks up edits
 ```
 
 - Only erasable TypeScript syntax: no enums, no constructor parameter

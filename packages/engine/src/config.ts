@@ -70,6 +70,10 @@ const decodePartial = Schema.decodeUnknownOption(PartialConfig)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
 const encodeConfig = Schema.encodeSync(Config)
 
+/** An effort level from text, such as a command-line flag; undefined when it is not one. */
+export const parseEffort = (text: string | undefined): Effort | undefined =>
+  Option.getOrUndefined(decodeEffort(text))
+
 const readFile = (file: string): string | undefined => {
   try {
     return fs.readFileSync(file, "utf8")

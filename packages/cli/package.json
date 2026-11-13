@@ -20,7 +20,7 @@
     "directory": "packages/cli"
   },
   "bin": {
-    "oi": "./dist/oi.mjs"
+    "oi": "./dist/launcher.mjs"
   },
   "files": [
     "dist",

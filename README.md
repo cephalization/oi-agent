@@ -85,6 +85,11 @@ rebuilding the repo never changes an `oi` that is already installed or
 running, and `pnpm dev` refuses to run from inside oi itself unless given
 `--force`. `bin/oi` runs the TypeScript sources directly without building.
 
+`oi` is a small launcher that starts the CLI and starts it again on
+`/reload`, keeping the session. Under `bin/oi` that means edits to the
+sources take effect without leaving the session. If they break startup, the
+launcher falls back to the last `pnpm build`.
+
 ## Things to try
 
 **Look at the state.** Run a turn, then open the session folder:

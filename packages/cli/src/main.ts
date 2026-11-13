@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs"
+import { execFile } from "node:child_process"
+import { closeSync, existsSync, writeSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { runOnboarding } from "./onboarding.ts"
@@ -26,6 +27,7 @@ import {
   loadConfig,
   lastModelOf,
   loadSession,
+  parseEffort,
   parsePhoenixLink,
   PhoenixClient,
   PhoenixExporter,
@@ -62,7 +64,9 @@ Options:
   -c, --continue             Continue the most recent session
   -m, --model <id>           Model to use, as provider/model or a model of the
                              configured provider (default: claude-opus-5-5)
+      --effort <level>       Reasoning effort: low, medium, high, xhigh or max
       --yolo                 Run tools that change the machine without asking
+      --check                Load every module and exit (what /reload checks first)
   -h, --help                 Show this help
 `
 
@@ -72,10 +76,26 @@ const { values, positionals } = parseArgs({
     session: { type: "string", short: "s" },
     continue: { type: "boolean", short: "c", default: false },
     model: { type: "string", short: "m" },
+    effort: { type: "string" },
     yolo: { type: "boolean", default: false },
+    check: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 })
+
+// Static imports have all loaded by now, so this process got as far as a reload needs.
+if (values.check) process.exit(0)
+
+// What the launcher told this process; removed so that nothing it spawns thinks it has a launcher.
+const RELOAD_ENTRY = process.env["OI_AGENT_RELOAD_ENTRY"]
+const LAUNCHER_FD = Number(process.env["OI_AGENT_LAUNCHER_FD"] ?? Number.NaN)
+const FALLBACK = process.env["OI_AGENT_FALLBACK"]
+
+delete process.env["OI_AGENT_RELOAD_ENTRY"]
+
+delete process.env["OI_AGENT_LAUNCHER_FD"]
+
+delete process.env["OI_AGENT_FALLBACK"]
 
 const fail = (message: string): never => {
   process.stderr.write(`${message}\n`)
@@ -111,10 +131,17 @@ const buildEngine = (override?: ApprovalMode): Engine => {
   const approvals = override ?? base.approvals
 
   // `-m openai/gpt-5.1` picks the provider too; a bare id stays with the configured one.
-  const config =
+  const chosen =
     values.model === undefined
       ? base
       : { ...base, ...splitModel(base.providers, values.model, base.provider) }
+
+  const effort = values.effort === undefined ? undefined : parseEffort(values.effort)
+
+  if (values.effort !== undefined && effort === undefined)
+    fail(`--effort takes low, medium, high, xhigh or max, not ${values.effort}.`)
+
+  const config = effort === undefined ? chosen : { ...chosen, effort }
 
   const redactor = new Redactor()
 
@@ -260,6 +287,59 @@ const modelNotes = (engine: Engine, sessionId: string, first: boolean): Array<st
   return note === undefined ? [] : [note]
 }
 
+// --- reload ----------------------------------------------------------------
+
+/** The exit code that tells the launcher a reload was asked for (`EX_TEMPFAIL`). */
+const RELOAD_EXIT = 75
+
+/** Under a launcher, the code a reload would start. Without one, /reload cannot work. */
+const reloadEntry = Number.isInteger(LAUNCHER_FD) ? RELOAD_ENTRY : undefined
+
+/** Write a line to the launcher, if there is one. */
+const tellLauncher = (fields: ReadonlyArray<string>): void => {
+  if (!Number.isInteger(LAUNCHER_FD)) return
+
+  try {
+    writeSync(LAUNCHER_FD, `${fields.join("\0")}\n`)
+  } catch {
+    // The launcher is gone; there is nobody to tell.
+  }
+}
+
+/** The last lines of a failed preflight's output: enough to see the error. */
+const PREFLIGHT_LINES = 15
+
+/** Load the code a reload would start, without starting it. Resolves to why it failed. */
+const preflight = (entry: string) => (): Promise<string | undefined> =>
+  new Promise((resolve) => {
+    execFile(process.execPath, [entry, "--check"], { timeout: 60_000 }, (error, stdout, stderr) => {
+      if (error === null) return resolve(undefined)
+
+      const output = `${stderr}${stdout}`.trim() || error.message
+
+      resolve(output.split("\n").slice(-PREFLIGHT_LINES).join("\n"))
+    })
+  })
+
+/** Tell the launcher the terminal is up. */
+const signalReady = (): void => tellLauncher(["ready"])
+
+/**
+ * Hand the session to the launcher and exit: it starts the CLI again on the
+ * same session, model, effort and approval mode.
+ */
+const reloadInto = (engine: Engine, sessionId: string): never => {
+  const { provider, model, effort } = engine.config
+  const args = ["-s", sessionId, "-m", `${provider}/${model}`, "--effort", effort]
+
+  if (engine.approvals === "allow") args.push("--yolo")
+
+  tellLauncher(["reload", ...args])
+  closeSync(LAUNCHER_FD)
+
+  return process.exit(RELOAD_EXIT)
+}
+
 const printEvents =
   (sessionId: string) =>
   (event: StoreEvent): void => {
@@ -374,9 +454,10 @@ const interactive = async (): Promise<void> => {
   const sessions = new Sessions(store, remote)
   let target: Target | undefined = await initialTarget(engine, remote)
   let opened = await open(sessions, target)
-  // Shown under the banner of the first session opened.
-  let problems = configProblems()
+  // Shown under the banner of the first session opened, with why this is the bundled build if a reload failed.
+  let problems = FALLBACK === undefined ? configProblems() : [FALLBACK, ...configProblems()]
   let first = true
+  let reloading: string | undefined
 
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
@@ -391,7 +472,7 @@ const interactive = async (): Promise<void> => {
 
     first = false
 
-    const next = await runApp({
+    const exit = await runApp({
       store,
       sessionId,
       user: engine.config.user,
@@ -402,15 +483,23 @@ const interactive = async (): Promise<void> => {
       from: target.from,
       notes,
       providers,
+      reload: reloadEntry === undefined ? undefined : preflight(reloadEntry),
+      onStart: signalReady,
     })
 
     problems = []
+
+    // A reload keeps the session where it is: the next process opens it again.
+    if (exit.reload) {
+      reloading = sessionId
+      break
+    }
 
     const away = await sessions.putAway(sessionId)
 
     if (away !== undefined) process.stdout.write(`\u001B[2m${away}\u001B[0m\n`)
 
-    target = next === undefined ? undefined : { identifier: next }
+    target = exit.next === undefined ? undefined : { identifier: exit.next }
 
     if (target === undefined) break
 
@@ -431,7 +520,11 @@ const interactive = async (): Promise<void> => {
     }
   }
 
+  if (reloading !== undefined) await engine.idle(reloading)
+
   store.close()
+
+  if (reloading !== undefined) reloadInto(engine, reloading)
 }
 
 const join = async (text: string): Promise<void> => {

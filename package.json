@@ -9,7 +9,7 @@
     "fix": "vp check --fix",
     "test": "vp test run",
     "dev": "node scripts/dev.ts",
-    "build": "pnpm --filter @oi-agent/cli exec vp pack",
+    "build": "pnpm --filter oi-agent build",
     "e2e": "vp test run --root packages/e2e"
   },
   "devDependencies": {

@@ -111,7 +111,7 @@ describe("slash command completion", () => {
 
   it("lists every command for a bare slash and ranks prefix matches first", () => {
     expect(at("/")?.items).toHaveLength(COMMANDS.length)
-    expect(at("/re")?.items.map((item) => item.value)).toEqual(["/resume", "/revert"])
+    expect(at("/re")?.items.map((item) => item.value)).toEqual(["/resume", "/revert", "/reload"])
     expect(at("/ex")?.items.map((item) => item.value)).toEqual(["/export", "/quit"])
     expect(at("/nothing")).toBeUndefined()
     expect(at("hello")).toBeUndefined()

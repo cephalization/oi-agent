@@ -54,6 +54,11 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/rules", summary: "show rules learned from evaluator failures", hostOnly: false },
   { name: "/revert", summary: "undo the most recent learned rule", hostOnly: true },
   { name: "/export", summary: "send this session to Phoenix now", hostOnly: true },
+  {
+    name: "/reload",
+    summary: "restart oi on its current code, keeping this session",
+    hostOnly: true,
+  },
   { name: "/yolo", summary: "stop asking before running tools (same as tab)", hostOnly: true },
   { name: "/quit", summary: "exit (the session stays on disk)", aliases: ["/exit"], hostOnly: false },
 ]

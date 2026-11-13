@@ -69,6 +69,20 @@ export interface AppOptions {
   readonly from?: string | undefined
   /** Shown under the banner when the session opens. */
   readonly notes?: ReadonlyArray<string> | undefined
+  /**
+   * Check that the code a reload would start can load. Resolves to why not,
+   * or undefined when it can. Present only under the launcher, which does the
+   * restarting; without it `/reload` explains that it cannot.
+   */
+  readonly reload?: (() => Promise<string | undefined>) | undefined
+  /** Called once the terminal is drawn: from then on, a crash is not a failed start. */
+  readonly onStart?: (() => void) | undefined
+}
+
+/** How the app ended: with the session to open next, or asking to reload the code on this one. */
+export interface AppExit {
+  readonly next: string | undefined
+  readonly reload: boolean
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -134,7 +148,11 @@ class App {
   /** A menu the keys move through instead of editing the prompt. */
   private picker: Picker | undefined
   /** Ends the app. With a session id, the caller should open that session next. */
-  private done: (next?: string) => void = () => undefined
+  private finish: (exit: AppExit) => void = () => undefined
+
+  private done(next?: string): void {
+    this.finish({ next, reload: false })
+  }
 
   constructor(options: AppOptions) {
     this.options = options
@@ -1035,6 +1053,31 @@ class App {
     this.say(note === "" ? [done] : [done, note])
   }
 
+  /** Start oi again on the code as it is now, in this session. The launcher does the restart. */
+  private async reload(): Promise<void> {
+    const check = this.options.reload
+
+    if (check === undefined)
+      return this.say([
+        "/reload needs the launcher that `oi` (or bin/oi in a checkout) starts with, and this oi was started without it.",
+      ])
+
+    if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+    this.say(["Checking that the new code loads…"])
+    this.draw()
+
+    const failed = await check()
+
+    if (failed !== undefined)
+      return this.say([
+        "The new code failed the preflight, so this build keeps running:",
+        ...failed.split("\n"),
+      ])
+
+    this.finish({ next: undefined, reload: true })
+  }
+
   private startNew(): void {
     if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
 
@@ -1060,6 +1103,8 @@ class App {
     if (name === "/resume") return this.resume(argument)
 
     if (name === "/new") return this.startNew()
+
+    if (name === "/reload") return this.reload()
 
     if (name === "/share") return this.startShare(argument === "local")
 
@@ -1196,8 +1241,8 @@ class App {
 
   // --- lifecycle ----------------------------------------------------------
 
-  /** Runs until the user leaves. Resolves to the session to open next, if they switched. */
-  async run(): Promise<string | undefined> {
+  /** Runs until the user leaves, switches session or reloads. */
+  async run(): Promise<AppExit> {
     const { store, sessionId, engine, peer, phoenix, label } = this.options
     const header = store.readHeader(sessionId)
 
@@ -1239,15 +1284,18 @@ class App {
     process.stdout.on("resize", onResize)
     process.stdout.write(control.bracketedPasteOn)
     this.draw()
+    this.options.onStart?.()
 
-    const next = await Promise.race([
-      new Promise<string | undefined>((resolve) => (this.done = resolve)),
-      peer?.closed.then(() => {
+    const exit = await Promise.race([
+      new Promise<AppExit>((resolve) => (this.finish = resolve)),
+      peer?.closed.then((): AppExit => {
         this.say(["The host ended the session."])
 
-        return undefined
-      }) ?? new Promise<undefined>(() => undefined),
+        return { next: undefined, reload: false }
+      }) ?? new Promise<AppExit>(() => undefined),
     ])
+
+    const { next } = exit
 
     clearInterval(ticker)
     process.stdin.off("data", onData)
@@ -1264,17 +1312,18 @@ class App {
     peer?.close()
     stopExport?.()
     await phoenix?.flush()
-    process.stdout.write(
-      `${style.gray(
-        next === undefined
-          ? `session saved · resume with: oi -s ${sessionId.slice(0, 13)}`
-          : `left session ${sessionId.slice(0, 13)} · opening ${next.slice(0, 13)}`,
-      )}\n\n`,
-    )
 
-    return next
+    const farewell = exit.reload
+      ? `reloading oi on session ${sessionId.slice(0, 13)}`
+      : next === undefined
+        ? `session saved · resume with: oi -s ${sessionId.slice(0, 13)}`
+        : `left session ${sessionId.slice(0, 13)} · opening ${next.slice(0, 13)}`
+
+    process.stdout.write(`${style.gray(farewell)}\n\n`)
+
+    return exit
   }
 }
 
-/** Resolves to a session id when the user asked to switch to it (`/resume`, `/new`). */
-export const runApp = (options: AppOptions): Promise<string | undefined> => new App(options).run()
+/** Resolves to how the app ended: the session to switch to (`/resume`, `/new`), or a reload. */
+export const runApp = (options: AppOptions): Promise<AppExit> => new App(options).run()
