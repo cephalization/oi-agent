@@ -1,14 +1,19 @@
 /**
- * User configuration: `<home>/config.json`, overridable by environment.
- * Holds no secrets; see `secrets.ts`.
+ * User configuration: `~/.config/oi-agent/config.json`, overridable by
+ * environment. Holds no secrets; see `secrets.ts`.
  */
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { Option, Schema } from "effect"
 
 export const Effort = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
 
 export type Effort = typeof Effort.Type
+
+export const Approvals = Schema.Literals(["ask", "allow"])
+
+export type Approvals = typeof Approvals.Type
 
 export const Config = Schema.Struct({
   /** Model id, for example `claude-opus-5-5`. */
@@ -17,6 +22,12 @@ export const Config = Schema.Struct({
   max_tokens: Schema.Int,
   /** Display name recorded as `user.id` on turns started from this machine. */
   user: Schema.String,
+  /** Whether tools that change the machine wait for a yes. */
+  approvals: Approvals,
+  /** Model used by evaluators and to distill rules. */
+  judge_model: Schema.String,
+  /** Directory that holds sessions. */
+  home: Schema.String,
   phoenix: Schema.Struct({
     /** Base URL of a Phoenix server; empty disables export. */
     endpoint: Schema.String,
@@ -32,6 +43,9 @@ const PartialConfig = Schema.fromJsonString(
     effort: Schema.optionalKey(Effort),
     max_tokens: Schema.optionalKey(Schema.Int),
     user: Schema.optionalKey(Schema.String),
+    approvals: Schema.optionalKey(Approvals),
+    judge_model: Schema.optionalKey(Schema.String),
+    home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
         endpoint: Schema.optionalKey(Schema.String),
@@ -43,6 +57,7 @@ const PartialConfig = Schema.fromJsonString(
 
 const decodePartial = Schema.decodeUnknownOption(PartialConfig)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
+const encodeConfig = Schema.encodeSync(Config)
 
 const readFile = (file: string): string | undefined => {
   try {
@@ -52,16 +67,31 @@ const readFile = (file: string): string | undefined => {
   }
 }
 
-export const configPath = (home: string): string => path.join(home, "config.json")
+/** `$OI_AGENT_CONFIG_DIR`, else `$XDG_CONFIG_HOME/oi-agent`, else `~/.config/oi-agent`. */
+export const configDir = (env: NodeJS.ProcessEnv = process.env): string =>
+  env["OI_AGENT_CONFIG_DIR"] ??
+  path.join(env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"), "oi-agent")
 
-export const loadConfig = (home: string, env: NodeJS.ProcessEnv = process.env): Config => {
-  const file = Option.getOrUndefined(decodePartial(readFile(configPath(home))))
+export const configPath = (env: NodeJS.ProcessEnv = process.env): string =>
+  path.join(configDir(env), "config.json")
+
+/** Whether the user has been through setup on this machine. */
+export const hasConfig = (env: NodeJS.ProcessEnv = process.env): boolean => fs.existsSync(configPath(env))
+
+export const defaultHome = (): string => path.join(os.homedir(), ".oi-agent")
+
+/** Settings from the config file, with environment variables taking precedence. */
+export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
+  const file = Option.getOrUndefined(decodePartial(readFile(configPath(env))))
 
   return {
     model: env["OI_AGENT_MODEL"] ?? file?.model ?? "claude-opus-5-5",
     effort: Option.getOrUndefined(decodeEffort(env["OI_AGENT_EFFORT"])) ?? file?.effort ?? "high",
     max_tokens: file?.max_tokens ?? 64_000,
     user: env["OI_AGENT_USER"] ?? file?.user ?? env["USER"] ?? "user",
+    approvals: file?.approvals ?? "ask",
+    judge_model: env["OI_AGENT_JUDGE_MODEL"] ?? file?.judge_model ?? "claude-haiku-5-5",
+    home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",
       project: env["PHOENIX_PROJECT_NAME"] ?? file?.phoenix?.project ?? "oi-agent",
@@ -69,9 +99,11 @@ export const loadConfig = (home: string, env: NodeJS.ProcessEnv = process.env): 
   }
 }
 
-const encodeConfig = Schema.encodeSync(Config)
+export const saveConfig = (config: Config, env: NodeJS.ProcessEnv = process.env): string => {
+  const file = configPath(env)
 
-export const saveConfig = (home: string, config: Config): void => {
-  fs.mkdirSync(home, { recursive: true })
-  fs.writeFileSync(configPath(home), `${JSON.stringify(encodeConfig(config), null, 2)}\n`)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, `${JSON.stringify(encodeConfig(config), null, 2)}\n`)
+
+  return file
 }

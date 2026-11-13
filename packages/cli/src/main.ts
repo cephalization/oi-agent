@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
+import { runOnboarding } from "./onboarding.ts"
+import { isCancelled } from "./prompts.ts"
 import { runApp } from "./tui/app.ts"
 import {
   anthropicModel,
@@ -15,6 +17,7 @@ import {
   type ApprovalMode,
   Engine,
   getSecret,
+  hasConfig,
   loadConfig,
   loadSession,
   PhoenixExporter,
@@ -33,6 +36,7 @@ Usage:
   oi sessions                List sessions
   oi show <session>          Print a session's turns
   oi export [session]        Send sessions to the configured Phoenix server
+  oi setup                   Choose a model, store keys, connect Phoenix
   oi auth login              Store an Anthropic API key in the keychain
   oi where                   Print the directory sessions are stored in
 
@@ -65,10 +69,23 @@ process.env["AI_SDK_LOG_WARNINGS"] = "false"
 
 process.removeAllListeners("warning")
 
+const [command, ...rest] = positionals
+const firstRun = command === undefined && !values.help && !hasConfig() && process.stdin.isTTY
+
+// Setup runs before the store opens, because it decides where sessions live.
+if (command === "setup" || firstRun) {
+  await runOnboarding().catch((error: Error) =>
+    fail(isCancelled(error) ? "\nSetup cancelled. Nothing was saved." : error.message),
+  )
+
+  if (command === "setup") process.exit(0)
+}
+
 const store = new Store()
 
-const buildEngine = (approvals: ApprovalMode): Engine => {
-  const base = loadConfig(store.home)
+const buildEngine = (override?: ApprovalMode): Engine => {
+  const base = loadConfig()
+  const approvals = override ?? base.approvals
   const config = values.model === undefined ? base : { ...base, model: values.model }
   const apiKey = getSecret("anthropic") ?? fail("No Anthropic API key found. Run `oi auth login`.")
   const redactor = new Redactor()
@@ -89,7 +106,11 @@ const buildEngine = (approvals: ApprovalMode): Engine => {
     }),
   })
 
-  attachEvals(engine, { store, judge: phoenixJudge(apiKey), distill: modelDistiller(apiKey) })
+  attachEvals(engine, {
+    store,
+    judge: phoenixJudge(apiKey, config.judge_model),
+    distill: modelDistiller(apiKey, config.judge_model),
+  })
 
   return engine
 }
@@ -164,7 +185,7 @@ const show = (idOrPrefix: string): void => {
 }
 
 const exporter = (): PhoenixExporter => {
-  const { phoenix } = loadConfig(store.home)
+  const { phoenix } = loadConfig()
 
   if (phoenix.endpoint === "")
     fail("No Phoenix endpoint. Set PHOENIX_COLLECTOR_ENDPOINT or phoenix.endpoint in config.")
@@ -192,7 +213,7 @@ const exportSessions = async (idOrPrefix: string | undefined): Promise<void> => 
 }
 
 const interactive = async (): Promise<void> => {
-  const engine = buildEngine(values.yolo ? "allow" : "ask")
+  const engine = buildEngine(values.yolo ? "allow" : undefined)
   const sessionId = pickSession(engine)
   const phoenix = engine.config.phoenix.endpoint === "" ? undefined : exporter()
 
@@ -206,7 +227,7 @@ const join = async (text: string): Promise<void> => {
   const direct = link.address.startsWith("http")
   const tunnel = direct ? undefined : await tailcatForward(link.address, link.port)
   const base = tunnel === undefined ? `${link.address}:${link.port}` : `http://${tunnel.value}`
-  const user = loadConfig(store.home).user
+  const user = loadConfig().user
   const peer = await joinSession(store, base, link.token, user)
 
   await runApp({
@@ -233,8 +254,6 @@ const authLogin = async (): Promise<void> => {
 
   process.stderr.write("Stored in the system keychain.\n")
 }
-
-const [command, ...rest] = positionals
 
 if (values.help) {
   process.stdout.write(HELP)

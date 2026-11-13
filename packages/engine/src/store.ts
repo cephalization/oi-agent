@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { loadConfig } from "./config.ts"
 import {
   type AnnotationFile,
   type Device,
@@ -155,7 +156,7 @@ export class Store {
   private deviceCache: Device | undefined
 
   constructor(home?: string) {
-    this.home = home ?? process.env["OI_AGENT_HOME"] ?? path.join(os.homedir(), ".oi-agent")
+    this.home = home ?? loadConfig().home
     this.sessionsDir = path.join(this.home, "sessions")
     fs.mkdirSync(this.sessionsDir, { recursive: true })
   }

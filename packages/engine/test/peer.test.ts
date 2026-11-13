@@ -32,7 +32,7 @@ const host = async (): Promise<{ engine: Engine; sessionId: string; server: Peer
 
   const engine = new Engine({
     store,
-    config: loadConfig(store.home, { OI_AGENT_USER: "host" }),
+    config: loadConfig({ OI_AGENT_CONFIG_DIR: store.home, OI_AGENT_USER: "host" }),
     model: scriptedModel((call) => say(`reply ${call.messages.length}`), 30),
     approvals: "allow",
   })

@@ -27,7 +27,7 @@ const setup = (respond: (call: ModelCall, step: number) => Json) => {
 
   const engine = new Engine({
     store,
-    config: loadConfig(store.home, {}),
+    config: loadConfig({ OI_AGENT_CONFIG_DIR: store.home }),
     model: scriptedModel(respond),
     approvals: "allow",
     tools: [...builtinTools, createEvalTool],

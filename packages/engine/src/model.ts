@@ -180,3 +180,15 @@ export const scriptedModel = (
       }),
   })
 }
+
+/**
+ * Ask the API whether a key and model id are usable. Resolves to the model's
+ * display name, or fails with a message suitable for showing to the user.
+ */
+export const checkModel = async (apiKey: string, model: string): Promise<string> => {
+  try {
+    return (await new Anthropic({ apiKey, maxRetries: 0 }).models.retrieve(model)).display_name
+  } catch (error) {
+    throw new Error(describe(error).message, { cause: error })
+  }
+}

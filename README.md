@@ -16,20 +16,23 @@ Requires Node 26+, pnpm, and an Anthropic API key.
 
 ```sh
 pnpm install
-bin/oi auth login          # stores the key in the system keychain
-bin/oi                     # interactive session in the current directory
+bin/oi                     # first run walks you through setup, then starts a session
 ```
 
-Useful environment:
+Setup asks for your name, an Anthropic API key, a model, reasoning effort,
+whether tools need approval, an optional Phoenix server and where sessions
+live. It checks the key and model against the API and looks for Phoenix on
+`localhost:6006`. Settings are saved to `~/.config/oi-agent/config.json`;
+keys go to the system keychain. Run `oi setup` to change them.
 
-```sh
-export PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006   # live export
-export OI_AGENT_MODEL=claude-haiku-5-5                    # default: claude-opus-5-5
-```
+Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
+`OI_AGENT_USER`, `OI_AGENT_HOME`, `PHOENIX_COLLECTOR_ENDPOINT`,
+`PHOENIX_PROJECT_NAME`, `ANTHROPIC_API_KEY`.
 
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |
 | `oi`                           | Interactive session. `-c` continues the latest, `-s <id>` a specific one. |
+| `oi setup`                     | Run setup again.                                                          |
 | `oi run "<prompt>"`            | One prompt, headless. Add `--yolo` to let tools run unasked.              |
 | `oi join <link>`               | Join a session shared with `/share`.                                      |
 | `oi sessions` / `oi show <id>` | List sessions; print one.                                                 |
