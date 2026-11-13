@@ -63,10 +63,12 @@ Kill the process mid-turn and run `oi -c`: it continues from the files.
 
 **Prompt an eval into existence.** Tell the agent something like "from now on,
 always run the tests before telling me a change is done; set up a check for
-that". It writes an evaluator to `.oi/evals/`. After every later turn the
+that". It writes an evaluator to
+`~/.config/oi-agent/projects/<project>/evals/`. After every later turn the
 evaluator runs, its verdict is stored as an annotation and exported to
 Phoenix, a failure is shown to the agent at the start of its next turn, and
-the failure is distilled into a standing rule in `.oi/rules.md`. `/revert`
+the failure is distilled into a standing rule in that folder's `rules.md`.
+Nothing is written into the project itself. `/revert`
 undoes the latest rule.
 
 Evaluators can also put a limit on something the harness measures. Each turn's

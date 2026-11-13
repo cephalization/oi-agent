@@ -5,6 +5,7 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { projectDir } from "./config.ts"
 
 const BASE = `You are oi-agent, a coding agent working in the user's terminal.
 
@@ -21,7 +22,7 @@ Standing checks: when the user asks for something you should always or never do,
 Every step of this session is recorded as OpenInference spans. Automated evaluators may review your turns; when their feedback appears in an <eval-feedback> block, treat it as a correction to apply from then on.`
 
 /** Where evaluator-derived rules for a project live. */
-export const rulesPath = (cwd: string): string => path.join(cwd, ".oi", "rules.md")
+export const rulesPath = (cwd: string): string => path.join(projectDir(cwd), "rules.md")
 
 const readFile = (file: string): string | undefined => {
   try {

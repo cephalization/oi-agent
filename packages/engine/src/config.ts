@@ -2,6 +2,7 @@
  * User configuration: `~/.config/oi-agent/config.json`, overridable by
  * environment. Holds no secrets; see `secrets.ts`.
  */
+import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -74,6 +75,20 @@ export const configDir = (env: NodeJS.ProcessEnv = process.env): string =>
 
 export const configPath = (env: NodeJS.ProcessEnv = process.env): string =>
   path.join(configDir(env), "config.json")
+
+/**
+ * Where a project's evaluators and learned rules live:
+ * `<config>/projects/<name>-<hash>/`. They are kept out of the project itself
+ * so the agent never needs write access to, or leaves files in, the tree it
+ * is working on.
+ */
+export const projectDir = (cwd: string, env: NodeJS.ProcessEnv = process.env): string => {
+  const resolved = path.resolve(cwd)
+  const hash = createHash("sha256").update(resolved).digest("hex").slice(0, 10)
+  const name = path.basename(resolved).replaceAll(/[^a-zA-Z0-9._-]/g, "_") || "root"
+
+  return path.join(configDir(env), "projects", `${name}-${hash}`)
+}
 
 /** Whether the user has been through setup on this machine. */
 export const hasConfig = (env: NodeJS.ProcessEnv = process.env): boolean => fs.existsSync(configPath(env))

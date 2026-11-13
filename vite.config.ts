@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { defineConfig } from "vite-plus"
 
 const ignored = [".claude/**", "tools/oxlint/anti-slop/**", "dist/**", "**/dist/**"]
@@ -47,6 +49,8 @@ export default defineConfig({
   test: {
     include: ["packages/*/test/**/*.test.ts"],
     testTimeout: 20_000,
+    // Tests must never read or write the developer's real configuration.
+    env: { OI_AGENT_CONFIG_DIR: join(tmpdir(), "oi-agent-test-config") },
   },
   staged: { "*": "vp check --fix" },
 })

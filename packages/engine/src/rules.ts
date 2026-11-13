@@ -2,12 +2,13 @@
  * Learned rules: the standing prompt section that evaluators write to.
  *
  * Every change snapshots the previous file first, so any version can be
- * restored. The file lives in the project (`.oi/rules.md`) so it is visible,
- * editable and versioned with the code it applies to.
+ * restored. The file is kept per project in the config directory
+ * (`~/.config/oi-agent/projects/<project>/rules.md`), never in the project.
  */
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { projectDir } from "./config.ts"
 import { rulesPath } from "./prompt.ts"
 
 export interface Rule {
@@ -16,7 +17,7 @@ export interface Rule {
   readonly source: string
 }
 
-const historyDir = (cwd: string): string => path.join(cwd, ".oi", "rules.history")
+const historyDir = (cwd: string): string => path.join(projectDir(cwd), "rules.history")
 
 const read = (file: string): string => {
   try {

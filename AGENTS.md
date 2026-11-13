@@ -80,6 +80,10 @@ this way from the start instead of fixing afterwards:
   project there holds test data. The Phoenix repo is at `~/repos/phoenix`.
   Span ingest is protobuf-only and ignores a span id it already has.
 - Config: `~/.config/oi-agent/config.json`. Sessions: `~/.oi-agent/sessions`.
+  Evaluators and learned rules: `~/.config/oi-agent/projects/<name>-<hash>/`.
+- The CLI will be published to npm. Never write into the project the agent is
+  working on or into the installed package; user data goes under the config
+  or sessions directory.
   For tests, point `OI_AGENT_CONFIG_DIR` and `OI_AGENT_HOME` at temporary
   directories so the real ones are untouched.
 - `tailcat` is installed for `/share`. `/share local` avoids the tunnel.

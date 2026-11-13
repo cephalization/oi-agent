@@ -1,7 +1,8 @@
 /**
  * Evaluators that run on every finished turn.
  *
- * An evaluator is a small JSON file in the project (`.oi/evals/<name>.json`),
+ * An evaluator is a small JSON file kept per project in the config directory
+ * (`~/.config/oi-agent/projects/<project>/evals/<name>.json`),
  * which is what lets the agent create one from a sentence. Results are
  * OpenInference annotations on the turn's trace. A failing result is fed
  * back into the next turn and, when the evaluator says so, distilled into a
@@ -10,6 +11,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Effect, Match, Option, Schema } from "effect"
+import { projectDir } from "./config.ts"
 import { loadSession } from "./fold.ts"
 import {
   type AnnotationBody,
@@ -37,7 +39,7 @@ const common = {
   fail_labels: Schema.Array(Schema.String),
   /** Tell the agent about a failure at the start of its next turn. */
   feedback: Schema.Boolean,
-  /** Turn failures into standing rules in `.oi/rules.md`. */
+  /** Turn failures into standing rules in the project's `rules.md`. */
   learn: Schema.Boolean,
 }
 
@@ -84,7 +86,7 @@ export const EvalDefinition = Schema.Union([LlmEval, CodeEval, ThresholdEval])
 
 export type EvalDefinition = typeof EvalDefinition.Type
 
-export const evalsDir = (cwd: string): string => path.join(cwd, ".oi", "evals")
+export const evalsDir = (cwd: string): string => path.join(projectDir(cwd), "evals")
 
 const parseDefinition = parser(EvalDefinition)
 const encodeDefinition = Schema.encodeSync(EvalDefinition)
