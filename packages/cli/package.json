@@ -1,6 +1,6 @@
 {
   "name": "oi-agent",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A coding agent whose entire runtime state is OpenInference spans on disk.",
   "keywords": [
     "agent",
