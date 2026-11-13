@@ -18,6 +18,10 @@ import {
   modelDistiller,
   phoenixJudge,
   type ApprovalMode,
+  checkModel,
+  type Config,
+  listModels,
+  type ModelOption,
   Engine,
   getSecret,
   hasConfig,
@@ -98,6 +102,14 @@ const buildEngine = (override?: ApprovalMode): Engine => {
 
   redactor.add(apiKey)
 
+  const modelFor = (settings: Config) =>
+    anthropicModel({
+      model: settings.model,
+      effort: settings.effort,
+      maxTokens: settings.max_tokens,
+      apiKey,
+    })
+
   const engine = new Engine({
     store,
     config,
@@ -105,12 +117,8 @@ const buildEngine = (override?: ApprovalMode): Engine => {
     redactor,
     tools: [...builtinTools, createEvalTool],
     selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
-    model: anthropicModel({
-      model: config.model,
-      effort: config.effort,
-      maxTokens: config.max_tokens,
-      apiKey,
-    }),
+    model: modelFor(config),
+    modelFor,
   })
 
   attachEvals(engine, {
@@ -224,6 +232,12 @@ const interactive = async (): Promise<void> => {
   const engine = buildEngine(values.yolo ? "allow" : undefined)
   const phoenix = engine.config.phoenix.endpoint === "" ? undefined : exporter()
   let sessionId: string | undefined = pickSession(engine)
+  const catalog: Array<ModelOption> = []
+
+  // Listed in the background for /model and effort cycling; offline just means no list.
+  listModels(getSecret("anthropic") ?? "")
+    .then((list) => catalog.push(...list))
+    .catch(() => undefined)
 
   // `/resume` and `/new` end the app with the session to open next.
   while (sessionId !== undefined) {
@@ -235,6 +249,8 @@ const interactive = async (): Promise<void> => {
       label: engine.config.model,
       engine,
       phoenix,
+      models: () => catalog,
+      checkModel: (id) => checkModel(getSecret("anthropic") ?? "", id),
     })
   }
 

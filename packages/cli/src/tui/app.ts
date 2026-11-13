@@ -8,6 +8,7 @@
 import {
   type ApprovalRequest,
   type Engine,
+  type ModelOption,
   formatBytes,
   formatShareLink,
   listRuleVersions,
@@ -37,6 +38,7 @@ import {
   type Suggestion,
 } from "./commands.ts"
 import { Editor } from "./editor.ts"
+import { effortsFor, fitEffort, nextEffort } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
 
@@ -51,6 +53,10 @@ export interface AppOptions {
   /** Present when this process joined someone else's session. */
   readonly peer?: PeerConnection | undefined
   readonly phoenix?: PhoenixExporter | undefined
+  /** Models the key can use, for `/model` and effort cycling. Empty until listed. */
+  readonly models?: (() => ReadonlyArray<ModelOption>) | undefined
+  /** Confirms a model id the list does not include. Resolves to its display name. */
+  readonly checkModel?: ((id: string) => Promise<string>) | undefined
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -125,8 +131,29 @@ class App {
       })
   }
 
+  private catalog(): ReadonlyArray<ModelOption> {
+    return this.options.models?.() ?? []
+  }
+
+  private modelSuggestions(): Array<Suggestion> {
+    const current = this.options.engine?.config.model
+
+    return this.catalog().map((option) => {
+      const efforts = option.efforts.length === 0 ? "no effort setting" : `effort ${option.efforts.join(" ")}`
+
+      return {
+        value: option.id,
+        label: option.id,
+        hint: `${option.id === current ? "current · " : ""}${option.name} · ${efforts}`,
+        keywords: option.name,
+      }
+    })
+  }
+
   private argumentsFor(command: Command): ReadonlyArray<Suggestion> {
     if (command.name === "/resume") return this.sessionSuggestions()
+
+    if (command.name === "/model") return this.modelSuggestions()
 
     if (command.name === "/share") return SHARE_ARGUMENTS
 
@@ -222,28 +249,58 @@ class App {
 
   private status(): string {
     const { transcript, options } = this
-    const parts = [style.gray(options.label)]
+    const engine = options.engine
+    const parts = [style.gray(engine?.config.model ?? options.label)]
+    // Dropped last-added first when the line is wider than the terminal.
+    const optional: Array<string> = []
 
-    if (transcript.totalTokens > 0) parts.push(style.gray(`${compact(transcript.totalTokens)} tokens`))
+    const add = (part: string, droppable: boolean): void => {
+      parts.push(part)
 
-    if (transcript.sessionBytes > 0) parts.push(style.gray(formatBytes(transcript.sessionBytes)))
+      if (droppable) optional.push(part)
+    }
 
-    if (options.phoenix !== undefined) parts.push(style.gray("→ phoenix"))
+    if (engine !== undefined) {
+      if (effortsFor(this.catalog(), engine.config.model).length > 0) {
+        add(style.gray(`effort ${engine.config.effort}`), false)
+      }
+
+      add(engine.approvals === "allow" ? style.yellow("⏵⏵ yolo") : style.gray("ask before tools"), false)
+    }
 
     if (this.share !== undefined) {
       const peers = this.share.server.peers()
 
-      parts.push(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`))
+      add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), false)
     }
+
+    if (transcript.totalTokens > 0) add(style.gray(`${compact(transcript.totalTokens)} tokens`), true)
+
+    if (transcript.sessionBytes > 0) add(style.gray(formatBytes(transcript.sessionBytes)), true)
+
+    if (options.phoenix !== undefined) add(style.gray("→ phoenix"), true)
 
     if (transcript.running) {
       const spinner = SPINNER[this.frame % SPINNER.length] ?? ""
 
+      const hint = style.gray("esc to interrupt")
+
       parts.unshift(style.cyan(`${spinner} working ${transcript.elapsedSeconds}s`))
-      parts.push(style.gray("esc to interrupt"))
+      parts.push(hint)
+      // The interrupt hint goes last: it matters most while a turn runs.
+      optional.unshift(hint)
     }
 
-    return parts.join(style.gray(" · "))
+    const separator = style.gray(" · ")
+    const line = (): string => parts.join(separator)
+
+    for (const part of optional.toReversed()) {
+      if (width(line()) < this.screen.columns) break
+
+      parts.splice(parts.indexOf(part), 1)
+    }
+
+    return line()
   }
 
   private approvalLines(request: ApprovalRequest): Array<string> {
@@ -414,6 +471,69 @@ class App {
     this.done(id)
   }
 
+  /** Tab: ask before tools, or run them unasked. */
+  private toggleApprovals(): void {
+    const engine = this.options.engine
+
+    engine?.setApprovalMode(engine.approvals === "allow" ? "ask" : "allow")
+  }
+
+  /** Shift+Tab: the next effort level the current model accepts. */
+  private cycleEffort(): void {
+    const engine = this.options.engine
+
+    if (engine === undefined) return
+
+    const next = nextEffort(engine.config.effort, effortsFor(this.catalog(), engine.config.model))
+
+    if (next === undefined) {
+      this.notice = `${engine.config.model} has no reasoning effort setting.`
+
+      return
+    }
+
+    engine.configure({ effort: next })
+    this.notice = ""
+  }
+
+  private async switchModel(argument: string): Promise<void> {
+    const engine = this.options.engine
+
+    if (engine === undefined) return
+
+    if (argument === "") {
+      this.dismissed = undefined
+      this.editor.set("/model ")
+
+      return
+    }
+
+    const catalog = this.catalog()
+
+    // Not in the list (or the list never loaded): ask the API before switching.
+    if (!catalog.some((option) => option.id === argument)) {
+      const verdict = await (this.options.checkModel?.(argument) ?? Promise.resolve(argument)).then(
+        () => undefined,
+        (error: Error) => error.message,
+      )
+
+      if (verdict !== undefined) return this.say([`Could not switch to ${argument}: ${verdict}`])
+    }
+
+    const previous = engine.config.effort
+    const effort = fitEffort(previous, effortsFor(catalog, argument))
+    const changed = effort !== undefined && effort !== previous
+
+    engine.configure(effort === undefined ? { model: argument } : { model: argument, effort })
+
+    this.say(
+      [
+        `Model is now ${argument}${changed ? `, at effort ${effort} (it does not accept ${previous})` : ""}.`,
+        this.transcript.running ? "The running turn keeps the old model; the next one uses this." : "",
+      ].filter((line) => line !== ""),
+    )
+  }
+
   private startNew(): void {
     if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
 
@@ -473,8 +593,10 @@ class App {
     if (name === "/yolo") {
       this.options.engine?.setApprovalMode("allow")
 
-      return this.say(["Tools now run without asking."])
+      return this.say(["Tools now run without asking. Tab switches back."])
     }
+
+    if (name === "/model") return this.switchModel(argument)
   }
 
   private submit(text: string): void {
@@ -528,8 +650,18 @@ class App {
 
     if (completion !== undefined && this.menuKey(data, completion)) return this.draw()
 
-    // Tab on a closed menu opens it again.
-    if (data === "\t") this.dismissed = undefined
+    // With the menu closed, tab and shift+tab switch modes.
+    if (data === "\t") {
+      this.toggleApprovals()
+
+      return this.draw()
+    }
+
+    if (data === SHIFT_TAB) {
+      this.cycleEffort()
+
+      return this.draw()
+    }
 
     const before = this.editor.text
     const action = this.editor.feed(data)

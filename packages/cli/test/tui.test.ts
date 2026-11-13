@@ -10,6 +10,8 @@ import {
   onEnter,
 } from "../src/tui/commands.ts"
 import { Editor } from "../src/tui/editor.ts"
+import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
+import { EFFORTS } from "@oi-agent/engine"
 import { MarkdownStream } from "../src/tui/markdown.ts"
 
 describe("text measurement", () => {
@@ -137,5 +139,27 @@ describe("slash command completion", () => {
   it("finds commands by alias and writes help from the registry", () => {
     expect(findCommand("/exit")?.name).toBe("/quit")
     expect(helpLines(COMMANDS).some((line) => line.startsWith("/resume <session>"))).toBe(true)
+  })
+})
+
+describe("effort cycling", () => {
+  const catalog = [
+    { id: "big", name: "Big", efforts: EFFORTS },
+    { id: "mid", name: "Mid", efforts: ["low", "medium", "high"] as const },
+    { id: "old", name: "Old", efforts: [] },
+  ]
+
+  it("steps through the levels a model accepts and wraps", () => {
+    expect(nextEffort("high", effortsFor(catalog, "big"))).toBe("xhigh")
+    expect(nextEffort("max", effortsFor(catalog, "big"))).toBe("low")
+    expect(nextEffort("high", effortsFor(catalog, "mid"))).toBe("low")
+    expect(nextEffort("high", effortsFor(catalog, "old"))).toBeUndefined()
+    expect(effortsFor([], "anything")).toEqual(EFFORTS)
+  })
+
+  it("keeps effort across a model switch, or steps down to what the new model accepts", () => {
+    expect(fitEffort("high", effortsFor(catalog, "mid"))).toBe("high")
+    expect(fitEffort("max", effortsFor(catalog, "mid"))).toBe("high")
+    expect(fitEffort("max", effortsFor(catalog, "old"))).toBeUndefined()
   })
 })

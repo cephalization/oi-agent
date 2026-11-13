@@ -31,6 +31,12 @@ export const COMMANDS: ReadonlyArray<Command> = [
     hostOnly: true,
   },
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
+  {
+    name: "/model",
+    summary: "switch model from the next turn on",
+    argument: { name: "model", required: true },
+    hostOnly: true,
+  },
   { name: "/tour", summary: "have the agent explain how it works, using this session", hostOnly: false },
   {
     name: "/share",
@@ -43,7 +49,7 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/rules", summary: "show rules learned from evaluator failures", hostOnly: false },
   { name: "/revert", summary: "undo the most recent learned rule", hostOnly: true },
   { name: "/export", summary: "send this session to Phoenix now", hostOnly: true },
-  { name: "/yolo", summary: "stop asking before running tools", hostOnly: true },
+  { name: "/yolo", summary: "stop asking before running tools (same as tab)", hostOnly: true },
   { name: "/quit", summary: "exit (the session stays on disk)", aliases: ["/exit"], hostOnly: false },
 ]
 
@@ -64,7 +70,9 @@ export const helpLines = (commands: ReadonlyArray<Command>): Array<string> => {
   return [
     ...commands.map((command) => `${usage(command).padEnd(column)}${command.summary}`),
     "",
-    "tab complete · ↑↓ pick · enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
+    "In the / menu: tab complete · ↑↓ pick · enter run · esc close",
+    "Otherwise:  tab toggle yolo · shift+tab cycle reasoning effort",
+    "            enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
   ]
 }
 

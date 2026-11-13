@@ -6,8 +6,8 @@
  * the `LLM` span stores and what the fold later replays.
  */
 import Anthropic from "@anthropic-ai/sdk"
-import { Context, Effect, Layer, Schema } from "effect"
-import type { Effort } from "./config.ts"
+import { Context, Effect, Layer, Option, Schema } from "effect"
+import { type Effort, EFFORTS } from "./config.ts"
 import type { StreamDelta } from "./format.ts"
 import type { ToolSpec } from "./tools.ts"
 import type { Json } from "./wire.ts"
@@ -48,17 +48,28 @@ export interface ModelSettings {
 /** Models whose policy refusals can be retried server-side on another model. */
 const SUPPORTS_FALLBACK = /^claude-(?:opus-5|sonnet-5-5|fable-5|mythos-5)/
 
+/** The body of an API error response: `{ error: { message } }`. */
+const ErrorBody = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) })
+const decodeErrorBody = Schema.decodeUnknownOption(ErrorBody)
+
+/** The API's own message, without the status code and raw JSON the SDK puts around it. */
+const apiMessage = (error: InstanceType<typeof Anthropic.APIError>): string =>
+  Option.match(decodeErrorBody(error.error), {
+    onNone: () => error.message,
+    onSome: (body) => body.error.message,
+  })
+
 const describe = (cause: unknown): ModelError => {
   if (cause instanceof Anthropic.AuthenticationError) {
     return new ModelError({ message: "Anthropic rejected the API key. Run `oi auth login`.", status: 401 })
   }
 
   if (cause instanceof Anthropic.RateLimitError) {
-    return new ModelError({ message: `Rate limited by Anthropic: ${cause.message}`, status: 429 })
+    return new ModelError({ message: `Rate limited by Anthropic: ${apiMessage(cause)}`, status: 429 })
   }
 
   if (cause instanceof Anthropic.APIError && Number.isInteger(cause.status)) {
-    return new ModelError({ message: cause.message, status: cause.status })
+    return new ModelError({ message: apiMessage(cause), status: cause.status })
   }
 
   return new ModelError({ message: cause instanceof Error ? cause.message : String(cause) })
@@ -189,6 +200,49 @@ export const checkModel = async (apiKey: string, model: string): Promise<string>
   try {
     return (await new Anthropic({ apiKey, maxRetries: 0 }).models.retrieve(model)).display_name
   } catch (error) {
+    if (error instanceof Anthropic.NotFoundError)
+      throw new Error(`No model named ${model}.`, { cause: error })
+
     throw new Error(describe(error).message, { cause: error })
   }
+}
+
+/** A model the key can use, and the effort levels it accepts. */
+export interface ModelOption {
+  readonly id: string
+  readonly name: string
+  /** Supported effort levels, in order. Empty when the model has no effort setting. */
+  readonly efforts: ReadonlyArray<Effort>
+}
+
+const effortsOf = (info: Anthropic.ModelInfo): ReadonlyArray<Effort> => {
+  const effort = info.capabilities?.effort
+
+  // Older API responses carry no capabilities; assume the full ladder.
+  if (effort === undefined) return EFFORTS
+
+  if (!effort.supported) return []
+
+  return EFFORTS.filter((level) => effort[level]?.supported === true)
+}
+
+/**
+ * Every model this harness can drive, newest first, with the effort levels
+ * each supports. Requests always ask for adaptive thinking, so models without
+ * it are left out rather than offered and then rejected by the API.
+ */
+export const listModels = async (apiKey: string): Promise<Array<ModelOption>> => {
+  const options: Array<ModelOption> = []
+
+  try {
+    for await (const info of new Anthropic({ apiKey, maxRetries: 0 }).models.list()) {
+      if (info.capabilities?.thinking.types.adaptive.supported === false) continue
+
+      options.push({ id: info.id, name: info.display_name, efforts: effortsOf(info) })
+    }
+  } catch (error) {
+    throw new Error(describe(error).message, { cause: error })
+  }
+
+  return options
 }

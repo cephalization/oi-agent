@@ -161,3 +161,44 @@ describe("evaluators", () => {
     expect(revertRules(cwd)).toBe(true)
   })
 })
+
+describe("engine settings", () => {
+  it("switches model and effort between turns when built with modelFor", async () => {
+    const store = tempStore()
+    const config = loadConfig({ OI_AGENT_CONFIG_DIR: store.home, OI_AGENT_MODEL: "first" })
+
+    // Each model answers with its own settings, so the reply shows which one ran.
+    const modelFor = (settings: typeof config) =>
+      scriptedModel(() => say(`${settings.model} ${settings.effort}`))
+
+    const engine = new Engine({ store, config, model: modelFor(config), modelFor, approvals: "ask" })
+    const sessionId = engine.createSession(store.home).id
+
+    const before = await engine.submit(sessionId, { text: "hi", userId: "me" })
+
+    expect(engine.configure({ model: "second", effort: "low" })).toBe(true)
+    expect(engine.config.model).toBe("second")
+
+    const after = await engine.submit(sessionId, { text: "again", userId: "me" })
+    const outputs = loadSession(store, sessionId).turns.map((turn) => turn.output)
+
+    expect(before.ok && after.ok).toBe(true)
+    expect(outputs).toEqual([`first ${config.effort}`, "second low"])
+  })
+
+  it("refuses to reconfigure an engine built with a fixed model, and reports approval mode", () => {
+    const store = tempStore()
+
+    const engine = new Engine({
+      store,
+      config: loadConfig({ OI_AGENT_CONFIG_DIR: store.home }),
+      model: scriptedModel(() => say("ok")),
+      approvals: "ask",
+    })
+
+    expect(engine.configure({ effort: "low" })).toBe(false)
+    expect(engine.approvals).toBe("ask")
+    engine.setApprovalMode("allow")
+    expect(engine.approvals).toBe("allow")
+  })
+})

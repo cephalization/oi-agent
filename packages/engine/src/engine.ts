@@ -40,6 +40,8 @@ export interface EngineOptions {
   readonly store: Store
   readonly config: Config
   readonly model: Layer.Layer<Model>
+  /** Builds a model for new settings, so `configure` can switch model or effort between turns. */
+  readonly modelFor?: ((config: Config) => Layer.Layer<Model>) | undefined
   readonly approvals: ApprovalMode
   readonly tools?: ReadonlyArray<ToolSpec>
   readonly redactor?: Redactor
@@ -60,14 +62,21 @@ interface Running {
   readonly fiber: Fiber.Fiber<TurnResult, ModelError>
 }
 
+/** Settings that can change while the engine runs. */
+export interface ModelChoice {
+  readonly model?: string
+  readonly effort?: Config["effort"]
+}
+
 export class Engine {
   readonly store: Store
-  readonly config: Config
   readonly redactor: Redactor
   readonly tools: ReadonlyArray<ToolSpec>
   readonly selfDir: string | undefined
   hooks: TurnHooks = NO_HOOKS
-  private readonly model: Layer.Layer<Model>
+  private settings: Config
+  private model: Layer.Layer<Model>
+  private readonly modelFor: ((config: Config) => Layer.Layer<Model>) | undefined
   private approvalMode: ApprovalMode
   private readonly queues = new Map<string, Promise<void>>()
   private readonly running = new Map<string, Running>()
@@ -76,8 +85,9 @@ export class Engine {
 
   constructor(options: EngineOptions) {
     this.store = options.store
-    this.config = options.config
+    this.settings = options.config
     this.model = options.model
+    this.modelFor = options.modelFor
     this.approvalMode = options.approvals
     this.tools = options.tools ?? builtinTools
     this.redactor = options.redactor ?? new Redactor()
@@ -90,7 +100,36 @@ export class Engine {
     return this.store.createSession(cwd)
   }
 
+  /** The settings in effect. `configure` can change model and effort. */
+  get config(): Config {
+    return this.settings
+  }
+
+  /**
+   * Switch model or effort. A turn already running keeps what it started
+   * with; the next turn uses the new settings. Returns false when this engine
+   * was built with a fixed model.
+   */
+  configure(choice: ModelChoice): boolean {
+    if (this.modelFor === undefined) return false
+
+    const next = { ...this.settings }
+
+    if (choice.model !== undefined) next.model = choice.model
+
+    if (choice.effort !== undefined) next.effort = choice.effort
+
+    this.model = this.modelFor(next)
+    this.settings = next
+
+    return true
+  }
+
   // --- approvals ----------------------------------------------------------
+
+  get approvals(): ApprovalMode {
+    return this.approvalMode
+  }
 
   setApprovalMode(mode: ApprovalMode): void {
     this.approvalMode = mode
