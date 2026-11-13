@@ -77,6 +77,7 @@ a side effect of tracing.
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
 | The terminal interface                           | `source/cli/src/tui/`                                                |
+| Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                     |
 | Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                            |
 
 ## Things worth showing someone
@@ -103,6 +104,12 @@ These work best on the session you are in, because the evidence is right there.
 - **"How does an eval change your behaviour?"** Show an annotation file, then
   the `<eval-feedback>` block at the start of the next turn's first request,
   then the rules file if a rule was learned.
+- **"How does resuming work?"** There is nothing to load. `/resume` (or
+  `oi -s <id>`) points the terminal at another session folder: the screen is
+  rebuilt by reading its root spans, and the next model request comes from
+  `contextFor` reading that session's latest `LLM` span, exactly as for the
+  next step of a running turn. `/resume` lists sessions from their root spans
+  (`source/cli/src/sessions.ts`) and hides ones with no turns.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge.

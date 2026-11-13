@@ -35,6 +35,12 @@ export class Editor {
     this.historyIndex = this.history.length
   }
 
+  /** Replace the whole line, with the cursor at the end. */
+  set(text: string): void {
+    this.buffer = text
+    this.position = text.length
+  }
+
   private insert(text: string): void {
     this.buffer = this.buffer.slice(0, this.position) + text + this.buffer.slice(this.position)
     this.position += text.length

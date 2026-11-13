@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { runOnboarding } from "./onboarding.ts"
 import { isCancelled } from "./prompts.ts"
+import { ago, summarizeSessions } from "./sessions.ts"
 import { runApp } from "./tui/app.ts"
 import {
   anthropicModel,
@@ -174,11 +175,12 @@ const run = async (prompt: string): Promise<void> => {
 }
 
 const sessions = (): void => {
-  for (const id of store.listSessionIds()) {
-    const view = loadSession(store, id)
-    const title = view.turns[0]?.input.split("\n")[0]?.slice(0, 60) ?? "(empty)"
+  for (const session of summarizeSessions(store).toReversed()) {
+    const title = session.title === "" ? "(empty)" : session.title.slice(0, 60)
 
-    process.stdout.write(`${id}  ${String(view.turns.length).padStart(3)} turns  ${title}\n`)
+    process.stdout.write(
+      `${session.id}  ${ago(session.activeMs).padStart(10)}  ${String(session.turns).padStart(3)} turns  ${title}\n`,
+    )
   }
 }
 
@@ -220,11 +222,22 @@ const exportSessions = async (idOrPrefix: string | undefined): Promise<void> => 
 
 const interactive = async (): Promise<void> => {
   const engine = buildEngine(values.yolo ? "allow" : undefined)
-  const sessionId = pickSession(engine)
   const phoenix = engine.config.phoenix.endpoint === "" ? undefined : exporter()
+  let sessionId: string | undefined = pickSession(engine)
 
-  drainInbox(engine, sessionId)
-  await runApp({ store, sessionId, user: engine.config.user, label: engine.config.model, engine, phoenix })
+  // `/resume` and `/new` end the app with the session to open next.
+  while (sessionId !== undefined) {
+    drainInbox(engine, sessionId)
+    sessionId = await runApp({
+      store,
+      sessionId,
+      user: engine.config.user,
+      label: engine.config.model,
+      engine,
+      phoenix,
+    })
+  }
+
   store.close()
 }
 

@@ -23,7 +23,19 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
+import { ago, summarizeSessions, type SessionSummary } from "../sessions.ts"
 import { clip, control, style, width } from "./ansi.ts"
+import {
+  accept,
+  type Command,
+  COMMANDS,
+  complete,
+  type Completion,
+  findCommand,
+  helpLines,
+  onEnter,
+  type Suggestion,
+} from "./commands.ts"
 import { Editor } from "./editor.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
@@ -43,19 +55,15 @@ export interface AppOptions {
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-const HELP = [
-  "/tour           have the agent explain how it works, using this session",
-  "/share          share this session over tailcat (drive + view links)",
-  "/share local    share on this machine only, without a tunnel",
-  "/unshare        stop sharing",
-  "/evals          list the evaluators that review each turn",
-  "/rules          show rules learned from evaluator failures",
-  "/revert         undo the most recent learned rule",
-  "/export         send this session to Phoenix now",
-  "/yolo           stop asking before running tools",
-  "/quit           exit (the session stays on disk)",
-  "",
-  "enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
+/** Rows the completion menu shows at once. */
+const MENU_ROWS = 8
+
+const UP = "\u001B[A"
+const DOWN = "\u001B[B"
+const SHIFT_TAB = "\u001B[Z"
+
+const SHARE_ARGUMENTS: ReadonlyArray<Suggestion> = [
+  { value: "local", label: "local", hint: "share on this machine only, without a tunnel" },
 ]
 
 const TOUR =
@@ -75,11 +83,139 @@ class App {
   private share: Share | undefined
   private notice = ""
   private frame = 0
-  private done: () => void = () => undefined
+  /** Highlighted row of the completion menu. */
+  private selected = 0
+  /** Input the user closed the menu on; it stays closed until the input changes. */
+  private dismissed: string | undefined
+  /** Read once per menu opening: listing sessions reads every root span. */
+  private sessions: ReadonlyArray<SessionSummary> | undefined
+  /** Ends the app. With a session id, the caller should open that session next. */
+  private done: (next?: string) => void = () => undefined
 
   constructor(options: AppOptions) {
     this.options = options
     this.transcript = new Transcript(this.screen, options.user)
+  }
+
+  // --- completion ---------------------------------------------------------
+
+  /** Commands this terminal can run: a joined peer cannot run host-only ones. */
+  private get commands(): ReadonlyArray<Command> {
+    return this.options.engine === undefined ? COMMANDS.filter((command) => !command.hostOnly) : COMMANDS
+  }
+
+  private sessionSuggestions(): Array<Suggestion> {
+    const here = this.cwd()
+
+    this.sessions ??= summarizeSessions(this.options.store)
+
+    // Sessions with no turns are launches that never sent a prompt.
+    return this.sessions
+      .filter((session) => session.id !== this.options.sessionId && session.turns > 0)
+      .map((session) => {
+        const where = session.cwd === here ? [] : [session.cwd.replace(homedir(), "~")]
+        const turns = `${session.turns} turn${session.turns === 1 ? "" : "s"}`
+
+        return {
+          value: session.id,
+          label: session.title === "" ? "(untitled)" : session.title,
+          hint: [ago(session.activeMs), turns, ...where].join(" · "),
+          keywords: session.cwd,
+        }
+      })
+  }
+
+  private argumentsFor(command: Command): ReadonlyArray<Suggestion> {
+    if (command.name === "/resume") return this.sessionSuggestions()
+
+    if (command.name === "/share") return SHARE_ARGUMENTS
+
+    return []
+  }
+
+  private completion(): Completion | undefined {
+    const { text, cursor } = this.editor
+
+    if (text === this.dismissed || this.approvals.length > 0) return undefined
+
+    const result = complete(text, cursor, this.commands, (command) => this.argumentsFor(command))
+
+    if (result === undefined) this.sessions = undefined
+
+    return result
+  }
+
+  private highlighted(completion: Completion): number {
+    return Math.min(this.selected, completion.items.length - 1)
+  }
+
+  private menuLines(completion: Completion): Array<string> {
+    const { items } = completion
+    const selected = this.highlighted(completion)
+    const start = Math.max(0, Math.min(selected - Math.floor(MENU_ROWS / 2), items.length - MENU_ROWS))
+    const visible = items.slice(start, start + MENU_ROWS)
+    const labelWidth = Math.min(Math.max(...visible.map((item) => width(item.label))), 48)
+    const hintWidth = this.screen.columns - labelWidth - 6
+
+    const lines = visible.map((item, index) => {
+      const active = start + index === selected
+      const label = clip(item.label, labelWidth)
+      const padded = `${label}${" ".repeat(Math.max(labelWidth - width(label), 0))}`
+      const hint = hintWidth > 8 ? style.gray(clip(item.hint, hintWidth)) : ""
+
+      return `${active ? style.cyan("❯") : " "} ${active ? style.cyan(padded) : padded}  ${hint}`
+    })
+
+    if (items.length > MENU_ROWS) lines.push(style.gray(`  ${selected + 1} of ${items.length}`))
+
+    return lines
+  }
+
+  /**
+   * Handle a key the open menu owns: tab and enter accept, arrows move, esc
+   * closes. Returns false when the key should go to the editor instead.
+   */
+  private menuKey(key: string, completion: Completion): boolean {
+    const index = this.highlighted(completion)
+    const item = completion.items[index]
+    const count = completion.items.length
+
+    if (item === undefined) return false
+
+    if (key === "\t") {
+      this.editor.set(accept(this.editor.text, completion, item))
+      this.selected = 0
+
+      return true
+    }
+
+    if (key === UP || key === SHIFT_TAB || key === DOWN) {
+      this.selected = (index + (key === DOWN ? 1 : -1) + count) % count
+
+      return true
+    }
+
+    if (key === "\u001B") {
+      this.dismissed = this.editor.text
+
+      return true
+    }
+
+    if (key !== "\r") return false
+
+    const action = onEnter(this.editor.text, completion, item)
+
+    if (action.type === "submit") return false
+
+    this.editor.set(action.text)
+    this.selected = 0
+
+    // Through the editor, so the line lands in history like a typed one.
+    const sent = action.type === "send" ? this.editor.feed("\r") : undefined
+
+    if (sent?.type === "submit") this.submit(sent.text)
+
+    return true
   }
 
   // --- drawing ------------------------------------------------------------
@@ -146,15 +282,30 @@ class App {
     const input = this.editor.text.split("\n")
     const first = lines.length
 
+    const completion = this.completion()
+    const item = completion === undefined ? undefined : completion.items[this.highlighted(completion)]
+
+    // The rest of the highlighted suggestion, dimmed after the cursor.
+    const ghost =
+      completion?.kind === "command" && item?.value.startsWith(completion.token) === true
+        ? style.gray(item.value.slice(completion.token.length))
+        : ""
+
     for (const [index, line] of input.entries()) {
       lines.push(`${index === 0 ? style.cyan(canPrompt ? "›" : "◦") : " "} ${line}`)
     }
 
     if (!canPrompt && this.editor.text === "") lines[first] = `${style.gray("◦ view only")} `
 
+    lines[lines.length - 1] += ghost
+
+    const cursorLine = first + before.length - 1
+
+    if (completion !== undefined) lines.push(...this.menuLines(completion))
+
     this.screen.render({
       lines,
-      cursor: { line: first + before.length - 1, column: 3 + width(before.at(-1) ?? "") },
+      cursor: { line: cursorLine, column: 3 + width(before.at(-1) ?? "") },
     })
   }
 
@@ -240,14 +391,56 @@ class App {
     ])
   }
 
+  /** Switch this terminal to another session. The app restarts on it. */
+  private resume(argument: string): void {
+    const { store, sessionId } = this.options
+
+    if (argument === "") {
+      // Bare /resume opens the picker rather than guessing.
+      this.dismissed = undefined
+      this.editor.set("/resume ")
+
+      return
+    }
+
+    if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+    const id = store.resolveSession(argument)
+
+    if (id === undefined) return this.say([`No session matches "${argument}".`])
+
+    if (id === sessionId) return this.say(["That is this session."])
+
+    this.done(id)
+  }
+
+  private startNew(): void {
+    if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+    this.done(this.options.engine?.createSession(process.cwd()).id)
+  }
+
   private async command(text: string): Promise<void> {
-    const [name] = text.split(/\s+/)
+    const [typed = ""] = text.split(/\s+/)
+    const argument = text.slice(typed.length).trim()
+    const known = findCommand(typed)
+    const name = known?.name
 
-    if (name === "/help") return this.say(HELP)
+    if (known === undefined) return this.say([`Unknown command ${typed}. Try /help.`])
 
-    if (name === "/quit" || name === "/exit") return this.done()
+    if (findCommand(typed, this.commands) === undefined) return this.say([`Only the host can run ${name}.`])
 
-    if (name === "/share") return this.startShare(text.includes("local"))
+    if (name === "/help") return this.say(helpLines(this.commands))
+
+    if (name === "/quit") return this.done()
+
+    if (name === "/tour") return this.submit(TOUR)
+
+    if (name === "/resume") return this.resume(argument)
+
+    if (name === "/new") return this.startNew()
+
+    if (name === "/share") return this.startShare(argument === "local")
 
     if (name === "/unshare") return this.stopShare()
 
@@ -282,14 +475,10 @@ class App {
 
       return this.say(["Tools now run without asking."])
     }
-
-    this.say([`Unknown command ${name ?? ""}. Try /help.`])
   }
 
   private submit(text: string): void {
     const { engine, peer, sessionId, user } = this.options
-
-    if (text.trim() === "/tour") return this.submit(TOUR)
 
     if (text.startsWith("/")) {
       void this.command(text).then(() => this.draw())
@@ -335,7 +524,20 @@ class App {
       return this.draw()
     }
 
+    const completion = this.completion()
+
+    if (completion !== undefined && this.menuKey(data, completion)) return this.draw()
+
+    // Tab on a closed menu opens it again.
+    if (data === "\t") this.dismissed = undefined
+
+    const before = this.editor.text
     const action = this.editor.feed(data)
+
+    // A line recalled from history keeps the menu closed, so arrows keep recalling.
+    if (data === UP || data === DOWN) this.dismissed = this.editor.text
+
+    if (this.editor.text !== before) this.selected = 0
 
     if (action.type === "submit") this.submit(action.text)
 
@@ -352,7 +554,8 @@ class App {
 
   // --- lifecycle ----------------------------------------------------------
 
-  async run(): Promise<void> {
+  /** Runs until the user leaves. Resolves to the session to open next, if they switched. */
+  async run(): Promise<string | undefined> {
     const { store, sessionId, engine, peer, phoenix, label } = this.options
     const header = store.readHeader(sessionId)
 
@@ -392,10 +595,13 @@ class App {
     process.stdout.write(control.bracketedPasteOn)
     this.draw()
 
-    await Promise.race([
-      new Promise<void>((resolve) => (this.done = resolve)),
-      peer?.closed.then(() => this.say(["The host ended the session."])) ??
-        new Promise<void>(() => undefined),
+    const next = await Promise.race([
+      new Promise<string | undefined>((resolve) => (this.done = resolve)),
+      peer?.closed.then(() => {
+        this.say(["The host ended the session."])
+
+        return undefined
+      }) ?? new Promise<undefined>(() => undefined),
     ])
 
     clearInterval(ticker)
@@ -413,8 +619,17 @@ class App {
     peer?.close()
     stopExport?.()
     await phoenix?.flush()
-    process.stdout.write(`${style.gray(`session saved · resume with: oi -s ${sessionId.slice(0, 13)}`)}\n`)
+    process.stdout.write(
+      `${style.gray(
+        next === undefined
+          ? `session saved · resume with: oi -s ${sessionId.slice(0, 13)}`
+          : `left session ${sessionId.slice(0, 13)} · opening ${next.slice(0, 13)}`,
+      )}\n\n`,
+    )
+
+    return next
   }
 }
 
-export const runApp = (options: AppOptions): Promise<void> => new App(options).run()
+/** Resolves to a session id when the user asked to switch to it (`/resume`, `/new`). */
+export const runApp = (options: AppOptions): Promise<string | undefined> => new App(options).run()
