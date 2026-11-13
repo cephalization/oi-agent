@@ -6,6 +6,13 @@ name: Release
 on:
   push:
     branches: [main]
+  # Publish an existing release tag again, for example after a failed publish.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -13,6 +20,7 @@ permissions:
 jobs:
   release-please:
     name: Release pull request
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -27,18 +35,18 @@ jobs:
   publish:
     name: Publish to npm
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    # Runs after a release is created, or on its own when started by hand.
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true')
     runs-on: ubuntu-latest
     environment: npm
     permissions:
       contents: read
-      # npm trusted publishing: the registry accepts this workflow's OIDC
-      # identity, so there is no long-lived token to store or leak.
+      # Lets npm attach a provenance statement tying the package to this run.
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
       - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: .node-version
@@ -51,3 +59,5 @@ jobs:
         working-directory: packages/cli
       - name: Publish
         run: npm publish "$RUNNER_TEMP"/pkg/*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

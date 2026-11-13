@@ -117,7 +117,7 @@ Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.
 Pull requests are squash-merged and their titles are checked, because the
 title becomes the commit. On each push to `main`, release-please keeps a
 release pull request up to date; merging it tags the release and publishes
-`oi-agent` to npm with provenance. `feat:` bumps the minor version, `fix:` the
+`oi-agent` to npm with provenance, using the `NPM_TOKEN` repository secret. `feat:` bumps the minor version, `fix:` the
 patch, and `feat!:` or a `BREAKING CHANGE:` footer the major.
 
 ```sh
