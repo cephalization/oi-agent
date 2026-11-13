@@ -69,6 +69,8 @@ export interface TurnEnv {
   readonly cwd: string
   readonly tools: ReadonlyArray<ToolSpec>
   readonly redactor: Redactor
+  /** The agent's shipped source and docs, if available, so it can explain itself. */
+  readonly selfDir?: string | undefined
 }
 
 export interface TurnInput {
@@ -105,7 +107,12 @@ const modelStep = (env: TurnEnv, traceId: string) =>
 
     const raw = yield* model.run(
       {
-        system: systemPrompt(env.cwd),
+        system: systemPrompt(
+          env.cwd,
+          env.selfDir === undefined
+            ? undefined
+            : { selfDir: env.selfDir, sessionDir: env.store.sessionDir(env.sessionId) },
+        ),
         tools: env.tools,
         messages: contextFor(env.store, env.sessionId, traceId),
       },

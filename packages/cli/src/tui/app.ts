@@ -44,6 +44,7 @@ export interface AppOptions {
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 const HELP = [
+  "/tour           have the agent explain how it works, using this session",
   "/share          share this session over tailcat (drive + view links)",
   "/share local    share on this machine only, without a tunnel",
   "/unshare        stop sharing",
@@ -56,6 +57,9 @@ const HELP = [
   "",
   "enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
 ]
+
+const TOUR =
+  "Give me a short tour of how you work, using this session as the example. Read your guide first, then show me the real files: what a turn looks like on disk, and what you actually sent the model. Keep it brief and offer where to go deeper."
 
 interface Share {
   readonly server: PeerServer
@@ -284,6 +288,8 @@ class App {
 
   private submit(text: string): void {
     const { engine, peer, sessionId, user } = this.options
+
+    if (text.trim() === "/tour") return this.submit(TOUR)
 
     if (text.startsWith("/")) {
       void this.command(text).then(() => this.draw())

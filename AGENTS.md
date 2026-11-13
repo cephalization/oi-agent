@@ -30,6 +30,12 @@ design. This file is what you would otherwise have to rediscover.
   bundled into it, so runtime dependencies belong to the engine package and
   the CLI package has none.
 
+- The package also ships `self/`: the source, README, PLAN, spec gaps and
+  `docs/how-it-works.md` (as `GUIDE.md`), assembled by `scripts/self.ts`. The
+  system prompt points the agent at it so it can explain itself. When you
+  change how something works, update `docs/how-it-works.md` in the same
+  commit; it is what the agent teaches from.
+
 ## Invariants
 
 - **Spans are the state.** The agent loop derives every model request from

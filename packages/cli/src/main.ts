@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
 import { runOnboarding } from "./onboarding.ts"
 import { isCancelled } from "./prompts.ts"
@@ -81,6 +83,9 @@ if (command === "setup" || firstRun) {
   if (command === "setup") process.exit(0)
 }
 
+// The agent's own source and docs sit beside the build output (and beside `src` in a checkout).
+const SELF_DIR = fileURLToPath(new URL("../self", import.meta.url))
+
 const store = new Store()
 
 const buildEngine = (override?: ApprovalMode): Engine => {
@@ -98,6 +103,7 @@ const buildEngine = (override?: ApprovalMode): Engine => {
     approvals,
     redactor,
     tools: [...builtinTools, createEvalTool],
+    selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
     model: anthropicModel({
       model: config.model,
       effort: config.effort,

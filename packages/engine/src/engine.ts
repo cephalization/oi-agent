@@ -43,6 +43,8 @@ export interface EngineOptions {
   readonly approvals: ApprovalMode
   readonly tools?: ReadonlyArray<ToolSpec>
   readonly redactor?: Redactor
+  /** Directory with the agent's shipped source and docs. */
+  readonly selfDir?: string | undefined
 }
 
 /** Hooks that run around a turn: evals and feedback plug in here. */
@@ -63,6 +65,7 @@ export class Engine {
   readonly config: Config
   readonly redactor: Redactor
   readonly tools: ReadonlyArray<ToolSpec>
+  readonly selfDir: string | undefined
   hooks: TurnHooks = NO_HOOKS
   private readonly model: Layer.Layer<Model>
   private approvalMode: ApprovalMode
@@ -78,6 +81,7 @@ export class Engine {
     this.approvalMode = options.approvals
     this.tools = options.tools ?? builtinTools
     this.redactor = options.redactor ?? new Redactor()
+    this.selfDir = options.selfDir
   }
 
   // --- sessions -----------------------------------------------------------
@@ -192,6 +196,7 @@ export class Engine {
       cwd: header.cwd,
       tools: this.tools,
       redactor: this.redactor,
+      selfDir: this.selfDir,
     }
 
     const turn = runTurn(env, {

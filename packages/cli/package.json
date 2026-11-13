@@ -12,6 +12,8 @@
   ],
   "homepage": "https://github.com/cephalization/oi-agent#readme",
   "bugs": "https://github.com/cephalization/oi-agent/issues",
+  "license": "MIT",
+  "author": "Tony Powell",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cephalization/oi-agent.git",
@@ -21,7 +23,8 @@
     "oi": "./dist/oi.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "self"
   ],
   "type": "module",
   "publishConfig": {
@@ -29,8 +32,8 @@
     "provenance": true
   },
   "scripts": {
-    "build": "vp pack",
-    "prepack": "vp pack && cp ../../README.md README.md"
+    "build": "node ../../scripts/self.ts && vp pack",
+    "prepack": "node ../../scripts/self.ts && vp pack && cp ../../README.md README.md && cp ../../LICENSE LICENSE"
   },
   "devDependencies": {
     "@oi-agent/engine": "workspace:*"

@@ -32,13 +32,28 @@ const readFile = (file: string): string | undefined => {
   }
 }
 
-export const systemPrompt = (cwd: string): string => {
+/** Where the agent can read about itself: its shipped source and this session's spans. */
+export interface SelfKnowledge {
+  /** Directory holding GUIDE.md, README.md and `source/`. */
+  readonly selfDir: string
+  /** Directory holding this session's span files. */
+  readonly sessionDir: string
+}
+
+const aboutSelf = (self: SelfKnowledge): string => `About yourself:
+You are also a way to learn how coding agents work. Your own source code and documentation ship with you, read-only, at ${self.selfDir}. Start with ${self.selfDir}/GUIDE.md, which maps each concept to a source file under ${self.selfDir}/source.
+This conversation is stored as OpenInference span files at ${self.sessionDir}: one folder per turn under traces/, one JSON file per span. The turn in progress has .open.json files.
+When the user asks how you work, how agents work, or why you did something, do not answer from general knowledge. Read the relevant source and the real spans from this session, and explain using them: name the file, quote a short excerpt, show the actual request or tool call. Keep it concrete and brief, and offer to go deeper. Do this when asked or when it clearly helps; do not lecture unprompted during ordinary work.`
+
+export const systemPrompt = (cwd: string, self?: SelfKnowledge): string => {
   const rules = readFile(rulesPath(cwd))?.trim()
 
   const sections = [
     BASE,
     `Environment:\n- Working directory: ${cwd}\n- Platform: ${os.platform()} ${os.arch()}`,
   ]
+
+  if (self !== undefined) sections.push(aboutSelf(self))
 
   if (rules !== undefined && rules !== "") {
     sections.push(`Rules learned from past evaluations of your work in this project. Follow them:\n${rules}`)

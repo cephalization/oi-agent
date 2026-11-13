@@ -84,6 +84,13 @@ the session and follows it live. Prompts from a peer run on the host under the
 peer's name; tool approvals stay with the host. `/share local` skips the
 tunnel for two terminals on one machine.
 
+**Ask it how it works.** oi ships with its own source code and a guide
+([docs/how-it-works.md](docs/how-it-works.md)), and it knows where the current
+session's span files are. Ask "how do you remember what I said?" or "what did
+you actually send the model just now?", or type `/tour`. It answers by reading
+its real code and the real spans from your conversation, so using it for
+ordinary work doubles as a way to learn how agents work.
+
 **Open it in Phoenix.** With the endpoint set, spans and annotations arrive as
 they are written, grouped by session, with model, token and cost data on every
 `LLM` span, including the evaluator's own model calls.
@@ -99,6 +106,10 @@ they are written, grouped by session, with model, token and cost data on every
 Key files in the engine, in reading order: `format.ts` (the on-disk format),
 `store.ts`, `tracer.ts` (an Effect tracer that writes span files), `fold.ts`
 (state derived from spans), `agent.ts` (the loop).
+
+## License
+
+[MIT](LICENSE)
 
 ## Development
 

@@ -4,3 +4,5 @@ dist
 *.log
 .oi/
 packages/cli/README.md
+packages/cli/self/
+packages/cli/LICENSE

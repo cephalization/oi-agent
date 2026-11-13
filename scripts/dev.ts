@@ -28,6 +28,8 @@ const linkTarget = (file: string): string | undefined => {
   }
 }
 
+execFileSync("node", [path.join(root, "scripts", "self.ts")], { stdio: "inherit" })
+
 execFileSync("pnpm", ["exec", "vp", "pack"], { cwd: path.join(root, "packages", "cli"), stdio: "inherit" })
 
 const binDir =

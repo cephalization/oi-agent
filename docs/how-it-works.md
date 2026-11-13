@@ -1,0 +1,114 @@
+# How oi works
+
+A guided map of oi-agent's internals, written to be read by the agent itself
+when someone asks how it works, and by anyone curious.
+
+Paths under `source/` are the agent's real source code, shipped with it. A
+session's files are the other half of the picture: every claim below can be
+checked against the span files of the conversation you are in.
+
+## The one idea
+
+Most agents keep the conversation in memory or a database and emit telemetry
+on the side. oi has only the telemetry. Each model call, tool call and
+evaluation is an OpenInference span written to disk, and the agent works out
+what to send the model next by reading those files back.
+
+So "what is the agent's state?" has a literal answer: a folder.
+
+```
+<sessions>/<session-id>/
+  session.json                                 where and when the session began
+  traces/<trace-id>/                           one folder per user turn
+    <start-ns>-<span-id>.json                  a finished span; never modified
+    <start-ns>-<span-id>.open.json             a span still running
+    <start-ns>-<span-id>.stream.jsonl          text streaming into a running span
+  annotations/<id>.json                        evaluator verdicts
+  inbox/<id>.json                              prompts sent by people sharing the session
+```
+
+## A turn, step by step
+
+Follow along in `source/engine/src/agent.ts`.
+
+1. **The user sends a prompt.** `runTurn` starts a root span of kind `AGENT`.
+   Its `input.value` is the prompt. Starting the span writes an `.open.json`
+   file.
+2. **The loop asks "what do I send?"** It calls `contextFor` in
+   `source/engine/src/fold.ts`. This is the fold: it finds the most recent
+   model call in the turn, takes the messages that call sent, appends the
+   model's reply, and appends the results of any tools the reply asked for.
+   If the turn has not reached the model yet, it takes the previous turn's
+   context and adds the new prompt.
+3. **The model is called** (`modelStep`, and `source/engine/src/model.ts`).
+   The exact request body is stored in the `LLM` span's `input.value` and the
+   exact response in `output.value`. Token counts, model name and the
+   flattened messages are stored beside them as `llm.*` attributes
+   (`source/engine/src/oi.ts`).
+4. **If the reply contains tool calls, each runs in a `TOOL` span**
+   (`toolStep`, and `source/engine/src/tools.ts`). Tools that change the
+   machine wait for approval first. Output is scrubbed of secrets
+   (`source/engine/src/redact.ts`) before it is written.
+5. **Back to step 2.** The loop keeps no variables holding the conversation.
+   Each pass re-derives it from disk, which is why killing the process
+   mid-turn loses nothing: restarting takes the same path.
+6. **When a reply has no tool calls, the turn ends.** The root span gets its
+   `output.value` and is written as a finished file.
+
+The link between "a span" and "a file" is `source/engine/src/tracer.ts`: an
+Effect tracer whose `span()` writes the open file and whose `end()` writes the
+finished one. The agent loop only ever calls `Effect.withSpan`; persistence is
+a side effect of tracing.
+
+## Concept to file
+
+| Concept                                          | Where                                                                |
+| ------------------------------------------------ | -------------------------------------------------------------------- |
+| The on-disk format, as schemas                   | `source/engine/src/format.ts`                                        |
+| Reading and writing span files, the event stream | `source/engine/src/store.ts`                                         |
+| Spans become files                               | `source/engine/src/tracer.ts`                                        |
+| State derived from spans (the fold)              | `source/engine/src/fold.ts`                                          |
+| The loop                                         | `source/engine/src/agent.ts`                                         |
+| Talking to the model                             | `source/engine/src/model.ts`                                         |
+| The tools the model can call                     | `source/engine/src/tools.ts`                                         |
+| The system prompt                                | `source/engine/src/prompt.ts`                                        |
+| Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
+| Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
+| Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
+| Sharing a session with other people              | `source/engine/src/peer/`                                            |
+| The terminal interface                           | `source/cli/src/tui/`                                                |
+| Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                            |
+
+## Things worth showing someone
+
+These work best on the session you are in, because the evidence is right there.
+
+- **"What did you actually send the model?"** Open the latest `LLM` span in
+  the current turn's folder and show `input.value`: the system prompt, the
+  tool definitions and every message. This is the whole of what a model
+  "knows" in a turn.
+- **"Where is your memory?"** There is none beyond those files. Show that the
+  second `LLM` span of a turn contains the first one's reply and the tool
+  result, and point at the lines in `fold.ts` that assembled them.
+- **"Why is the history resent every time?"** The API is stateless. Compare
+  `llm.token_count.prompt` across spans to show the cost growing, and
+  `llm.token_count.prompt_details.cache_read` to show prompt caching
+  absorbing most of it.
+- **"What is a tool call, really?"** Show a `tool_use` block in an `LLM`
+  span's `output.value`, the `TOOL` span that ran it, and the `tool_result`
+  block in the next request. The model only ever emits text; the harness does
+  the work.
+- **"What is thinking?"** If a reply has a `thinking` block, show it and its
+  `signature`, and explain that it must be sent back unmodified.
+- **"How does an eval change your behaviour?"** Show an annotation file, then
+  the `<eval-feedback>` block at the start of the next turn's first request,
+  then the rules file if a rule was learned.
+- **"How do two people share one agent?"** `peer/server.ts` serves a list of
+  files and a stream of events; `peer/client.ts` copies what is missing.
+  Finished spans never change, so there is nothing to merge.
+
+## Further reading
+
+- `README.md`: what it does and how to use it.
+- `PLAN.md`: the design decisions and what was measured.
+- `spec-gaps.md`: what OpenInference could not express, found by building this.
