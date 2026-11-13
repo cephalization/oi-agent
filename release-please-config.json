@@ -13,7 +13,8 @@
           "path": "packages/cli/package.json",
           "jsonpath": "$.version"
         }
-      ]
+      ],
+      "initial-version": "0.1.0"
     }
   }
 }
