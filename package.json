@@ -1,0 +1,22 @@
+{
+  "name": "oi-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "oi": "node packages/cli/src/main.ts",
+    "check": "vp check",
+    "fix": "vp check --fix",
+    "test": "vp test run",
+    "build": "vp run -r build"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.93.0",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vite-plus": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "packageManager": "pnpm@12.18.0"
+}

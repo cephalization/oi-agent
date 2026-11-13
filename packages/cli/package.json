@@ -1,0 +1,11 @@
+{
+  "name": "@oi-agent/cli",
+  "version": "0.0.1",
+  "bin": {
+    "oi": "./src/main.ts"
+  },
+  "type": "module",
+  "dependencies": {
+    "@oi-agent/engine": "workspace:*"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@oi-agent/engine",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@arizeai/openinference-semantic-conventions": "^2.16.0",
+    "effect": "^4.1.4"
+  }
+}

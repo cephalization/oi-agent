@@ -5,17 +5,17 @@ State is a fold over span files; nothing else is authoritative.
 
 ## Decisions
 
-| Topic | Decision |
-|---|---|
-| Stack | TypeScript + Effect for the engine. Rust/GPUI later, as a second reader of the same folder. |
-| Scope | Coding agent first. Engine lives in its own package with a clean boundary so an SDK can be extracted later; no public SDK API yet. |
-| Span files | Self-contained. Each `LLM` span repeats full history. Measure disk and sync cost; no blob store yet. |
-| File shape | Readable JSON (the `traces.md` shape). Lossless projection to OTLP on export. |
-| First provider | Anthropic. |
-| Spec gaps | Fit the spec as-is. Anything it cannot express goes in the `metadata` attribute. Every gap is logged in `docs/spec-gaps.md`. |
-| Phoenix | Optional. Harness and local evals work offline. |
-| Sharing | Multi-user driving from the first `/share` version. |
-| Eval feedback | Fully automatic, including standing prompt changes. Every change is versioned and revertible. |
+| Topic          | Decision                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Stack          | TypeScript + Effect for the engine. Rust/GPUI later, as a second reader of the same folder.                                        |
+| Scope          | Coding agent first. Engine lives in its own package with a clean boundary so an SDK can be extracted later; no public SDK API yet. |
+| Span files     | Self-contained. Each `LLM` span repeats full history. Measure disk and sync cost; no blob store yet.                               |
+| File shape     | Readable JSON (the `traces.md` shape). Lossless projection to OTLP on export.                                                      |
+| First provider | Anthropic.                                                                                                                         |
+| Spec gaps      | Fit the spec as-is. Anything it cannot express goes in the `metadata` attribute. Every gap is logged in `docs/spec-gaps.md`.       |
+| Phoenix        | Optional. Harness and local evals work offline.                                                                                    |
+| Sharing        | Multi-user driving from the first `/share` version.                                                                                |
+| Eval feedback  | Fully automatic, including standing prompt changes. Every change is versioned and revertible.                                      |
 
 ## Layout
 
@@ -35,19 +35,19 @@ per-collector export cursors.
 
 ## Mapping
 
-| Concept | Representation |
-|---|---|
-| Session | folder; `session.id` on every span |
-| User turn | trace; root `AGENT` span with `input.value` / `output.value` |
-| Model call | `LLM` span. Raw request and response bodies in `input.value` / `output.value` (JSON) for lossless replay; flattened `llm.*` attributes as the normalized view |
-| Tool call | `TOOL` span |
-| Compaction | `CHAIN` span; details in `metadata` |
-| Subagent | nested `AGENT` span |
-| Turn order, forks | previous turn's trace and span id in `metadata` on the root span. Two turns naming the same predecessor are a fork |
-| Who sent the turn | `user.id` on the root span, derived from the peer's key |
-| Evals, labels, names | annotation files using the spec's span / trace / session scopes |
-| Eval feedback injected into context | a span, so it is part of the fold |
-| Standing prompt change | a span plus a versioned prompt file (and a Phoenix prompt version when connected) |
+| Concept                             | Representation                                                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session                             | folder; `session.id` on every span                                                                                                                            |
+| User turn                           | trace; root `AGENT` span with `input.value` / `output.value`                                                                                                  |
+| Model call                          | `LLM` span. Raw request and response bodies in `input.value` / `output.value` (JSON) for lossless replay; flattened `llm.*` attributes as the normalized view |
+| Tool call                           | `TOOL` span                                                                                                                                                   |
+| Compaction                          | `CHAIN` span; details in `metadata`                                                                                                                           |
+| Subagent                            | nested `AGENT` span                                                                                                                                           |
+| Turn order, forks                   | previous turn's trace and span id in `metadata` on the root span. Two turns naming the same predecessor are a fork                                            |
+| Who sent the turn                   | `user.id` on the root span, derived from the peer's key                                                                                                       |
+| Evals, labels, names                | annotation files using the spec's span / trace / session scopes                                                                                               |
+| Eval feedback injected into context | a span, so it is part of the fold                                                                                                                             |
+| Standing prompt change              | a span plus a versioned prompt file (and a Phoenix prompt version when connected)                                                                             |
 
 ## Rules
 
