@@ -39,3 +39,11 @@ export * from "./evals.ts"
 export * from "./judge.ts"
 
 export * from "./rules.ts"
+
+export * from "./peer/client.ts"
+
+export * from "./peer/protocol.ts"
+
+export * from "./peer/server.ts"
+
+export * from "./peer/tailcat.ts"
