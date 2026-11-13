@@ -12,6 +12,8 @@
     "build": "pnpm --filter @oi-agent/cli exec vp pack"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3",
     "@oxlint/plugins": "1.93.0",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
