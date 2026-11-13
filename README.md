@@ -1,0 +1,94 @@
+# oi-agent
+
+A coding agent whose entire runtime state is OpenInference spans on disk.
+
+There is no conversation database and no in-memory history. Every model call,
+tool call and evaluation is a span file, and the agent derives each request
+from those files. The same files export to Phoenix, sync to other machines by
+copying, and stream to anyone you share a session with.
+
+Experimental. See [PLAN.md](PLAN.md) for the design and
+[docs/spec-gaps.md](docs/spec-gaps.md) for what OpenInference could not express.
+
+## Try it
+
+Requires Node 26+, pnpm, and an Anthropic API key.
+
+```sh
+pnpm install
+bin/oi auth login          # stores the key in the system keychain
+bin/oi                     # interactive session in the current directory
+```
+
+Useful environment:
+
+```sh
+export PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006   # live export
+export OI_AGENT_MODEL=claude-haiku-5-5                    # default: claude-opus-5-5
+```
+
+| Command                        | What it does                                                              |
+| ------------------------------ | ------------------------------------------------------------------------- |
+| `oi`                           | Interactive session. `-c` continues the latest, `-s <id>` a specific one. |
+| `oi run "<prompt>"`            | One prompt, headless. Add `--yolo` to let tools run unasked.              |
+| `oi join <link>`               | Join a session shared with `/share`.                                      |
+| `oi sessions` / `oi show <id>` | List sessions; print one.                                                 |
+| `oi export [id]`               | Send sessions to Phoenix. Safe to repeat.                                 |
+| `oi where`                     | Print the sessions directory.                                             |
+
+Inside a session: `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
+`/revert`, `/export`, `/yolo`, `/quit`.
+
+## Things to try
+
+**Look at the state.** Run a turn, then open the session folder:
+
+```
+sessions/<session-id>/
+  session.json
+  traces/<trace-id>/<start-ns>-<span-id>.json   one file per span
+  annotations/<id>.json                         evaluator results
+  inbox/<id>.json                               prompts from peers
+```
+
+Kill the process mid-turn and run `oi -c`: it continues from the files.
+
+**Prompt an eval into existence.** Tell the agent something like "from now on,
+always run the tests before telling me a change is done; set up a check for
+that". It writes an evaluator to `.oi/evals/`. After every later turn the
+evaluator runs, its verdict is stored as an annotation and exported to
+Phoenix, a failure is shown to the agent at the start of its next turn, and
+the failure is distilled into a standing rule in `.oi/rules.md`. `/revert`
+undoes the latest rule.
+
+**Share a session.** `/share` opens a [tailcat](https://github.com/tailscale/tailcat)
+tunnel (`brew install tailcat`) and prints two links: one that can send
+prompts and one that is view-only. On another machine, `oi join <link>` copies
+the session and follows it live. Prompts from a peer run on the host under the
+peer's name; tool approvals stay with the host. `/share local` skips the
+tunnel for two terminals on one machine.
+
+**Open it in Phoenix.** With the endpoint set, spans and annotations arrive as
+they are written, grouped by session, with model, token and cost data on every
+`LLM` span, including the evaluator's own model calls.
+
+## Layout
+
+| Path                     | Contents                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `packages/engine`        | The format, span store, tracer, fold, agent loop, evaluators, Phoenix export, peer protocol. No UI. |
+| `packages/cli`           | The `oi` command and the terminal UI.                                                               |
+| `tools/oxlint/anti-slop` | Vendored lint rules ([upstream](https://github.com/dmmulroy/anti-slop)).                            |
+
+Key files in the engine, in reading order: `format.ts` (the on-disk format),
+`store.ts`, `tracer.ts` (an Effect tracer that writes span files), `fold.ts`
+(state derived from spans), `agent.ts` (the loop).
+
+## Development
+
+```sh
+pnpm check      # format, lint and type-check (Vite+)
+pnpm fix        # same, applying fixes
+pnpm test       # Vitest
+node packages/engine/bench/resume.ts 100 4000   # disk and resume cost
+```

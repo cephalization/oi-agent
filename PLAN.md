@@ -109,3 +109,26 @@ speaking one protocol: send the spans I lack, tail the open ones, accept inputs.
 - How does one tailcat server behave with many simultaneous clients?
 - Can provider calls be routed through Phoenix so keys stay on the server?
 - Disk and parse cost of self-contained spans on a long real session.
+
+## Status (2026-11-12)
+
+Built and verified against the live Anthropic API and a Phoenix 21 server:
+
+- Phases 1 to 5: format, fold, engine, terminal UI, Phoenix export, local
+  evaluators with feedback and learned rules, `/share` with driver and viewer
+  roles over tailcat.
+- Not built: forks in the UI (the format supports them), compaction,
+  subagents, the GPUI viewer, pulling human annotations back from Phoenix,
+  experiments over past spans, a browser viewer.
+
+Spike answers:
+
+- **Lossless resume:** yes for text, tool use and signed thinking blocks.
+- **tailcat with several clients:** one viewer and one driver were tested
+  over a real tunnel; many simultaneous clients were not.
+- **Routing provider calls through Phoenix:** not investigated.
+- **Cost of self-contained spans:** resume stays fast (deriving the next
+  request took 4 ms after 100 turns and 7 ms after 300), but disk grows
+  quadratically: 95 MB after 100 turns and 848 MB after 300 in the benchmark
+  (`packages/engine/bench/resume.ts`). History is stored twice per `LLM`
+  span, once raw and once flattened. This decision needs revisiting.
