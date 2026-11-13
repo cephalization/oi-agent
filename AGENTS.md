@@ -12,7 +12,12 @@ design. This file is what you would otherwise have to rediscover.
   commit in logical steps, and report what was verified and what was not.
 - Wants things proven live, not just type-checked: run the real CLI against
   the real API and Phoenix before calling something done.
-- Use a cheap model for live tests: `OI_AGENT_MODEL=claude-haiku-5-5`.
+- Use a cheap, fast model for live tests: `chatgpt/gpt-5.6-luna` (Tony's
+  ChatGPT sign-in), with `claude-haiku-5-5` where Anthropic is needed.
+- End-to-end checks belong in `packages/e2e` (`pnpm e2e`; read its README).
+  It runs the real CLI in a sandbox, through Rex, and asserts on spans. A
+  feature from an issue gets a scenario there; until it lands, mark it
+  `pending: <issue>` and run it with `OI_E2E_PENDING=<issue>`.
 - Test terminal UIs with Rex (the `rex` skill), not tmux. Outside a Rex
   terminal the CLI is at
   `/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex`.

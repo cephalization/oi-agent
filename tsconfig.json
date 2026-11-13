@@ -18,6 +18,7 @@
     "packages/*/src",
     "packages/*/test",
     "packages/*/bench",
+    "packages/*/scenarios",
     "packages/*/vite.config.ts",
     "scripts",
     "vite.config.ts"
