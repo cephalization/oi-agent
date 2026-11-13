@@ -105,9 +105,66 @@ export const hasConfig = (env: NodeJS.ProcessEnv = process.env): boolean => fs.e
 
 export const defaultHome = (): string => path.join(os.homedir(), ".oi-agent")
 
+const ConfigObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
+const decodeConfigObject = Schema.decodeUnknownOption(ConfigObject)
+
+type PartialConfig = typeof PartialConfig.Type
+
+/** What the config file sets, and the keys it sets to values that are not valid. */
+interface FileSettings {
+  readonly settings: PartialConfig | undefined
+  readonly invalid: ReadonlyArray<string>
+}
+
+/**
+ * Read the config file one key at a time, so a single bad value (a typo, or a
+ * setting from a newer version) loses only that key rather than the whole
+ * file, which would quietly put every setting back to its default.
+ */
+const readSettings = (env: NodeJS.ProcessEnv): FileSettings => {
+  const text = readFile(configPath(env))
+
+  if (text === undefined) return { settings: undefined, invalid: [] }
+
+  return Option.match(decodePartial(text), {
+    onSome: (settings) => ({ settings, invalid: [] }),
+    onNone: () =>
+      Option.match(decodeConfigObject(text), {
+        onNone: () => ({ settings: undefined, invalid: ["the whole file (it is not a JSON object)"] }),
+        onSome: (object) => {
+          const entries = Object.entries(object)
+
+          const fits = ([key, value]: readonly [string, Schema.Json]) =>
+            Option.isSome(decodePartial(JSON.stringify({ [key]: value })))
+
+          const valid = entries.filter(fits)
+
+          return {
+            settings: Option.getOrUndefined(decodePartial(JSON.stringify(Object.fromEntries(valid)))),
+            invalid: entries.filter((entry) => !fits(entry)).map(([key]) => key),
+          }
+        },
+      }),
+  })
+}
+
+/**
+ * Config file keys whose values were ignored because they are not valid,
+ * as warnings to show the user. Empty when the file is fine or absent.
+ */
+export const configProblems = (env: NodeJS.ProcessEnv = process.env): Array<string> => {
+  const { invalid } = readSettings(env)
+
+  if (invalid.length === 0) return []
+
+  return [
+    `${configPath(env)}: ignoring ${invalid.join(", ")}, which ${invalid.length === 1 ? "is" : "are"} not valid. Every other setting still applies.`,
+  ]
+}
+
 /** Settings from the config file, with environment variables taking precedence. */
 export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
-  const file = Option.getOrUndefined(decodePartial(readFile(configPath(env))))
+  const file = readSettings(env).settings
   const providers = file?.providers ?? []
 
   // `OI_AGENT_MODEL=openai/gpt-5.1` picks the provider as well as the model.

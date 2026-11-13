@@ -21,6 +21,7 @@ import {
   type ApprovalMode,
   Engine,
   getSecret,
+  configProblems,
   hasConfig,
   loadConfig,
   loadSession,
@@ -241,7 +242,8 @@ const run = async (prompt: string): Promise<void> => {
   const opened = await open(sessions, target)
   const sessionId = opened.sessionId
 
-  for (const note of guard(engine, opened, false)) process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
+  for (const note of [...configProblems(), ...guard(engine, opened, false)])
+    process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
 
   const unsubscribe = store.subscribe(printEvents(sessionId))
   const phoenix = remote?.exporter
@@ -331,6 +333,8 @@ const interactive = async (): Promise<void> => {
   const sessions = new Sessions(store, remote)
   let target: Target | undefined = await initialTarget(engine, remote)
   let opened = await open(sessions, target)
+  // Shown under the banner of the first session opened.
+  let problems = configProblems()
 
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
@@ -350,9 +354,11 @@ const interactive = async (): Promise<void> => {
       phoenix: remote?.exporter,
       sessions,
       from: target.from,
-      notes: guard(engine, opened, true),
+      notes: [...problems, ...guard(engine, opened, true)],
       providers,
     })
+
+    problems = []
 
     const away = await sessions.putAway(sessionId)
 
