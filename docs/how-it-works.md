@@ -95,6 +95,7 @@ a side effect of tracing.
 | The terminal interface                           | `source/cli/src/tui/`                                                |
 | Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                     |
 | Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                            |
+| Restarting on new code (`/reload`), the fallback | `source/cli/src/launcher.ts`, `reloadInto` in `main.ts`              |
 
 ## Things worth showing someone
 
@@ -165,6 +166,20 @@ These work best on the session you are in, because the evidence is right there.
   session the process starts with. A model that can no longer be built
   (provider removed, no key) leaves the current one, with a note. A new
   session keeps whatever model is current.
+- **"How do you pick up changes to your own code?"** `/reload`. The `oi`
+  command is a small launcher (`source/cli/src/launcher.ts`, Node built-ins
+  only) that runs the CLI as a child process: `OI_AGENT_ENTRY` when set
+  (`bin/oi` sets it to the checkout's sources), else the bundled build
+  beside it. `/reload` first runs that code with `--check`, which loads every
+  module and exits, and refuses if that fails. Otherwise the CLI writes
+  `reload` and its arguments (`-s <session> -m <model> --effort <level>`) to
+  a pipe the launcher gave it, and exits with 75. The launcher starts the
+  code again with those arguments. Nothing is handed over in memory: the new
+  process folds the same span files. If code started by a reload exits with
+  an error before its terminal is up (it writes `ready` once it is), the
+  launcher starts the bundled build on the same session, with a note saying
+  why. `/reload` waits for a running turn. Continuing a turn that a restart
+  cut short is not built yet: the next turn folds it in as interrupted.
 - **"How do you talk to OpenAI or a local model?"** Each API is a dialect
   (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
   Completions (what "OpenAI-compatible" servers speak) and OpenAI

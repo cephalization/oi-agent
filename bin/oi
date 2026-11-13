@@ -1,3 +1,7 @@
 #!/bin/sh
 # Run oi-agent from a checkout. Node 26 runs the TypeScript sources directly.
-exec node "$(dirname "$0")/../packages/cli/src/main.ts" "$@"
+# The launcher runs the sources (OI_AGENT_ENTRY), so /reload picks up edits; if
+# edited sources fail to start after a reload, it falls back to the last
+# `pnpm build` (packages/cli/dist), when there is one.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+OI_AGENT_ENTRY="${OI_AGENT_ENTRY:-$root/packages/cli/src/main.ts}" exec node "$root/packages/cli/src/launcher.ts" "$@"

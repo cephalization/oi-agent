@@ -1,19 +1,21 @@
 /**
  * Self-patching and reload (issue #8, Layer 0). A copy of the source in the
  * sandbox stands in for patched code: the launcher runs it through
- * `OI_AGENT_ENTRY`, `/reload` restarts into it on the same session, and a
- * broken patch falls back to the bundled build with a banner.
+ * `OI_AGENT_ENTRY`, and `/reload` restarts into it on the same session. A
+ * patch that does not load is refused by the preflight; one that loads but
+ * crashes on start falls back to the bundled build, with a note.
  *
- * Assumes the launcher's source is `packages/cli/src/launcher.ts` and that
- * the fallback needs a built `packages/cli/dist/oi.mjs` (`pnpm build`).
+ * The fallback runs `packages/cli/dist/oi.mjs`, which that scenario builds.
  */
+import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { describe, expect } from "vite-plus/test"
 import { REPO_ROOT, type Sandbox } from "../src/sandbox.ts"
-import { scenario } from "../src/scenario.ts"
+import { MODELS, scenario } from "../src/scenario.ts"
 
 const LAUNCHER = path.join(REPO_ROOT, "packages/cli/src/launcher.ts")
+const BUNDLE = path.join(REPO_ROOT, "packages/cli/dist/oi.mjs")
 const WELCOME = "Every step is an OpenInference span on disk."
 
 /** The launcher, failing fast with a clear message while #8 has not added it. */
@@ -54,10 +56,19 @@ const patch = (file: string, from: string, to: string): void => {
 
 const appFile = (entry: string): string => path.join(path.dirname(entry), "tui/app.ts")
 
+/** Build the bundle the launcher falls back to, from the checkout's sources. */
+const buildBundle = (): string => {
+  execFileSync("pnpm", ["build"], { cwd: REPO_ROOT, stdio: "ignore" })
+
+  if (!fs.existsSync(BUNDLE)) throw new Error(`pnpm build did not produce ${BUNDLE}`)
+
+  return BUNDLE
+}
+
 describe("reload", () => {
   scenario(
     "/reload restarts into patched code and keeps the session",
-    { needs: ["rex"], pending: 8 },
+    { needs: ["rex"] },
     async ({ sandbox, spans, tui }) => {
       const entry = overlay(sandbox)
       const term = await tui([], { entry: launcher(), env: new Map([["OI_AGENT_ENTRY", entry]]) })
@@ -78,12 +89,14 @@ describe("reload", () => {
       expect(spans.sessions()).toEqual([session])
       expect(turns[1]?.previous).toBe(first?.trace_id)
       expect(turns[1]?.output?.toLowerCase()).toContain("heron")
+      // The new process carried over the model and effort.
+      expect(spans.lastModel(session)).toEqual({ model: MODELS.main, effort: "low" })
     },
   )
 
   scenario(
-    "a patch that fails to start falls back to the bundled build with a banner",
-    { needs: ["rex"], pending: 8 },
+    "a patch that does not load is refused by the preflight, and this build keeps running",
+    { needs: ["rex"] },
     async ({ sandbox, spans, tui }) => {
       const entry = overlay(sandbox)
       const term = await tui([], { entry: launcher(), env: new Map([["OI_AGENT_ENTRY", entry]]) })
@@ -99,10 +112,42 @@ describe("reload", () => {
       fs.appendFileSync(entry, "\nthis is not typescript\n")
       await term.line("/reload")
 
-      // Either the preflight refuses the reload, or the launcher falls back.
-      const screen = await term.waitFor(/fall(ing)? back|fallback|did not start|preflight/i)
+      const screen = await term.waitFor(/failed the preflight/)
 
       expect(screen).toMatch(/›/)
+      await term.line("Reply with just: after")
+
+      const turns = await spans.settledTurns(session, 2)
+
+      expect(turns[1]?.state).toBe("complete")
+      expect(spans.sessions()).toEqual([session])
+    },
+  )
+
+  scenario(
+    "a patch that loads but crashes on start falls back to the bundled build with a note",
+    { needs: ["rex"] },
+    async ({ sandbox, spans, tui }) => {
+      buildBundle()
+
+      const entry = overlay(sandbox)
+      const term = await tui([], { entry: launcher(), env: new Map([["OI_AGENT_ENTRY", entry]]) })
+
+      await term.waitFor(new RegExp(WELCOME))
+      await term.line("Reply with just: before")
+
+      const session = await spans.waitFor("a session", () => spans.sessions()[0])
+
+      await spans.settledTurns(session, 1)
+
+      // Every module still loads, so the preflight passes; the terminal never comes up.
+      patch(
+        appFile(entry),
+        "async run(): Promise<AppExit> {",
+        'async run(): Promise<AppExit> {\n    throw new Error("patched to fail")',
+      )
+      await term.line("/reload")
+      await term.waitFor(/this is the bundled build/)
       await term.line("Reply with just: after")
 
       const turns = await spans.settledTurns(session, 2)
