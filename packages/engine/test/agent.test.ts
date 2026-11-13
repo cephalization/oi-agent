@@ -3,9 +3,9 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vite-plus/test"
-import { approveAll, runTurn, type TurnEnv, type TurnInput } from "../src/agent.ts"
+import { approveAll, Approver, runTurn, type TurnEnv, type TurnInput } from "../src/agent.ts"
 import { contextFor, loadSession } from "../src/fold.ts"
-import { kindOf, OI } from "../src/format.ts"
+import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { type ModelCall, scriptedModel } from "../src/model.ts"
 import { Redactor } from "../src/redact.ts"
 import { builtinTools } from "../src/tools.ts"
@@ -203,6 +203,47 @@ describe("agent loop", () => {
     expect(all.includes("hunter2-hunter2")).toBe(false)
     expect(all.includes("sk-ant-abcdefghijklmnopqrstuvwxyz")).toBe(false)
     expect(all.includes("TOKEN=[redacted]")).toBe(true)
+  })
+
+  it("marks a tool call as awaiting approval on disk while the decision is pending", async () => {
+    const env = setup()
+    const seen: Array<boolean | undefined> = []
+
+    // An approver that looks at the in-flight span file before deciding.
+    const inspecting = Layer.succeed(Approver, {
+      decide: (request) =>
+        Effect.sync(() => {
+          const pending = env.store
+            .readTrace(env.sessionId, request.trace_id)
+            .open.find((entry) => entry.span.context.span_id === request.span_id)
+
+          seen.push(pending === undefined ? undefined : readMetadata(pending.span).awaiting_approval)
+
+          return "allow" as const
+        }),
+    })
+
+    await Effect.runPromiseExit(
+      runTurn(env, first("go")).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            scriptedModel((_call, step) => (step === 0 ? bash("toolu_w", "echo waited") : text("ok"))),
+            inspecting,
+          ),
+        ),
+      ),
+    )
+
+    expect(seen).toEqual([true])
+
+    const [traceId] = env.store.listTraceIds(env.sessionId)
+
+    const tool = env.store
+      .readTrace(env.sessionId, traceId ?? "")
+      .ended.find((span) => kindOf(span) === "TOOL")
+
+    expect(readMetadata(tool!).awaiting_approval).toBe(false)
+    expect(readMetadata(tool!).approval?.decision).toBe("allow")
   })
 })
 
