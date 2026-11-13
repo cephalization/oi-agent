@@ -1,7 +1,7 @@
 name: PR title
 
 # Pull requests are squash-merged, so the title becomes the commit message
-# that release-please reads. It has to be a Conventional Commit.
+# the CHANGELOG links to. Keep it a Conventional Commit.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
