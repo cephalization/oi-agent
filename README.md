@@ -1,5 +1,7 @@
 # oi-agent
 
+[![npm](https://img.shields.io/npm/v/oi-agent)](https://www.npmjs.com/package/oi-agent)
+
 A coding agent whose entire runtime state is OpenInference spans on disk.
 
 There is no conversation database and no in-memory history. Every model call,
@@ -12,17 +14,14 @@ Experimental. See [PLAN.md](PLAN.md) for the design and
 
 ## Try it
 
-Requires Node 26+, pnpm, and an Anthropic API key.
+Requires Node 24+ and an Anthropic API key.
 
 ```sh
-pnpm install
-pnpm dev                   # builds the CLI and links `oi` into ~/.local/bin
+npm install -g oi-agent    # installs the `oi` command
 oi                         # first run walks you through setup, then starts a session
 ```
 
-`pnpm dev` bundles the CLI into one file and symlinks it onto your PATH; run
-it again after changing the code. `bin/oi` runs the TypeScript sources
-directly without building.
+Or run it once without installing: `npx oi-agent`.
 
 Setup asks for your name, an Anthropic API key, a model, reasoning effort,
 whether tools need approval, an optional Phoenix server and where sessions
@@ -50,8 +49,22 @@ can filter by its first prompt or directory; `/new` starts a fresh one.
 `/model` switches model from the next turn on, picked from the models your
 key can use. With the menu closed, Tab toggles between asking before tools
 and running them unasked (yolo), and Shift+Tab cycles reasoning effort
-through the levels the current model accepts. The others are `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
-`/revert`, `/export`, `/yolo`, `/tour`, `/help` and `/quit`.
+through the levels the current model accepts. The others are `/share`,
+`/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
+`/yolo`, `/tour`, `/help` and `/quit`.
+
+### From source
+
+Requires Node 26+ and pnpm.
+
+```sh
+pnpm install
+pnpm dev                   # builds the CLI and links `oi` into ~/.local/bin
+```
+
+`pnpm dev` bundles the CLI into one file and symlinks it onto your PATH; run
+it again after changing the code. `bin/oi` runs the TypeScript sources
+directly without building.
 
 ## Things to try
 
