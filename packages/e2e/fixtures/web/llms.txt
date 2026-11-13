@@ -1,0 +1,3 @@
+# Fixture site
+
+- [Widget docs](/docs/page.md): ports and defaults

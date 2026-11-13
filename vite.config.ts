@@ -45,6 +45,16 @@ export default defineConfig({
       "anti-slop-effect/no-service-constructor-imports": "error",
       "anti-slop-effect/prefer-effect-match": "error",
     },
+    overrides: [
+      {
+        // End-to-end scenarios are declared with `scenario()`, which wraps `it()`.
+        files: ["packages/e2e/**"],
+        rules: {
+          "vitest/no-standalone-expect": ["warn", { additionalTestBlockFunctions: ["scenario"] }],
+          "vitest/expect-expect": ["warn", { assertFunctionNames: ["expect", "expectOk"] }],
+        },
+      },
+    ],
   },
   test: {
     include: ["packages/*/test/**/*.test.ts"],

@@ -9,7 +9,8 @@
     "fix": "vp check --fix",
     "test": "vp test run",
     "dev": "node scripts/dev.ts",
-    "build": "pnpm --filter @oi-agent/cli exec vp pack"
+    "build": "pnpm --filter @oi-agent/cli exec vp pack",
+    "e2e": "vp test run --root packages/e2e"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.1",
