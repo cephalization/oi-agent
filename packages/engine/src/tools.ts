@@ -191,15 +191,25 @@ const editFile = defineTool({
 
 const DEFAULT_TIMEOUT_MS = 120_000
 
+/**
+ * A timeout reads to a model like a failure of the command itself; say that it
+ * was the time limit, and how to lift it.
+ */
+export const timedOutStatus = (timeoutMs: number): string =>
+  `[timed out after ${timeoutMs} ms: the command was killed, not failed. If it needs longer, run it again with a larger timeout_ms]`
+
 const bash = defineTool({
   name: "bash",
   description:
-    "Run a shell command in the working directory and return its combined stdout and stderr with the exit code. Use it for searching (rg), listing files, running tests and builds, and git.",
+    "Run a shell command in the working directory and return its combined stdout and stderr with the exit code. Use it for searching (rg), listing files, running tests and builds, and git. Commands are killed after two minutes unless you pass a larger timeout_ms: do that up front for slow commands such as full test suites.",
   parameters: {
     type: "object",
     properties: {
       command: { type: "string", description: "The command to run with bash -c." },
-      timeout_ms: { type: "integer", description: "Kill the command after this long. Defaults to 120000." },
+      timeout_ms: {
+        type: "integer",
+        description: "Kill the command after this many milliseconds. Defaults to 120000 (two minutes).",
+      },
     },
     required: ["command"],
     additionalProperties: false,
@@ -213,6 +223,8 @@ const bash = defineTool({
 
       const child = spawn("bash", ["-c", input.command], {
         cwd: context.cwd,
+        // OI_AGENT tells scripts they run under oi (`pnpm dev` refuses to relink oi from inside it).
+        env: { ...process.env, OI_AGENT: "1" },
         stdio: ["ignore", "pipe", "pipe"],
         // A process group, so a timeout or interrupt also stops grandchildren.
         detached: true,
@@ -252,7 +264,7 @@ const bash = defineTool({
         clearTimeout(timer)
 
         const output = truncate(chunks.join(""))
-        const status = timedOut ? `[timed out after ${timeoutMs} ms]` : `[exit code ${code ?? "unknown"}]`
+        const status = timedOut ? timedOutStatus(timeoutMs) : `[exit code ${code ?? "unknown"}]`
 
         resume(
           Effect.succeed({
