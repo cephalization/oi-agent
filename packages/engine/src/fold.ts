@@ -5,7 +5,8 @@
  * step, a resumed session and a crash recovery all take the same path. There
  * is no in-memory conversation to fall out of sync with disk.
  */
-import { Option } from "effect"
+import { type Dialect, INTERRUPTED_RESULT, type Reply, type ToolResult } from "./dialect.ts"
+import { dialectFor, translate } from "./dialects/index.ts"
 import {
   type AnnotationFile,
   type EndedSpan,
@@ -18,7 +19,7 @@ import {
 } from "./format.ts"
 import { isoToNs } from "./ids.ts"
 import { type OpenSpan, STALE_AFTER_MS, type Store, type TraceFiles } from "./store.ts"
-import { type Json, parseRequest, parseResponse, type ResponseBody, toolUses } from "./wire.ts"
+import type { Json } from "./wire.ts"
 
 export type TurnState = "complete" | "running" | "interrupted" | "failed"
 
@@ -41,8 +42,6 @@ export interface SessionView {
   /** Turns nothing continues from. More than one means the session forked. */
   readonly leaves: ReadonlyArray<TurnSummary>
 }
-
-const INTERRUPTED_RESULT = "This tool call was interrupted before it completed. Its effects are unknown."
 
 const startNs = (span: SpanFile): bigint => isoToNs(span.start_time)
 
@@ -120,8 +119,11 @@ export const branchTo = (view: SessionView, traceId: string): Array<TurnSummary>
 
 interface LastCall {
   readonly span: EndedSpan
+  /** The dialect the call's bodies are in. */
+  readonly dialect: Dialect
   readonly messages: ReadonlyArray<Json>
-  readonly response: ResponseBody
+  readonly rawResponse: string
+  readonly reply: Reply
 }
 
 const lastModelCall = (trace: TraceFiles): LastCall | undefined => {
@@ -130,31 +132,28 @@ const lastModelCall = (trace: TraceFiles): LastCall | undefined => {
     .sort(byStart)
 
   for (const span of calls.toReversed()) {
-    const request = Option.getOrUndefined(parseRequest(span.attributes[OI.INPUT_VALUE]))
-    const response = Option.getOrUndefined(parseResponse(span.attributes[OI.OUTPUT_VALUE]))
+    const dialect = dialectFor(readMetadata(span).api)
+    const rawRequest = stringAttr(span, OI.INPUT_VALUE) ?? ""
+    const rawResponse = stringAttr(span, OI.OUTPUT_VALUE) ?? ""
+    const messages = dialect.requestMessages(rawRequest)
+    const reply = dialect.reply(rawResponse)
 
-    if (request !== undefined && response !== undefined) return { span, messages: request.messages, response }
+    if (messages !== undefined && reply !== undefined) return { span, dialect, messages, rawResponse, reply }
   }
 
   return undefined
 }
 
-const toolResultsFor = (trace: TraceFiles, call: LastCall): Array<Json> => {
-  const results: Array<Json> = []
-
-  for (const use of toolUses(call.response.content)) {
+const toolResultsFor = (trace: TraceFiles, call: LastCall): Array<ToolResult> =>
+  call.reply.calls.map((use) => {
     const span = trace.ended.find((candidate) => candidate.attributes[OI.TOOL_ID] === use.id)
 
-    results.push({
-      type: "tool_result",
-      tool_use_id: use.id,
-      content: span === undefined ? INTERRUPTED_RESULT : (stringAttr(span, OI.OUTPUT_VALUE) ?? ""),
-      is_error: span === undefined || readMetadata(span).is_error === true,
-    })
-  }
-
-  return results
-}
+    return {
+      id: use.id,
+      output: span === undefined ? INTERRUPTED_RESULT : (stringAttr(span, OI.OUTPUT_VALUE) ?? ""),
+      isError: span === undefined || readMetadata(span).is_error === true,
+    }
+  })
 
 /** Eval feedback rendered for the model. Deterministic, so replays match. */
 export const renderFeedback = (annotations: ReadonlyArray<AnnotationFile>): string => {
@@ -173,46 +172,44 @@ export const renderFeedback = (annotations: ReadonlyArray<AnnotationFile>): stri
   ].join("\n")
 }
 
-const userMessage = (store: Store, sessionId: string, root: SpanFile): Json => {
+const userMessage = (store: Store, sessionId: string, root: SpanFile, dialect: Dialect): Json => {
   const injected = readMetadata(root).injected ?? []
   const text = stringAttr(root, OI.INPUT_VALUE) ?? ""
 
-  if (injected.length === 0) return { role: "user", content: text }
+  if (injected.length === 0) return dialect.userMessage([text])
 
   const ids = new Set(injected.map((entry) => entry.annotation_id))
   const annotations = store.listAnnotations(sessionId).filter((annotation) => ids.has(annotation.id))
 
-  return {
-    role: "user",
-    content: [
-      { type: "text", text: renderFeedback(annotations) },
-      { type: "text", text },
-    ],
-  }
+  return dialect.userMessage([renderFeedback(annotations), text])
 }
 
 /**
- * The messages to send next for a turn, derived from disk.
+ * The messages to send next for a turn, derived from disk, in the dialect of
+ * the model that will receive them.
  *
  * If the turn has a completed model call, the context is that call's request
  * plus its response plus the results of the tools it asked for. Otherwise the
  * turn has not reached the model yet: the context is everything the previous
  * turn ended with, plus this turn's input.
+ *
+ * The stored bodies are replayed verbatim when `dialect` is the one they were
+ * written in. A different dialect means the provider changed mid-session: the
+ * conversation is translated, keeping text, tool calls and tool results.
  */
-export const contextFor = (store: Store, sessionId: string, traceId: string): Array<Json> => {
+export const contextFor = (
+  store: Store,
+  sessionId: string,
+  traceId: string,
+  dialect: Dialect = dialectFor(undefined),
+): Array<Json> => {
   const trace = store.readTrace(sessionId, traceId)
   const call = lastModelCall(trace)
 
   if (call !== undefined) {
-    const messages = [...call.messages]
-    const results = toolResultsFor(trace, call)
+    const native = call.dialect.continueWith(call.messages, call.rawResponse, toolResultsFor(trace, call))
 
-    if (call.response.content.length > 0)
-      messages.push({ role: "assistant", content: [...call.response.content] })
-
-    if (results.length > 0) messages.push({ role: "user", content: results })
-
-    return messages
+    return translate(call.dialect, dialect, native)
   }
 
   const found = rootOf(trace)
@@ -220,11 +217,11 @@ export const contextFor = (store: Store, sessionId: string, traceId: string): Ar
   if (found === undefined) return []
 
   const previous = readMetadata(found.root).previous?.trace_id
-  const base = previous === undefined ? [] : contextFor(store, sessionId, previous)
+  const base = previous === undefined ? [] : contextFor(store, sessionId, previous, dialect)
 
-  return [...base, userMessage(store, sessionId, found.root)]
+  return [...base, userMessage(store, sessionId, found.root, dialect)]
 }
 
 /** The stop reason of a turn's most recent model call, if it has one. */
 export const lastStopReason = (store: Store, sessionId: string, traceId: string): string | undefined =>
-  lastModelCall(store.readTrace(sessionId, traceId))?.response.stop_reason ?? undefined
+  lastModelCall(store.readTrace(sessionId, traceId))?.reply.stopReason

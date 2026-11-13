@@ -8,6 +8,10 @@
 import {
   type ApprovalRequest,
   type Engine,
+  type ModelChoice,
+  type ModelRef,
+  openBrowser,
+  splitModel,
   type ModelOption,
   formatBytes,
   formatShareLink,
@@ -25,6 +29,7 @@ import {
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
+import type { Providers } from "../providers.ts"
 import type { Sessions } from "../storage.ts"
 import { clip, control, style, width, wrap } from "./ansi.ts"
 import {
@@ -54,10 +59,8 @@ export interface AppOptions {
   /** Present when this process joined someone else's session. */
   readonly peer?: PeerConnection | undefined
   readonly phoenix?: PhoenixExporter | undefined
-  /** Models the key can use, for `/model` and effort cycling. Empty until listed. */
-  readonly models?: (() => ReadonlyArray<ModelOption>) | undefined
-  /** Confirms a model id the list does not include. Resolves to its display name. */
-  readonly checkModel?: ((id: string) => Promise<string>) | undefined
+  /** Providers and their models, for `/model`, `/provider` and effort cycling. */
+  readonly providers?: Providers | undefined
   /** Sessions on disk and in Phoenix, for `/resume`. Without it, only those on disk. */
   readonly sessions?: Sessions | undefined
   /** A turn to continue from instead of the latest one, for the first prompt only. */
@@ -81,6 +84,14 @@ const SHARE_ARGUMENTS: ReadonlyArray<Suggestion> = [
 
 const TOUR =
   "Give me a short tour of how you work, using this session as the example. Read your guide first, then show me the real files: what a turn looks like on disk, and what you actually sent the model. Keep it brief and offer where to go deeper."
+
+interface Question {
+  readonly label: string
+  /** Shown as dots, and kept out of history. */
+  readonly secret: boolean
+  value: string
+  readonly answer: (value: string | undefined) => void
+}
 
 interface Share {
   readonly server: PeerServer
@@ -108,6 +119,8 @@ class App {
   private moving = false
   /** The turn the next prompt continues from, when not the latest. */
   private from: string | undefined
+  /** A question the input line is answering instead of taking a prompt (an API key, say). */
+  private question: Question | undefined
   /** Ends the app. With a session id, the caller should open that session next. */
   private done: (next?: string) => void = () => undefined
 
@@ -193,28 +206,65 @@ class App {
   }
 
   private catalog(): ReadonlyArray<ModelOption> {
-    return this.options.models?.() ?? []
+    return this.options.providers?.catalog ?? []
+  }
+
+  /** The model in use, as `/model` takes it. */
+  private currentRef(): ModelRef | undefined {
+    const config = this.options.engine?.config
+
+    return config === undefined ? undefined : { provider: config.provider, model: config.model }
   }
 
   private modelSuggestions(): Array<Suggestion> {
-    const current = this.options.engine?.config.model
+    const current = this.currentRef()
 
     return this.catalog().map((option) => {
       const efforts = option.efforts.length === 0 ? "no effort setting" : `effort ${option.efforts.join(" ")}`
+      const here = option.provider === current?.provider && option.id === current.model
 
       return {
-        value: option.id,
-        label: option.id,
-        hint: `${option.id === current ? "current · " : ""}${option.name} · ${efforts}`,
+        value: `${option.provider}/${option.id}`,
+        label: `${option.provider}/${option.id}`,
+        hint: `${here ? "current · " : ""}${option.name} · ${efforts}`,
         keywords: option.name,
       }
     })
+  }
+
+  private providerSuggestions(): Array<Suggestion> {
+    const providers = this.options.providers?.all() ?? []
+    const added = providers.filter((provider) => provider.kind === "openai-compatible")
+
+    return [
+      { value: "add", label: "add <id> <base-url>", hint: "add an OpenAI-compatible server" },
+      { value: "login", label: "login", hint: "sign in with your ChatGPT plan" },
+      ...providers
+        .filter((provider) => provider.kind !== "chatgpt")
+        .map((provider) => ({
+          value: `key ${provider.id}`,
+          label: `key ${provider.id}`,
+          hint: `set ${provider.name}'s API key`,
+        })),
+      ...providers.map((provider) => ({
+        value: `logout ${provider.id}`,
+        label: `logout ${provider.id}`,
+        hint: provider.kind === "chatgpt" ? "sign out of ChatGPT" : `forget ${provider.name}'s key`,
+      })),
+      ...added.map((provider) => ({
+        value: `remove ${provider.id}`,
+        label: `remove ${provider.id}`,
+        hint: "remove this server",
+      })),
+    ]
   }
 
   private argumentsFor(command: Command): ReadonlyArray<Suggestion> {
     if (command.name === "/resume") return this.sessionSuggestions()
 
     if (command.name === "/model") return this.modelSuggestions()
+
+    if (command.name === "/provider") return this.providerSuggestions()
 
     if (command.name === "/share") return SHARE_ARGUMENTS
 
@@ -317,7 +367,16 @@ class App {
   private status(): string {
     const { transcript, options } = this
     const engine = options.engine
-    const parts = [style.gray(engine?.config.model ?? options.label)]
+    const ref = this.currentRef()
+
+    const label =
+      ref === undefined
+        ? options.label
+        : ref.provider === "anthropic"
+          ? ref.model
+          : `${ref.provider}/${ref.model}`
+
+    const parts = [style.gray(label)]
     // Dropped last-added first when the line is wider than the terminal.
     const optional: Array<string> = []
 
@@ -328,7 +387,7 @@ class App {
     }
 
     if (engine !== undefined) {
-      if (effortsFor(this.catalog(), engine.config.model).length > 0) {
+      if (ref !== undefined && effortsFor(this.catalog(), ref).length > 0) {
         add(style.gray(`effort ${engine.config.effort}`), false)
       }
 
@@ -400,6 +459,17 @@ class App {
     lines.push(this.status())
 
     if (this.notice !== "") lines.push(style.yellow(this.notice))
+
+    const question = this.question
+
+    if (question !== undefined) {
+      const shown = question.secret ? "•".repeat(question.value.length) : question.value
+      const line = `${style.cyan("?")} ${question.label}: ${shown}`
+
+      this.screen.render({ lines: [...lines, line], cursor: { line: lines.length, column: width(line) } })
+
+      return
+    }
 
     const canPrompt = this.options.peer === undefined || this.options.peer.info.role === "driver"
     const before = this.editor.text.slice(0, this.editor.cursor).split("\n")
@@ -551,7 +621,8 @@ class App {
 
     if (engine === undefined) return
 
-    const next = nextEffort(engine.config.effort, effortsFor(this.catalog(), engine.config.model))
+    const ref = { provider: engine.config.provider, model: engine.config.model }
+    const next = nextEffort(engine.config.effort, effortsFor(this.catalog(), ref))
 
     if (next === undefined) {
       this.notice = `${engine.config.model} has no reasoning effort setting.`
@@ -559,8 +630,7 @@ class App {
       return
     }
 
-    engine.configure({ effort: next })
-    this.notice = ""
+    this.notice = this.configure({ effort: next }) ?? ""
   }
 
   private async switchModel(argument: string): Promise<void> {
@@ -576,29 +646,210 @@ class App {
     }
 
     const catalog = this.catalog()
+    const providers = this.options.providers
+    const ref = splitModel(providers?.configured() ?? [], argument, engine.config.provider)
+    const name = `${ref.provider}/${ref.model}`
 
-    // Not in the list (or the list never loaded): ask the API before switching.
-    if (!catalog.some((option) => option.id === argument)) {
-      const verdict = await (this.options.checkModel?.(argument) ?? Promise.resolve(argument)).then(
+    // Not in the list (or the list never loaded): ask the provider before switching.
+    if (!catalog.some((option) => option.provider === ref.provider && option.id === ref.model)) {
+      const verdict = await (providers?.check(ref.provider, ref.model) ?? Promise.resolve(ref.model)).then(
         () => undefined,
         (error: Error) => error.message,
       )
 
-      if (verdict !== undefined) return this.say([`Could not switch to ${argument}: ${verdict}`])
+      if (verdict !== undefined) return this.say([`Could not switch to ${name}: ${verdict}`])
     }
 
     const previous = engine.config.effort
-    const effort = fitEffort(previous, effortsFor(catalog, argument))
+    const before = engine.config.provider
+    const levels = effortsFor(catalog, ref)
+    const effort = fitEffort(previous, levels)
     const changed = effort !== undefined && effort !== previous
+    const failed = this.configure(effort === undefined ? ref : { ...ref, effort })
 
-    engine.configure(effort === undefined ? { model: argument } : { model: argument, effort })
+    if (failed !== undefined) return this.say([`Could not switch to ${name}: ${failed}`])
+
+    const crossing = ref.provider !== before
 
     this.say(
       [
-        `Model is now ${argument}${changed ? `, at effort ${effort} (it does not accept ${previous})` : ""}.`,
+        `Model is now ${name}${changed ? `, at effort ${effort} (it does not accept ${previous})` : ""}.`,
+        crossing
+          ? `The conversation carries over to ${ref.provider} as text, tool calls and results; reasoning from ${before} does not.`
+          : "",
         this.transcript.running ? "The running turn keeps the old model; the next one uses this." : "",
       ].filter((line) => line !== ""),
     )
+  }
+
+  /** Change model settings. Resolves to why it could not, if it could not. */
+  private configure(choice: ModelChoice): string | undefined {
+    try {
+      this.options.engine?.configure(choice)
+
+      return undefined
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+  }
+
+  /** Ask for a line of input (an API key, say). Resolves to undefined on esc. */
+  private ask(label: string, secret: boolean): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      this.question = {
+        label,
+        secret,
+        value: "",
+        answer: (value) => {
+          this.question = undefined
+          resolve(value)
+          this.draw()
+        },
+      }
+      this.draw()
+    })
+  }
+
+  private answerQuestion(data: string): void {
+    const question = this.question
+
+    if (question === undefined) return
+
+    if (data === "\r") return question.answer(question.value.trim())
+
+    if (data === "\u001B" || data === "\u0003") return question.answer(undefined)
+
+    if (data === "\u007F" || data === "\b") {
+      question.value = question.value.slice(0, -1)
+
+      return this.draw()
+    }
+
+    // Typed or pasted text; paste markers and other escape sequences are dropped.
+    const text = data
+      .replaceAll("\u001B[200~", "")
+      .replaceAll("\u001B[201~", "")
+      // oxlint-disable-next-line no-control-regex
+      .replaceAll(/\u001B\[[0-9;]*[A-Za-z~]/g, "")
+      .replaceAll(/[\r\n]/g, "")
+
+    // oxlint-disable-next-line no-control-regex
+    if (!/[\u0000-\u001F\u007F]/.test(text)) question.value += text
+
+    this.draw()
+  }
+
+  private async provider(argument: string): Promise<void> {
+    const providers = this.options.providers
+
+    if (providers === undefined) return
+
+    const [action = "", id = "", url = ""] = argument.split(/\s+/)
+
+    if (action === "") {
+      const width = Math.max(...providers.all().map((provider) => provider.id.length))
+
+      return this.say([
+        ...providers.status().map(({ provider, credentials, models }) => {
+          const where = provider.kind === "openai-compatible" ? ` · ${provider.base_url ?? ""}` : ""
+
+          return `${provider.id.padEnd(width)}  ${provider.name} · ${credentials}${models === "" ? "" : ` · ${models}`}${where}`
+        }),
+        "",
+        "/provider add <id> <base-url> · key <id> · login · logout <id> · remove <id>",
+      ])
+    }
+
+    if (action === "add") {
+      const failed = providers.add(id, url)
+
+      if (failed !== undefined) return this.say([failed])
+
+      const key = await this.ask(`API key for ${id} (enter if it needs none)`, true)
+
+      if (key !== undefined && key !== "") providers.setKey(id, key)
+
+      return this.listed(id, `Added ${id}.`)
+    }
+
+    if (action === "key") {
+      if (providers.find(id) === undefined)
+        return this.say([`No provider named ${id}. /provider lists them.`])
+
+      const key = await this.ask(`API key for ${id}`, true)
+
+      if (key === undefined || key === "") return this.say(["No key stored."])
+
+      const failed = providers.setKey(id, key)
+
+      return failed === undefined
+        ? this.listed(id, `Stored ${id}'s key in the keychain.`)
+        : this.say([failed])
+    }
+
+    if (action === "login") {
+      this.notice = "Opening your browser to sign in with ChatGPT… (esc to cancel)"
+      this.draw()
+
+      const cancel = new AbortController()
+
+      const waiting = this.ask("Waiting for the browser. Press esc to cancel", false).then(() =>
+        cancel.abort(),
+      )
+
+      const account = await providers
+        .login((url) => {
+          openBrowser(url)
+          this.say(["If the browser did not open, visit:", url])
+        }, cancel.signal)
+        .then(
+          (who) => ({ who }),
+          (error: Error) => ({ error: error.message }),
+        )
+
+      this.question?.answer(undefined)
+      await waiting
+      this.notice = ""
+
+      return "error" in account
+        ? this.say([account.error])
+        : this.listed(
+            "chatgpt",
+            `Signed in to ChatGPT as ${account.who}. Its models are under chatgpt/ in /model.`,
+          )
+    }
+
+    if (action === "logout") {
+      const failed = await providers.forget(id)
+
+      return this.say([failed ?? (id === "chatgpt" ? "Signed out of ChatGPT." : `Forgot ${id}'s key.`)])
+    }
+
+    if (action === "remove") {
+      const failed = providers.remove(id)
+
+      return this.say([failed ?? `Removed ${id}.`])
+    }
+
+    this.say([`Unknown /provider action ${action}. Try /provider.`])
+  }
+
+  /** List a provider's models after a change, and say how it went. */
+  private async listed(id: string, done: string): Promise<void> {
+    const providers = this.options.providers
+
+    await providers?.refresh(id)
+
+    const models = providers?.status().find((entry) => entry.provider.id === id)?.models ?? ""
+
+    // `models` is "12 models", or "could not list models: …".
+    const note = models.startsWith("could not")
+      ? `It ${models}. You can still pick a model by typing its id after /model ${id}/.`
+      : models === ""
+        ? ""
+        : `It offers ${models}; pick one with /model.`
+
+    this.say(note === "" ? [done] : [done, note])
   }
 
   private startNew(): void {
@@ -664,6 +915,8 @@ class App {
     }
 
     if (name === "/model") return this.switchModel(argument)
+
+    if (name === "/provider") return this.provider(argument)
   }
 
   private submit(text: string): void {
@@ -710,6 +963,8 @@ class App {
   }
 
   private input(data: string): void {
+    if (this.question !== undefined) return this.answerQuestion(data)
+
     if (this.approvals.length > 0 && data !== "\u0003") {
       this.answer(data)
 

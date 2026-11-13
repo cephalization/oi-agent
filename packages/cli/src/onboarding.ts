@@ -6,6 +6,13 @@
 import {
   checkModel,
   type Config,
+  chatgptSignIn,
+  listOpenAIModels,
+  chatgptToken,
+  OPENAI_BASE_URL,
+  openBrowser,
+  PROVIDER_ID,
+  type ProviderConfig,
   configPath,
   defaultHome,
   type Effort,
@@ -19,7 +26,7 @@ import { homedir } from "node:os"
 import { ask, askSecret, choose, confirm, say } from "./prompts.ts"
 import { style, wrap } from "./tui/ansi.ts"
 
-const MODELS = [
+const MODELS: ReadonlyArray<{ value: string; label: string; hint?: string }> = [
   {
     value: "claude-opus-5-5",
     label: "Claude Opus 5.5",
@@ -65,10 +72,44 @@ const phoenixVersion = async (endpoint: string): Promise<string | undefined> => 
   }
 }
 
-const apiKeyStep = async (): Promise<string | undefined> => {
-  const existing = getSecret("anthropic")
+type ProviderChoice = "anthropic" | "openai" | "chatgpt" | "compatible"
 
-  step("Anthropic API key", "Stored in your system keychain. It is never written to a file or a session.")
+const providerStep = async (current: Config): Promise<ProviderChoice> => {
+  step(
+    "Provider",
+    "Where the agent's model runs. Add more later with /provider; switch any time with /model.",
+  )
+
+  const initial: ProviderChoice =
+    current.provider === "anthropic" || current.provider === "openai" || current.provider === "chatgpt"
+      ? current.provider
+      : "compatible"
+
+  return choose<ProviderChoice>(
+    "Which provider?",
+    [
+      { value: "anthropic", label: "Anthropic", hint: "Claude, with an API key" },
+      { value: "openai", label: "OpenAI", hint: "with an API key" },
+      {
+        value: "chatgpt",
+        label: "ChatGPT plan",
+        hint: "sign in with ChatGPT; uses your plan instead of a key",
+      },
+      {
+        value: "compatible",
+        label: "Another OpenAI-compatible server",
+        hint: "Ollama, vLLM, LM Studio, OpenRouter, …",
+      },
+    ],
+    initial,
+  )
+}
+
+/** Ask for an API key for a keychain account. Resolves to the key in use, if any. */
+const apiKeyStep = async (account: string, name: string, optional: boolean): Promise<string | undefined> => {
+  const existing = getSecret(account)
+
+  step(`${name} API key`, "Stored in your system keychain. It is never written to a file or a session.")
 
   if (
     existing !== undefined &&
@@ -77,25 +118,94 @@ const apiKeyStep = async (): Promise<string | undefined> => {
     return existing
   }
 
-  const entered = await askSecret("API key (input is hidden; leave empty to set it later)")
+  const entered = await askSecret(
+    optional
+      ? "API key (input is hidden; leave empty if the server needs none)"
+      : "API key (input is hidden; leave empty to set it later)",
+  )
 
   if (entered === "") {
-    warn("No key set. Run `oi auth login` before your first session.")
+    if (!optional) warn(`No key set. Run \`oi auth login ${account}\` before your first session.`)
 
     return undefined
   }
 
-  if (setSecret("anthropic", entered)) ok("Saved to the keychain.")
-  else warn("The keychain refused the key. Set ANTHROPIC_API_KEY in your shell instead.")
+  if (setSecret(account, entered)) ok("Saved to the keychain.")
+  else warn("The keychain refused the key. Set it in your shell's environment instead.")
 
   return entered
 }
 
-const modelStep = async (current: string, apiKey: string | undefined): Promise<string> => {
-  step("Model", "Used for the agent's own turns. Change it any time with `oi setup` or `-m`.")
+const signInStep = async (): Promise<boolean> => {
+  step("ChatGPT", "Your browser opens to sign in. oi-agent then uses your plan's allowance, not an API key.")
 
-  const known = MODELS.some((model) => model.value === current)
-  const picked = await choose("Which model?", MODELS, known ? current : "")
+  try {
+    const account = await chatgptSignIn({
+      onUrl: (url) => {
+        openBrowser(url)
+        say(style.gray(`  If the browser did not open, visit: ${url}`))
+      },
+    })
+
+    ok(`Signed in as ${account}.`)
+
+    return true
+  } catch (error) {
+    warn(
+      `${error instanceof Error ? error.message : String(error)} Try again later with \`oi auth login chatgpt\`.`,
+    )
+
+    return false
+  }
+}
+
+const compatibleStep = async (current: Config): Promise<ProviderConfig> => {
+  step("Server", "Any server with an OpenAI-style /chat/completions endpoint.")
+
+  const existing = current.providers.find((provider) => provider.id === current.provider)
+  let id = await ask("A short name for it", existing?.id ?? "ollama")
+
+  while (!PROVIDER_ID.test(id) || ["anthropic", "openai", "chatgpt"].includes(id))
+    id = await ask("Lower-case letters, digits and dashes, not a built-in name", "ollama")
+
+  const baseUrl = await ask("API root", existing?.base_url ?? "http://localhost:11434/v1")
+
+  return { id, name: id, kind: "openai-compatible", base_url: baseUrl.replace(/\/+$/, "") }
+}
+
+const ANTHROPIC_MODELS = MODELS
+
+/** Choose among a provider's listed models, or type one. */
+const listedModelStep = async (
+  current: string,
+  list: () => Promise<ReadonlyArray<string>>,
+): Promise<string> => {
+  step("Model", "Used for the agent's own turns. Change it any time with /model or `-m`.")
+
+  const ids = await list().catch((error: Error) => {
+    warn(`Could not list models: ${error.message}`)
+
+    return []
+  })
+
+  if (ids.length === 0) return ask("Model id", current)
+
+  const shown = ids.slice(0, 14)
+
+  const picked = await choose(
+    "Which model?",
+    [...shown.map((id) => ({ value: id, label: id })), { value: "", label: "Another model id" }],
+    shown.includes(current) ? current : (shown[0] ?? ""),
+  )
+
+  return picked === "" ? ask("Model id", current) : picked
+}
+
+const modelStep = async (current: string, apiKey: string | undefined): Promise<string> => {
+  step("Model", "Used for the agent's own turns. Change it any time with /model or `-m`.")
+
+  const known = ANTHROPIC_MODELS.some((model) => model.value === current)
+  const picked = await choose("Which model?", ANTHROPIC_MODELS, known ? current : "")
   const model = picked === "" ? await ask("Model id", known ? "" : current) : picked
 
   if (apiKey === undefined || model === "") return model
@@ -147,8 +257,40 @@ export const runOnboarding = async (): Promise<Config> => {
   step("You", "Recorded on each turn you start, and shown to people you share a session with.")
 
   const user = await ask("Your name", current.user)
-  const apiKey = await apiKeyStep()
-  const model = await modelStep(current.model, apiKey)
+  const choice = await providerStep(current)
+  let provider: string = choice
+  let providers = current.providers
+  let model: string
+
+  if (choice === "anthropic") {
+    const apiKey = await apiKeyStep("anthropic", "Anthropic", false)
+
+    model = await modelStep(current.provider === "anthropic" ? current.model : "claude-opus-5-5", apiKey)
+  } else {
+    let server: ProviderConfig | undefined
+    let token: string | undefined
+
+    if (choice === "compatible") {
+      server = await compatibleStep(current)
+      provider = server.id
+      providers = [...providers.filter((entry) => entry.id !== server?.id), server]
+      token = await apiKeyStep(`provider:${server.id}`, server.id, true)
+    } else if (choice === "openai") {
+      token = await apiKeyStep("openai", "OpenAI", false)
+    } else if (await signInStep()) {
+      token = await chatgptToken().catch(() => undefined)
+    }
+
+    const baseUrl = server?.base_url ?? OPENAI_BASE_URL
+
+    model = await listedModelStep(current.provider === provider ? current.model : "", async () =>
+      choice !== "compatible" && token === undefined
+        ? []
+        : (await listOpenAIModels({ provider, baseUrl, token, openaiCatalog: choice !== "compatible" })).map(
+            (entry) => entry.id,
+          ),
+    )
+  }
 
   step("Effort", "How hard the model works on each turn.")
 
@@ -173,7 +315,7 @@ export const runOnboarding = async (): Promise<Config> => {
   )
 
   const home = expand(await ask("Sessions directory", tilde(first ? defaultHome() : current.home)))
-  const config: Config = { ...current, user, model, effort, approvals, phoenix, home }
+  const config: Config = { ...current, user, provider, providers, model, effort, approvals, phoenix, home }
   const file = saveConfig(config)
 
   say()

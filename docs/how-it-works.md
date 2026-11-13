@@ -40,11 +40,12 @@ Follow along in `source/engine/src/agent.ts`.
    model's reply, and appends the results of any tools the reply asked for.
    If the turn has not reached the model yet, it takes the previous turn's
    context and adds the new prompt.
-3. **The model is called** (`modelStep`, and `source/engine/src/model.ts`).
+3. **The model is called** (`modelStep`, and `source/engine/src/model.ts` for
+   Anthropic or `source/engine/src/openai.ts` for OpenAI-style APIs).
    The exact request body is stored in the `LLM` span's `input.value` and the
-   exact response in `output.value`. Token counts, model name and the
-   flattened messages are stored beside them as `llm.*` attributes
-   (`source/engine/src/oi.ts`).
+   exact response in `output.value`, with `metadata.oi_agent.api` saying
+   which wire format they are in. Token counts, model name and the
+   flattened messages are stored beside them as `llm.*` attributes.
 4. **If the reply contains tool calls, each runs in a `TOOL` span**
    (`toolStep`, and `source/engine/src/tools.ts`). Tools that change the
    machine wait for approval first. Output is scrubbed of secrets
@@ -69,7 +70,9 @@ a side effect of tracing.
 | Spans become files                               | `source/engine/src/tracer.ts`                                        |
 | State derived from spans (the fold)              | `source/engine/src/fold.ts`                                          |
 | The loop                                         | `source/engine/src/agent.ts`                                         |
-| Talking to the model                             | `source/engine/src/model.ts`                                         |
+| Talking to the model                             | `source/engine/src/model.ts`, `openai.ts`, `chatgpt.ts`              |
+| Wire formats, and translating between them       | `source/engine/src/dialect.ts`, `source/engine/src/dialects/`        |
+| Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
 | The tools the model can call                     | `source/engine/src/tools.ts`                                         |
 | The system prompt                                | `source/engine/src/prompt.ts`                                        |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
@@ -138,6 +141,21 @@ These work best on the session you are in, because the evidence is right there.
   blocks a different model cannot read. The levels offered come from the
   Models API's `capabilities.effort` (`listModels` in
   `source/engine/src/model.ts`).
+- **"How do you talk to OpenAI or a local model?"** Each API is a dialect
+  (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
+  Completions (what "OpenAI-compatible" servers speak) and OpenAI
+  Responses (OpenAI and ChatGPT plans). A dialect knows how to read its
+  stored bodies, continue a conversation, and convert to and from a neutral
+  transcript of text, tool calls and tool results. The fold continues in the
+  dialect of the turn's last call, replaying it verbatim; when `/model` moves
+  to a provider with another dialect, `contextFor` translates through the
+  transcript, so reasoning blocks, signatures and other provider-specific
+  parts stay behind. Responses requests use `store: false` and carry
+  reasoning forward as `encrypted_content`, so OpenAI holds no state either.
+  Providers are config entries without secrets
+  (`source/engine/src/providers.ts`); keys are keychain accounts named after
+  them, and a ChatGPT sign-in (OAuth with PKCE, `source/engine/src/chatgpt.ts`)
+  is a keychain entry holding a refreshable token.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge.

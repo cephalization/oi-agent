@@ -9,6 +9,7 @@ const SERVICE = "oi-agent"
 
 const ENV_NAMES = new Map([
   ["anthropic", "ANTHROPIC_API_KEY"],
+  ["openai", "OPENAI_API_KEY"],
   ["phoenix", "PHOENIX_API_KEY"],
 ])
 

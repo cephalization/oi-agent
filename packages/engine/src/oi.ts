@@ -5,7 +5,8 @@
  * and are what the fold replays. The flattened `llm.*` attributes here are the
  * normalized view every OpenInference consumer understands.
  */
-import { type AttrValue, OI } from "./format.ts"
+import type { Attrs } from "./dialect.ts"
+import { OI } from "./format.ts"
 import {
   asBlock,
   asMessage,
@@ -15,9 +16,6 @@ import {
   type RequestBody,
   type ResponseBody,
 } from "./wire.ts"
-
-/** Span attributes under construction. */
-export type Attrs = Map<string, AttrValue>
 
 const text = (json: Json | undefined): string => {
   if (json === undefined || json === null) return ""
