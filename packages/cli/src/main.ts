@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util"
+import { runApp } from "./tui/app.ts"
 import {
   anthropicModel,
   attachEvals,
   builtinTools,
   createEvalTool,
+  drainInbox,
+  joinSession,
+  parseShareLink,
+  tailcatForward,
   modelDistiller,
   phoenixJudge,
   type ApprovalMode,
@@ -22,6 +27,8 @@ import {
 const HELP = `oi — an agent whose state is OpenInference spans on disk
 
 Usage:
+  oi                         Start an interactive session in this directory
+  oi join <share-link>       Join a session someone shared with /share
   oi run <prompt>            Run one prompt and print the answer
   oi sessions                List sessions
   oi show <session>          Print a session's turns
@@ -184,6 +191,35 @@ const exportSessions = async (idOrPrefix: string | undefined): Promise<void> => 
   if (report.errors.length > 0) fail(report.errors.join("\n"))
 }
 
+const interactive = async (): Promise<void> => {
+  const engine = buildEngine(values.yolo ? "allow" : "ask")
+  const sessionId = pickSession(engine)
+  const phoenix = engine.config.phoenix.endpoint === "" ? undefined : exporter()
+
+  drainInbox(engine, sessionId)
+  await runApp({ store, sessionId, user: engine.config.user, label: engine.config.model, engine, phoenix })
+  store.close()
+}
+
+const join = async (text: string): Promise<void> => {
+  const link = parseShareLink(text) ?? fail("That is not a share link. It should start with oi-share:")
+  const direct = link.address.startsWith("http")
+  const tunnel = direct ? undefined : await tailcatForward(link.address, link.port)
+  const base = tunnel === undefined ? `${link.address}:${link.port}` : `http://${tunnel.value}`
+  const user = loadConfig(store.home).user
+  const peer = await joinSession(store, base, link.token, user)
+
+  await runApp({
+    store,
+    sessionId: peer.sessionId,
+    user,
+    label: `joined ${peer.info.host}'s session as ${peer.info.role}`,
+    peer,
+  })
+  tunnel?.stop()
+  store.close()
+}
+
 const authLogin = async (): Promise<void> => {
   process.stderr.write("Paste your Anthropic API key and press return: ")
 
@@ -200,8 +236,12 @@ const authLogin = async (): Promise<void> => {
 
 const [command, ...rest] = positionals
 
-if (values.help || command === undefined) {
+if (values.help) {
   process.stdout.write(HELP)
+} else if (command === undefined) {
+  await interactive()
+} else if (command === "join") {
+  await join(rest[0] ?? fail("Usage: oi join <share-link>"))
 } else if (command === "run") {
   await run(rest.join(" ") || fail("Usage: oi run <prompt>"))
 } else if (command === "sessions") {

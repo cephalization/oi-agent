@@ -1,13 +1,15 @@
 {
   "name": "oi-agent",
   "private": true,
+  "bin": {
+    "oi": "./bin/oi"
+  },
   "type": "module",
   "scripts": {
     "oi": "node packages/cli/src/main.ts",
     "check": "vp check",
     "fix": "vp check --fix",
-    "test": "vp test run",
-    "build": "vp run -r build"
+    "test": "vp test run"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.93.0",
