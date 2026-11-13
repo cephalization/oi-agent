@@ -78,9 +78,12 @@ pnpm install
 pnpm dev                   # builds the CLI and links `oi` into ~/.local/bin
 ```
 
-`pnpm dev` bundles the CLI into one file and symlinks it onto your PATH; run
-it again after changing the code. `bin/oi` runs the TypeScript sources
-directly without building.
+`pnpm dev` bundles the CLI, copies the build to
+`~/.local/share/oi-agent/builds/` (keeping the last five) and links it onto
+your PATH; run it again after changing the code. Since `oi` runs a copy,
+rebuilding the repo never changes an `oi` that is already installed or
+running, and `pnpm dev` refuses to run from inside oi itself unless given
+`--force`. `bin/oi` runs the TypeScript sources directly without building.
 
 ## Things to try
 
@@ -172,7 +175,7 @@ file (`pnpm changeset`) naming the bump and a release note. On each push to
 using the `NPM_TOKEN` repository secret, and tags a GitHub release.
 
 ```sh
-pnpm dev        # build and link the `oi` command
+pnpm dev        # build and install the `oi` command
 pnpm check      # format, lint and type-check (Vite+)
 pnpm fix        # same, applying fixes
 pnpm test       # Vitest
