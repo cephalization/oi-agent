@@ -44,8 +44,11 @@ Environment variables override the file: `OI_AGENT_MODEL`, `OI_AGENT_EFFORT`,
 | `oi export [id]`               | Send sessions to Phoenix. Safe to repeat.                                 |
 | `oi where`                     | Print the sessions directory.                                             |
 
-Inside a session: `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
-`/revert`, `/export`, `/yolo`, `/quit`.
+Inside a session, type `/` for a menu of commands: Tab completes, ↑↓ pick,
+Enter runs. `/resume` switches to an earlier session, picked from a list you
+can filter by its first prompt or directory; `/new` starts a fresh one. The
+others are `/share`, `/share local`, `/unshare`, `/evals`, `/rules`,
+`/revert`, `/export`, `/yolo`, `/tour`, `/help` and `/quit`.
 
 ## Things to try
 
