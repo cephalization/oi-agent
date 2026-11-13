@@ -10,21 +10,56 @@ design. This file is what you would otherwise have to rediscover.
   the spec are a result worth recording, in [docs/spec-gaps.md](docs/spec-gaps.md).
 - Gives broad latitude and checks back later. Make decisions, keep going,
   commit in logical steps, and report what was verified and what was not.
-- Wants things proven live, not just type-checked: run the real CLI against
-  the real API and Phoenix before calling something done.
-- Use a cheap, fast model for live tests: `chatgpt/gpt-5.6-luna` (Tony's
-  ChatGPT sign-in), with `claude-haiku-5-5` where Anthropic is needed.
-- End-to-end checks belong in `packages/e2e` (`pnpm e2e`; read its README).
-  It runs the real CLI in a sandbox, through Rex, and asserts on spans. A
-  feature from an issue gets a scenario there; until it lands, mark it
-  `pending: <issue>` and run it with `OI_E2E_PENDING=<issue>`.
-- Test terminal UIs with Rex (the `rex` skill), not tmux. Outside a Rex
-  terminal the CLI is at
-  `/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex`.
-  Create your own session, and close it when done.
+- Wants things proven live, not just type-checked: see "Verifying a change"
+  below. A PR without end-to-end evidence is not done.
 - Decisions already made are in the table at the top of PLAN.md. Do not
   reopen them without new evidence. One is flagged for revisiting: disk cost
   of self-contained spans (see "Status" in PLAN.md).
+
+## Verifying a change
+
+Behaviour is proven with the end-to-end scenarios in `packages/e2e` (read
+its README before writing one). They run the real CLI against real models in
+a sandbox, drive the TUI through Rex, and assert on the span files the CLI
+wrote. Unit tests cover pure logic; they do not replace a scenario.
+
+Before opening a PR:
+
+1. **Start from a scenario.** For an issue, its scenario may already exist
+   as `pending: <issue>`: run it with `OI_E2E_PENDING=<issue> pnpm e2e <file>`
+   and see it fail for the reason the issue describes. Otherwise write one
+   from the acceptance criteria. A bug fix gets a scenario (or a unit test,
+   if the bug is in pure logic) that fails without the fix: check that by
+   stashing the fix and running it.
+2. **Make it pass, then remove `pending`.** Iterate on single files:
+   `pnpm e2e scenarios/<file>.e2e.ts`.
+3. **Run everything:** `pnpm check && pnpm test && pnpm e2e`. All of it runs
+   live on the cheap default models (`chatgpt/gpt-5.6-luna`, and
+   `claude-haiku-5-5` where Anthropic is needed); the whole suite takes one
+   to four minutes. Do not switch scenarios to expensive models.
+4. **Check it is stable.** Run a new or changed scenario at least three
+   times. If a model sometimes does something else, fix the prompt (ask for
+   something checkable; tell it to call tools rather than ask whether it
+   may) or assert on spans instead of wording. Never loosen an assertion
+   until it stops checking the behaviour.
+5. **Re-record what you changed.** A scenario whose prompts or model calls
+   changed needs a new cassette: `OI_E2E_MODELS=record pnpm e2e <file>`.
+   Then `OI_E2E_MODELS=replay pnpm e2e` must pass, since CI replays them.
+6. **Report it in the PR:** which scenarios ran, passed and were skipped
+   (with the reason the runner printed), how many times you ran the new
+   ones, and anything you could not verify.
+
+When a scenario fails, its error has the session outline (turns, model
+calls, tool calls) and the last screen of each terminal. `OI_E2E_KEEP=1`
+keeps the sandbox for inspection. The scenario's span in Phoenix
+(`oi-agent-e2e` project) links to the sessions it drove.
+
+Housekeeping: scenarios close their own Rex sessions and sandboxes. After an
+interrupted run, check `rex ls` for leftover `oi-e2e-*` sessions and kill
+them. For exploring a TUI by hand, use Rex (the `rex` skill), not tmux;
+outside a Rex terminal the CLI is at
+`/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex`.
+Create your own session, and close it when done.
 
 ## Commits and releases
 
@@ -70,7 +105,8 @@ pnpm, Vite+ (`vp`), Node 26 running TypeScript directly, Effect 4, Vitest.
 ```sh
 pnpm check     # format + lint + type-check; run before every commit
 pnpm fix       # same, applying fixes (it rewrites files: re-read before editing)
-pnpm test
+pnpm test      # unit tests
+pnpm e2e       # end-to-end scenarios, live (see "Verifying a change")
 pnpm dev       # bundle the CLI and relink ~/.local/bin/oi; rerun after changes
 bin/oi         # run from source without building
 ```
@@ -104,7 +140,7 @@ this way from the start instead of fixing afterwards:
 ## Local environment
 
 - Phoenix runs unauthenticated at `http://localhost:6006`; the `oi-agent`
-  project there holds test data. The Phoenix repo is at `~/repos/phoenix`.
+  project there holds test data, and `oi-agent-e2e` holds scenario runs. The Phoenix repo is at `~/repos/phoenix`.
   Span ingest is protobuf-only and ignores a span id it already has.
 - Config: `~/.config/oi-agent/config.json`. Sessions: `~/.oi-agent/sessions`.
   Evaluators and learned rules: `~/.config/oi-agent/projects/<name>-<hash>/`.
@@ -112,7 +148,8 @@ this way from the start instead of fixing afterwards:
   working on or into the installed package; user data goes under the config
   or sessions directory.
   For tests, point `OI_AGENT_CONFIG_DIR` and `OI_AGENT_HOME` at temporary
-  directories so the real ones are untouched.
+  directories so the real ones are untouched. The e2e harness does this for
+  you, and on macOS also blocks reads of the real ones.
 - `tailcat` is installed for `/share`. `/share local` avoids the tunnel.
 - When capturing command output, keep it short: a failing test can print an
   entire span file.
