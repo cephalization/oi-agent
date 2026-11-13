@@ -47,6 +47,9 @@ jobs:
         image: arizephoenix/phoenix:version-21.1.0
         ports:
           - 6006:6006
+        env:
+          # Phoenix requires auth when it listens beyond loopback, as it does in a container.
+          PHOENIX_ENABLE_AUTH: "false"
     env:
       OI_E2E_MODELS: replay
       OI_E2E_REX: none
