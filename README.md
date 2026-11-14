@@ -12,6 +12,63 @@ copying, and stream to anyone you share a session with.
 Experimental. See [PLAN.md](PLAN.md) for the design and
 [docs/spec-gaps.md](docs/spec-gaps.md) for what OpenInference could not express.
 
+## It learns from your corrections
+
+Correct oi the way you'd correct a colleague. When the correction is about
+how you always want things done, not just this task, oi writes it down and
+checks its own work against it from then on. You never have to say "make a
+rule".
+
+Think of a kitchen. You're the head chef and oi is the line cook, with a
+sous-chef at the pass taking notes. "Less salt on this one" is about one
+plate, and nothing is written down. "Salt again? We season lightly here" is
+house style: it goes on a card on the wall. Every plate is checked against
+the cards, a miss is called back before the next order, and a miss that keeps
+happening goes into the recipe book.
+
+```
+you: "hmm, var? it's not 2010. this codebase is const/let only."
+ │
+ ▼
+oi does the work ──► after the turn, a small model reads your message
+                     (with the previous turn and the checks you already have)
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+     about this task only                       about how you work
+     "no, too long. use msg here"               "const/let only"
+     nothing is saved                           a standing check is saved:
+                                                ◆ steering: learned — Use const or let,
+                                                  never var. Checked from now on by
+                                                  evaluator no_var_declarations.
+```
+
+A learned check then climbs a ladder, and only as far as it needs to:
+
+```
+what you said ──► a check after every turn ──► on a miss, feedback ──► a permanent rule
+(once)            (◆ no_var_declarations)      at the start of the     in the system prompt,
+                                               next turn               every session
+```
+
+| Learned                                                                  | Left alone                                 |
+| ------------------------------------------------------------------------ | ------------------------------------------ |
+| "you don't need to print whole files back at me, it's just noise."       | "no, too long. use `msg` here."            |
+| "you keep writing these like marketing copy. plain and factual, please." | "can you make that one a bit more formal?" |
+| "bit wordy again. I prefer answers short."                               | "Shorter, please. Just the function name." |
+
+On corrections worded unlike anything in its prompt, the note-taker got 36
+of 36 right. How that was measured, and the two mistakes made measuring it:
+[docs/experiments/steering.md](docs/experiments/steering.md).
+
+Checks and rules live in `~/.config/oi-agent/projects/<project>/`, never in
+your repository; each check records the turn it was learned from. `/evals`
+and `/rules` list them, deleting a check's file removes it, and `/revert`
+undoes the latest rule. Every decision, including why something was _not_
+learned, is a `steering` trace on disk and in Phoenix. It uses the same small
+Anthropic model as other evaluators (one call per message); turn it off with
+`"steering": "off"` in the config or `OI_AGENT_STEERING=off`.
+
 ## Try it
 
 Requires Node 24+ and one of: an Anthropic API key, an OpenAI API key, a
@@ -114,14 +171,8 @@ the failure is distilled into a standing rule in that folder's `rules.md`.
 Nothing is written into the project itself. `/revert`
 undoes the latest rule.
 
-**Or just correct it.** You don't have to ask for a check. After each turn a
-small model reads your prompt, and when it corrects the agent in a way that
-applies beyond the task at hand ("hmm, var? this codebase is const/let only",
-not "call it msg here"), oi learns it as an evaluator by itself and notes it
-under the turn (`◆ steering: learned`). The evaluator records the prompt it
-came from. Set `"steering": "off"` in the config (or `OI_AGENT_STEERING=off`)
-to stop it. It needs an Anthropic key, like the other evaluators. How it was
-measured, and what went wrong in measuring it: [docs/experiments/steering.md](docs/experiments/steering.md).
+**Or just correct it.** No need to ask for a check: see
+[It learns from your corrections](#it-learns-from-your-corrections).
 
 Evaluators can also put a limit on something the harness measures. Each turn's
 root span records the session's size on disk (`metadata.oi_agent.session_bytes`),
