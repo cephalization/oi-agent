@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config.ts"
 import {
   askDecision,
   clearsThresholds,
+  approvalConcerns,
   DEFAULT_DECISION,
   deletesOutside,
   type DecisionSettings,
@@ -122,6 +123,23 @@ describe("auto approval rules", () => {
       fs.rmSync(cwd, { recursive: true, force: true })
       fs.rmSync(outside, { recursive: true, force: true })
     }
+  })
+
+  it("explains exactly which probabilities did not clear the thresholds", () => {
+    expect(approvalConcerns(new Map(Object.entries(SAFE)))).toEqual([])
+    expect(approvalConcerns(new Map(Object.entries({ ...SAFE, irreversible: 0.6, requested: 0.8 })))).toEqual(
+      ["irreversible=0.60 (needs < 0.10)", "requested=0.80 (needs > 0.80)"],
+    )
+  })
+
+  it("explains missing and invalid answers without treating them as safe", () => {
+    const answers = new Map(Object.entries({ ...SAFE, irreversible: 2 }))
+
+    answers.delete("exposes_secrets")
+    expect(approvalConcerns(answers)).toEqual([
+      "irreversible: invalid probability",
+      "exposes_secrets: no answer",
+    ])
   })
 
   it("allows only when every answer clears its threshold", () => {

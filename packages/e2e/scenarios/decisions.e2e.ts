@@ -27,7 +27,7 @@ const decide: Decide = (question, state) => {
       onSome: ({ user_message }) => (/from now on/i.test(user_message) ? 0.95 : 0.05),
     })
 
-  if (question === "irreversible") return destructive ? 0.97 : 0.02
+  if (question === "irreversible") return destructive ? 0.97 : state.includes("needs-human") ? 0.6 : 0.02
 
   if (question === "requested") return 0.95
 
@@ -83,6 +83,51 @@ describe("decision model", () => {
       // The key never reaches the request body or a span.
       expect(server.requests.at(-1)?.headers["authorization"]).toBe("Bearer fake-typesafe-key")
       expect(JSON.stringify(s.spans.ended(session))).not.toContain("fake-typesafe-key")
+    },
+  )
+
+  scenario(
+    "auto explains why it asks and a one-call approval never enables yolo",
+    {
+      needs: ["rex"],
+      ...withDecider(server),
+      config: new Map<string, Schema.Json>([...withDecider(server).config, ["steering", "off"]]),
+    },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(/›/)
+      await term.line(callBash("echo needs-human"))
+
+      const screen = await awaitApproval(s, term, "echo needs-human")
+
+      expect(screen).toMatch(/Auto asked/)
+      expect(screen).toMatch(/irreversible=0.60/)
+      expect(screen).not.toMatch(/always allow|enable yolo/)
+      // `a` is not an approval shortcut in auto mode. Only y/n answer, without changing mode.
+      await term.key("a")
+      await term.key("y")
+
+      const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
+
+      await s.spans.settledTurns(session, 1)
+      await term.waitFor(/⏵ auto/)
+      await term.line(callBash("echo needs-human-again"))
+      await awaitApproval(s, term, "echo needs-human-again")
+      await term.key("n")
+      await s.spans.settledTurns(session, 2)
+      await term.line(callBash("echo safe-after-human"))
+      await s.spans.settledTurns(session, 3)
+
+      const calls = s.spans.tools(session)
+      const allowed = calls.find((call) => call.input.includes('"echo needs-human"'))
+      const denied = calls.find((call) => call.input.includes("needs-human-again"))
+      const safe = calls.find((call) => call.input.includes("safe-after-human"))
+
+      expect(allowed?.output).toContain("needs-human")
+      expect(readMetadata(denied!.span).approval?.decision).toBe("deny")
+      expect(readMetadata(safe!.span).approval?.by).toBe("auto:jev-fake")
+      expect(decisionSpans(s, session)).toHaveLength(3)
     },
   )
 

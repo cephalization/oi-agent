@@ -154,11 +154,18 @@ These work best on the session you are in, because the evidence is right there.
   calls the configured System One endpoint with the tool, input, working
   directory, current user prompt and learned project rules. Four Nouls
   assess irreversible damage, effects outside the workspace, secrets, and
-  whether the user requested it. `clearsThresholds` allows only when every
-  risk is low and relevance high. Failure, invalid probabilities or no key
+  whether the user requested it. Requested read-only service queries and
+  normal authentication are not counted as external changes or secret
+  exposure. `clearsThresholds` allows only when every risk is low and
+  relevance high. Failure, invalid probabilities or no key
   asks a human, never auto-denies; headless `oi run` denies anything that
   would ask. `TOOL` metadata records `approval.by = "auto:<model>"` and the
-  answers, or why it asked. `decisionSpan` records the exact bodies (secrets
+  answers, or why it asked. `approvalConcerns` formats failed thresholds;
+  the engine includes the reason in the host's `ApprovalRequest`, and the
+  TUI shows it as `Auto asked`. The dialog accepts only `y`/`n` in auto
+  mode, leaving that mode unchanged (`source/cli/src/tui/approvals.ts`). In
+  ask mode, `a` is explicitly labelled "enable yolo for this session".
+  `decisionSpan` records the exact bodies (secrets
   scrubbed) and `decision.*` usage under that tool. No `llm.*` attributes are
   set, and `kindOf` recognizes `DECISION`; the fold ignores these spans.
   The TUI reports their usage separately at an estimated TypeSafe rate.

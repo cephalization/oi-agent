@@ -9,6 +9,7 @@ import {
   helpLines,
   onEnter,
 } from "../src/tui/commands.ts"
+import { approvalAction } from "../src/tui/approvals.ts"
 import { Editor } from "../src/tui/editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
 import { EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
@@ -216,5 +217,27 @@ describe("decision usage", () => {
     expect(transcript.totalTokens).toBe(0)
     expect(transcript.decisionTokens).toBe(1050)
     expect(transcript.decisionCost).toBeCloseTo(0.000042, 8)
+  })
+})
+
+describe("approval dialog keys", () => {
+  it("allows or denies one call in auto without a yolo action", () => {
+    expect(approvalAction("auto", "y")).toBe("allow")
+    expect(approvalAction("auto", "n")).toBe("deny")
+    expect(approvalAction("auto", "a")).toBeUndefined()
+    expect(approvalAction("auto", "A")).toBeUndefined()
+  })
+
+  it("offers the explicit yolo shortcut only in ask mode", () => {
+    expect(approvalAction("ask", "a")).toBe("yolo")
+    expect(approvalAction("ask", "Y")).toBe("allow")
+    expect(approvalAction("ask", "N")).toBe("deny")
+    expect(approvalAction("allow", "a")).toBeUndefined()
+    expect(approvalAction("deny", "a")).toBeUndefined()
+  })
+
+  it.each(["", "na", "yn", "yes", "y\r", "\t"])("ignores non-single-key input %j", (key) => {
+    expect(approvalAction("ask", key)).toBeUndefined()
+    expect(approvalAction("auto", key)).toBeUndefined()
   })
 })

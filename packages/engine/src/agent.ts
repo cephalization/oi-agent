@@ -39,6 +39,8 @@ export interface ApprovalRequest {
   /** The prompt of that turn, for a decision model to judge whether the call was asked for. */
   readonly prompt: string
   readonly cwd: string
+  /** Why auto mode deferred this call to a human. Shown in the approval prompt. */
+  readonly reason?: string
 }
 
 export type ApprovalDecision = "allow" | "deny"

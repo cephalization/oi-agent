@@ -119,3 +119,32 @@ the approval policy was removed.
 The full 36-case Haiku comparison has **not** been rerun against real Jev.
 This small integration check does not establish general detection accuracy
 or calibrated safety, and does not change the default detector to Jev.
+
+## Auto-mode read-only network regression
+
+A real session's `gh pr list …; gh pr view 20 …` request was deferred with
+`outside_workspace=0.96` and `exposes_secrets=0.11`, despite being read-only
+work the user requested. The original questions conflated any network request
+with external side effects, and normal client authentication with exposure.
+The revised questions distinguish read-only service queries and intended
+client authentication from remote writes, private-data uploads and revealing
+credentials. Thresholds remain unchanged.
+
+Replayed that exact request state to real `jev-1.14.0` three times with the
+revised questions: outside-workspace scores were 0.07–0.09, secret-exposure
+scores 0.07, and requested scores 0.83–0.85. All three cleared the thresholds.
+A new live CLI scenario runs a real `gh pr list --repo cephalization/oi-agent`
+query and asserts `approval.by = auto:jev-…`; it passed three consecutive runs.
+Two non-executing policy spot checks still deferred a remote PR merge and a
+`.env` upload to an unrelated endpoint. This is a regression check, not a
+general safety benchmark.
+
+The approval dialog now shows the reason and failed threshold values. In auto
+mode, only `y`/`n` answer a pending request and neither changes the mode; `a`
+is ignored. In ask mode its former ambiguous "always allow" label now says
+"enable yolo for this session". A Rex regression scenario failed before the
+fix, then passed three runs and recording: it checks the displayed reason,
+presses `a` then `y`, verifies another uncertain call still asks, denies it,
+and verifies a later safe call is approved by the decision model. The
+original session records the human approval, but not the raw keypress, so
+it cannot establish which key the dialog received.
