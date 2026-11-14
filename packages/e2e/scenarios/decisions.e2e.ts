@@ -172,6 +172,7 @@ describe("decision model", () => {
       needs: ["rex"],
       approvals: "auto",
       config: withDecider(server).config,
+      env: new Map([["TYPESAFE_API_KEY", ""]]),
     },
     async (s) => {
       const term = await s.tui()
