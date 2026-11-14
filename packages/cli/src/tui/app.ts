@@ -48,6 +48,7 @@ import {
   onEnter,
   type Suggestion,
 } from "./commands.ts"
+import { approvalAction } from "./approvals.ts"
 import { Editor } from "./editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "./modes.ts"
 import { Screen } from "./screen.ts"
@@ -451,11 +452,27 @@ class App {
   private approvalLines(request: ApprovalRequest): Array<string> {
     const input = clip(JSON.stringify(request.input), this.screen.columns * 3)
 
-    return [
+    const lines = [
       `${style.yellow("?")} ${style.bold(`Allow ${request.tool}`)}${request.user_id === this.options.user ? "" : style.yellow(` (requested by ${request.user_id})`)}`,
       style.gray(`  ${input}`),
-      `  ${style.bold("y")} yes   ${style.bold("n")} no   ${style.bold("a")} always allow in this session`,
     ]
+
+    if (request.reason !== undefined)
+      lines.push(
+        ...wrap(`Auto asked: ${request.reason}`, this.screen.columns - 2).map((line) =>
+          style.gray(`  ${line}`),
+        ),
+      )
+
+    const choices = `  ${style.bold("y")} yes, this call   ${style.bold("n")} no`
+
+    lines.push(
+      this.options.engine?.approvals === "ask"
+        ? `${choices}   ${style.bold("a")} enable yolo for this session`
+        : choices,
+    )
+
+    return lines
   }
 
   private draw(): void {
@@ -1246,12 +1263,16 @@ class App {
     const request = this.approvals[0]
     const engine = this.options.engine
 
-    if (request === undefined || engine === undefined || !"yna".includes(key.toLowerCase())) return
+    if (request === undefined || engine === undefined) return
 
-    if (key.toLowerCase() === "a") engine.setApprovalMode("allow")
+    const action = approvalAction(engine.approvals, key)
+
+    if (action === undefined) return
+
+    if (action === "yolo") engine.setApprovalMode("allow")
 
     this.approvals.shift()
-    engine.resolveApproval(request.span_id, key.toLowerCase() === "n" ? "deny" : "allow")
+    engine.resolveApproval(request.span_id, action === "deny" ? "deny" : "allow")
   }
 
   private input(data: string): void {

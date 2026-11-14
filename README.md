@@ -106,12 +106,18 @@ or set `TYPESAFE_API_KEY`. Configure its endpoint and model separately:
 ```
 
 Auto mode allows a tool call only when all four answers clear the safety
-thresholds: irreversible damage < 0.1, effects outside the workspace < 0.2,
-exposing secrets < 0.1, and directly requested work > 0.8. Hard rules ask
+thresholds: irreversible damage < 0.1, writes or data uploads outside the
+workspace < 0.2, exposing secrets < 0.1, and directly requested work > 0.8.
+Requested read-only service queries and normal authentication to that service
+do not count as external changes or secret exposure merely because they use
+the network. Hard rules ask
 about destructive deletes outside the workspace, force pushes, sudo,
 discarding work, and file writes outside the workspace (including symlinks).
 Everything uncertain, missing or failed asks you; without a key it asks every
-time. This is an approval aid, not an operating-system sandbox.
+time. The prompt explains why, including any probabilities that failed their
+thresholds. In auto mode, `y` allows only this call and `n` denies it; neither
+changes the mode. The approval dialog has no yolo shortcut in auto mode:
+use `/yolo` or the mode-cycle key separately if that is what you want. This is an approval aid, not an operating-system sandbox.
 
 `/auto` enables it for this session; `--approvals auto` selects it from the
 command line without changing config. `/reload` preserves the current mode. Tab cycles ask → auto → yolo when a

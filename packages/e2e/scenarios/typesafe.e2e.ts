@@ -22,6 +22,41 @@ const env = new Map([["ANTHROPIC_API_KEY", ""]])
 
 describe("real TypeSafe", () => {
   scenario(
+    "requested read-only GitHub queries do not need approval in auto mode",
+    {
+      needs: ["typesafe"],
+      liveOnly: true,
+      approvals: "auto",
+      config: new Map([["steering", "off"]]),
+      env,
+    },
+    async (s) => {
+      const command = "gh pr list --repo cephalization/oi-agent --state open --json number,title"
+
+      expectOk(
+        await s.run([
+          "run",
+          `What PRs are open and ready in cephalization/oi-agent? ${callBash(command)} Summarize the list.`,
+        ]),
+      )
+
+      const session = s.spans.onlySession()
+      const query = s.spans.tools(session).find((tool) => tool.input.includes(command))
+
+      expect(query).toBeDefined()
+      expect(readMetadata(query!.span).approval?.by).toMatch(/^auto:jev-/)
+      expect(query?.output).toMatch(/"number"/)
+
+      const decisions = s.spans.ended(session).filter((span) => kindOf(span) === "DECISION")
+
+      expect(decisions).toHaveLength(1)
+      expect(decisions[0]?.parent_id).toBe(query?.span.context.span_id)
+      expect(decisions[0]?.status_code).toBe("OK")
+      s.note(stringAttr(decisions[0]!, OI.OUTPUT_VALUE) ?? "No decision response")
+    },
+  )
+
+  scenario(
     "Jev approves a safe tool call, asks about a hard-rule delete, and screens steering before generation",
     {
       needs: ["typesafe"],

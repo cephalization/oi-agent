@@ -19,6 +19,7 @@ import type { Config } from "./config.ts"
 import {
   askDecision,
   APPROVAL_QUESTIONS,
+  approvalConcerns,
   clearsThresholds,
   decisionSpan,
   type DecisionSettings,
@@ -206,7 +207,11 @@ export class Engine {
    */
   private autoApprove(sessionId: string, request: ApprovalRequest): Effect.Effect<Approval> {
     const human = (asked_because: string, answers?: Record<string, number>) =>
-      Effect.map(this.askHuman(request), (decision): Approval => ({ decision, asked_because, answers }))
+      Effect.map(this.askHuman({ ...request, reason: asked_because }), (decision): Approval => ({
+        decision,
+        asked_because,
+        answers,
+      }))
 
     const rule = mustAsk(request.tool, request.input, request.cwd)
 
@@ -243,7 +248,10 @@ export class Engine {
       if (clearsThresholds(call.nouls))
         return { decision: "allow", by: `auto:${call.model ?? decider.settings.model}`, answers }
 
-      return yield* human("the decision model was not confident it is safe", answers)
+      return yield* human(
+        `the decision model was not confident it is safe: ${approvalConcerns(call.nouls).join("; ")}`,
+        answers,
+      )
     })
   }
 
