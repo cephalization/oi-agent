@@ -212,7 +212,10 @@ describe("switching provider mid-session", () => {
   it("leaves a conversation in its own dialect untouched", async () => {
     const env = setup()
 
-    await run(env, turn("hi"), anthropicMessages, () => anthropicCall("toolu_1", "true"))
+    // One tool call, then an answer: a model that only ever calls tools runs the loop to its step limit.
+    await run(env, turn("hi"), anthropicMessages, (_call, step) =>
+      step === 0 ? anthropicCall("toolu_1", "true") : anthropicText("done"),
+    )
 
     const traceId = loadSession(env.store, env.sessionId).head?.trace_id ?? ""
 
