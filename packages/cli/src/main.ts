@@ -89,6 +89,9 @@ if (values.check) process.exit(0)
 // What the launcher told this process; removed so that nothing it spawns thinks it has a launcher.
 const RELOAD_ENTRY = process.env["OI_AGENT_RELOAD_ENTRY"]
 const LAUNCHER_FD = Number(process.env["OI_AGENT_LAUNCHER_FD"] ?? Number.NaN)
+
+// The launcher is this process's parent; if it dies, the parent changes and nobody can restart oi.
+const LAUNCHER_PID = process.ppid
 const FALLBACK = process.env["OI_AGENT_FALLBACK"]
 
 delete process.env["OI_AGENT_RELOAD_ENTRY"]
@@ -312,12 +315,19 @@ const PREFLIGHT_LINES = 15
 /** Load the code a reload would start, without starting it. Resolves to why it failed. */
 const preflight = (entry: string) => (): Promise<string | undefined> =>
   new Promise((resolve) => {
+    if (process.ppid !== LAUNCHER_PID)
+      return resolve(
+        "The launcher that started this oi has exited, so nothing can start it again. Quit, then run oi.",
+      )
+
     execFile(process.execPath, [entry, "--check"], { timeout: 60_000 }, (error, stdout, stderr) => {
       if (error === null) return resolve(undefined)
 
       const output = `${stderr}${stdout}`.trim() || error.message
 
-      resolve(output.split("\n").slice(-PREFLIGHT_LINES).join("\n"))
+      const tail = output.split("\n").slice(-PREFLIGHT_LINES).join("\n")
+
+      resolve(`The new code failed the preflight (${entry} --check):\n${tail}`)
     })
   })
 

@@ -175,10 +175,12 @@ These work best on the session you are in, because the evidence is right there.
   `reload` and its arguments (`-s <session> -m <model> --effort <level>`) to
   a pipe the launcher gave it, and exits with 75. The launcher starts the
   code again with those arguments. Nothing is handed over in memory: the new
-  process folds the same span files. If code started by a reload exits with
-  an error before its terminal is up (it writes `ready` once it is), the
-  launcher starts the bundled build on the same session, with a note saying
-  why. `/reload` waits for a running turn. Continuing a turn that a restart
+  process folds the same span files. If code started by a reload exits
+  before its terminal is up (it writes `ready` once it is), or crashes later,
+  the launcher starts the bundled build on the same session, with a note
+  saying why; a child killed by a signal is not restarted. After any abnormal
+  exit the launcher puts the terminal's settings back. The protocol is tested
+  against fake CLIs in `packages/cli/test/launcher.test.ts`. `/reload` waits for a running turn. Continuing a turn that a restart
   cut short is not built yet: the next turn folds it in as interrupted.
 - **"How do you talk to OpenAI or a local model?"** Each API is a dialect
   (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
