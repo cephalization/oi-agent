@@ -10,7 +10,7 @@ import { loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata, stringAttr } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
 import { fillTemplate, parseVerdict } from "../src/judge.ts"
-import type { Detector, SteeringInput, SteeringVerdict } from "../src/steering.ts"
+import { type Detector, type SteeringInput, type SteeringVerdict, shownInTerminal } from "../src/steering.ts"
 import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
 import { tempStore } from "./helpers.ts"
@@ -90,6 +90,8 @@ describe("learning from steering", () => {
     expect(notes).toHaveLength(1)
     expect(notes[0]?.target.trace_id).toBe(traceId)
     expect(notes[0]?.annotation.label).toBe("learned")
+    expect(notes[0]?.annotation.score).toBe(0.9)
+    expect(shownInTerminal(notes[0]!)).toBe(true)
     expect(notes[0]?.annotation.metadata?.["feedback"]).toBe(false)
 
     // The detection is an EVALUATOR trace of its own, with the prompt in and the verdict out.
@@ -129,23 +131,34 @@ describe("learning from steering", () => {
     expect(seen[1]?.existing).toEqual([{ name: "ran_tests", description: "The turn ran the tests." }])
   })
 
-  for (const [label, verdict] of [
-    ["is not durable", { ...PNPM, durable: false }],
-    ["is not confident enough", { ...PNPM, confidence: 0.5 }],
-    ["proposes no evaluator", { ...PNPM, evaluator: null }],
-    ["proposes an invalid regular expression", { ...PNPM, evaluator: { ...PNPM.evaluator!, pattern: "(" } }],
-    ["gives no usable answer", undefined],
-    ["throws", new Error("model down")],
+  for (const [label, verdict, recorded] of [
+    ["is not durable", { ...PNPM, durable: false }, "one-off"],
+    ["is not confident enough", { ...PNPM, confidence: 0.5 }, "durable"],
+    ["proposes no evaluator", { ...PNPM, evaluator: null }, "durable"],
+    [
+      "proposes an invalid regular expression",
+      { ...PNPM, evaluator: { ...PNPM.evaluator!, pattern: "(" } },
+      "durable",
+    ],
+    ["gives no usable answer", undefined, undefined],
+    ["throws", new Error("model down"), undefined],
   ] as const) {
     it(`learns nothing when the detector ${label}`, async () => {
       const { store, cwd, sessionId, turn } = setup(verdict)
-
-      await turn("something")
+      const traceId = await turn("something")
 
       expect(loadEvals(cwd)).toEqual([])
-      expect(store.listAnnotations(sessionId).filter((file) => file.annotation.name === "steering")).toEqual(
-        [],
-      )
+
+      // The verdict is still recorded on the turn, with its confidence; with no verdict there is nothing to record.
+      const notes = store.listAnnotations(sessionId).filter((file) => file.annotation.name === "steering")
+
+      expect(notes.map((file) => file.annotation.label)).toEqual(recorded === undefined ? [] : [recorded])
+      expect(notes.every((file) => file.target.trace_id === traceId && !shownInTerminal(file))).toBe(true)
+
+      const confidence = verdict === undefined || verdict instanceof Error ? [] : [verdict.confidence]
+
+      expect(notes.map((file) => file.annotation.score)).toEqual(confidence)
+
       // The session carries on either way.
       expect(loadSession(store, sessionId).head?.state).toBe("complete")
     })

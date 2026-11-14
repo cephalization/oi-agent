@@ -65,9 +65,16 @@ Checks and rules live in `~/.config/oi-agent/projects/<project>/`, never in
 your repository; each check records the turn it was learned from. `/evals`
 and `/rules` list them, deleting a check's file removes it, and `/revert`
 undoes the latest rule. Every decision, including why something was _not_
-learned, is a `steering` trace on disk and in Phoenix. It uses the same small
-Anthropic model as other evaluators (one call per message); turn it off with
-`"steering": "off"` in the config or `OI_AGENT_STEERING=off`.
+learned, is a `steering` trace on disk and in Phoenix, and a `steering`
+annotation on the turn (`learned`, `durable` or `one-off`, scored by
+confidence), so in Phoenix you can filter turns by what was learned. The
+terminal only mentions what was learned.
+
+It uses the same small Anthropic model as other evaluators (one call per
+message). `oi setup` asks whether to learn from corrections and, on other
+providers, offers to store an Anthropic key; without one, oi says under the
+banner that learning is not running. Turn it off with `"steering": "off"` in
+the config or `OI_AGENT_STEERING=off`.
 
 ## Try it
 

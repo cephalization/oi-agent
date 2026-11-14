@@ -5,6 +5,7 @@
  */
 import {
   type AnnotationFile,
+  shownInTerminal,
   branchTo,
   type EndedSpan,
   isoToNs,
@@ -185,6 +186,8 @@ export class Transcript {
   }
 
   annotation(file: AnnotationFile): void {
+    if (!shownInTerminal(file)) return
+
     const failed = file.annotation.metadata?.["failed"] === true
     const mark = failed ? style.red("◆") : style.green("◆")
     const verdict = file.annotation.label ?? String(file.annotation.score ?? "")
