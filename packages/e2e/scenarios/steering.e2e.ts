@@ -1,6 +1,10 @@
 /**
  * Learning from steering (issue #10). Whether a correction is durable is a
  * judgement call by a model, so this is scored, not pass/fail on one try:
+ * explicit and implicit durable corrections should become evaluators, and
+ * one-off ones should not. The implicit and later one-off cases are worded
+ * unlike anything in the system prompt, so a prompt cannot pass by echoing
+ * them (see docs/experiments/steering.md).
  * each case runs `OI_E2E_SAMPLES` times (default 3) and the scenario fails
  * when the rate falls below a bar. The scores go into the failure message
  * and the scenario's span in Phoenix.
@@ -31,6 +35,27 @@ const DURABLE: ReadonlyArray<Case> = [
   },
 ]
 
+/** Durable, but implicit, and worded unlike anything in the system prompt (held out). */
+const IMPLICIT: ReadonlyArray<Case> = [
+  {
+    setup: "Show me the contents of src/greet.js.",
+    steer: "you don't need to print whole files back at me, it's just noise. a summary is fine.",
+  },
+  {
+    setup: "Add a function farewell(name) to src/greet.js that returns a goodbye string.",
+    steer: "hmm, var? it's not 2010. this codebase is const/let only.",
+  },
+  {
+    setup: "Explain what src/greet.js does in two sentences.",
+    steer: "bit wordy again. I prefer answers short and to the point.",
+  },
+  {
+    setup: "Write a one-line description of this project for its README. Reply with just the line.",
+    steer:
+      "you keep writing these like marketing copy. plain and factual, please, for anything you write here.",
+  },
+]
+
 /** Corrections about this task only: none should become an evaluator. */
 const ONE_OFF: ReadonlyArray<Case> = [
   {
@@ -40,6 +65,22 @@ const ONE_OFF: ReadonlyArray<Case> = [
   {
     setup: "What does src/greet.js export? One sentence.",
     steer: "Shorter, please. Just the function name.",
+  },
+  {
+    setup: "Write an error message for when the name passed to greet is empty. Reply with just the message.",
+    steer: "make that friendlier, it sounds like a stack trace.",
+  },
+  {
+    setup: "Suggest a variable name for the greeting text inside greet. Reply with just the name.",
+    steer: "no, too long. use msg here.",
+  },
+  {
+    setup: "Add a function farewell(name) to src/greet.js that returns a goodbye string.",
+    steer: "actually say 'See you' instead of 'Goodbye' in that one.",
+  },
+  {
+    setup: "Write a one-line description of this project for its README. Reply with just the line.",
+    steer: "can you make that one a bit more formal?",
   },
 ]
 
@@ -55,6 +96,11 @@ const evalFiles = (s: Scenario): Array<string> => {
 
 /** Run one case in a fresh session; return the evaluators it created, then remove them. */
 const learned = async (s: Scenario, entry: Case): Promise<Array<string>> => {
+  // Rules learned in an earlier case go into every later system prompt: start each case without them.
+  fs.rmSync(path.join(projectDir(s.sandbox.cwd, { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }), "rules.md"), {
+    force: true,
+  })
+
   const before = new Set(evalFiles(s))
   const first = await s.run(["run", entry.setup])
 
@@ -79,7 +125,6 @@ describe("learning from steering", () => {
   scenario(
     "durable corrections become evaluators; one-off ones do not",
     {
-      pending: 10,
       liveOnly: true,
       config: new Map([["steering", "auto"]]),
       timeoutMs: 900_000,
@@ -89,7 +134,7 @@ describe("learning from steering", () => {
       let oneOffHits = 0
 
       for (let sample = 0; sample < SAMPLES; sample += 1) {
-        for (const entry of DURABLE) {
+        for (const entry of [...DURABLE, ...IMPLICIT]) {
           const created = await learned(s, entry)
 
           // Each evaluator links back to the prompt that produced it.
@@ -101,7 +146,7 @@ describe("learning from steering", () => {
         for (const entry of ONE_OFF) if ((await learned(s, entry)).length > 0) oneOffHits += 1
       }
 
-      const durableTotal = SAMPLES * DURABLE.length
+      const durableTotal = SAMPLES * (DURABLE.length + IMPLICIT.length)
       const oneOffTotal = SAMPLES * ONE_OFF.length
 
       s.note(

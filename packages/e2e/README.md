@@ -9,7 +9,7 @@ happened to say.
 ```sh
 pnpm e2e                                  # every scenario that can run here
 pnpm e2e scenarios/tui.e2e.ts             # one file
-OI_E2E_PENDING=10 pnpm e2e                # also the scenarios written for issue #10
+OI_E2E_PENDING=12 pnpm e2e                # also the scenarios written for issue #12
 OI_E2E_MODELS=replay pnpm e2e             # from recordings: no keys, no model calls
 ```
 
@@ -89,7 +89,6 @@ making its scenarios pass, then removing `pending`.
 | Issue | File                            | Notes                                               |
 | ----- | ------------------------------- | --------------------------------------------------- |
 | #9    | `scenarios/instructions.e2e.ts` | fixture `agents`: a CLAUDE.md marker and two skills |
-| #10   | `scenarios/steering.e2e.ts`     | scored over `OI_E2E_SAMPLES` runs (default 3)       |
 | #12   | `scenarios/decisions.e2e.ts`    | fake System One server; `approvals: "auto"`         |
 | #13   | `scenarios/web.e2e.ts`          | fixture website; built-in search needs the real web |
 

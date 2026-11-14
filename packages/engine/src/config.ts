@@ -20,6 +20,11 @@ export const Approvals = Schema.Literals(["ask", "allow"])
 
 export type Approvals = typeof Approvals.Type
 
+/** Whether durable corrections from the user become evaluators by themselves. */
+export const Steering = Schema.Literals(["auto", "off"])
+
+export type Steering = typeof Steering.Type
+
 export const Config = Schema.Struct({
   /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
   provider: Schema.String,
@@ -35,6 +40,8 @@ export const Config = Schema.Struct({
   approvals: Approvals,
   /** Model used by evaluators and to distill rules. */
   judge_model: Schema.String,
+  /** `auto`: a correction that applies beyond the current task becomes an evaluator. */
+  steering: Steering,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -56,6 +63,7 @@ const PartialConfig = Schema.fromJsonString(
     user: Schema.optionalKey(Schema.String),
     approvals: Schema.optionalKey(Approvals),
     judge_model: Schema.optionalKey(Schema.String),
+    steering: Schema.optionalKey(Steering),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -68,6 +76,7 @@ const PartialConfig = Schema.fromJsonString(
 
 const decodePartial = Schema.decodeUnknownOption(PartialConfig)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
+const decodeSteering = Schema.decodeUnknownOption(Steering)
 const encodeConfig = Schema.encodeSync(Config)
 
 /** An effort level from text, such as a command-line flag; undefined when it is not one. */
@@ -187,6 +196,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     user: env["OI_AGENT_USER"] ?? file?.user ?? env["USER"] ?? "user",
     approvals: file?.approvals ?? "ask",
     judge_model: env["OI_AGENT_JUDGE_MODEL"] ?? file?.judge_model ?? "claude-haiku-5-5",
+    steering: Option.getOrUndefined(decodeSteering(env["OI_AGENT_STEERING"])) ?? file?.steering ?? "auto",
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

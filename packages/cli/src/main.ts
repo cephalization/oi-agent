@@ -18,6 +18,7 @@ import {
   parseShareLink,
   tailcatForward,
   modelDistiller,
+  modelDetector,
   phoenixJudge,
   type ApprovalMode,
   Engine,
@@ -180,6 +181,7 @@ const buildEngine = (override?: ApprovalMode): Engine => {
       store,
       judge: phoenixJudge(judgeKey, config.judge_model),
       distill: modelDistiller(judgeKey, config.judge_model),
+      detect: config.steering === "auto" ? modelDetector(judgeKey, config.judge_model) : undefined,
     })
 
   return engine

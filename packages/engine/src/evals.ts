@@ -29,6 +29,7 @@ import { addRule, readRules } from "./rules.ts"
 import type { Store } from "./store.ts"
 import { truncate } from "./tools.ts"
 import { diskTracer } from "./tracer.ts"
+import type { Detector } from "./steering.ts"
 
 // --- definitions -----------------------------------------------------------
 
@@ -41,6 +42,10 @@ const common = {
   feedback: Schema.Boolean,
   /** Turn failures into standing rules in the project's `rules.md`. */
   learn: Schema.Boolean,
+  /** Where it came from, when not from `create_eval`: the user prompt it was learned from. */
+  origin: Schema.optionalKey(
+    Schema.Struct({ kind: Schema.Literal("steering"), session_id: Schema.String, trace_id: Schema.String }),
+  ),
 }
 
 export const LlmEval = Schema.Struct({
@@ -121,6 +126,60 @@ export const saveEval = (cwd: string, definition: EvalDefinition): string => {
   return file
 }
 
+/** An evaluator as `create_eval` and the steering detector describe one. */
+export const EvalInput = Schema.Struct({
+  name: Schema.String,
+  description: Schema.String,
+  kind: Schema.Literals(["llm", "code", "threshold"]),
+  metric: Schema.optionalKey(Metric),
+  max: Schema.optionalKey(Schema.Finite),
+  instructions: Schema.optionalKey(Schema.String),
+  pattern: Schema.optionalKey(Schema.String),
+  target: Schema.optionalKey(Schema.Literals(["output", "tool_input", "tool_output", "transcript"])),
+  learn: Schema.optionalKey(Schema.Boolean),
+})
+
+/** A full evaluator definition from a short description, or why it cannot be one. */
+export const definitionFrom = (input: typeof EvalInput.Type): EvalDefinition | string => {
+  const common = {
+    name: input.name,
+    description: input.description,
+    fail_labels: ["fail"],
+    feedback: true,
+    learn: input.learn ?? true,
+  }
+
+  if (input.kind === "llm") {
+    return input.instructions === undefined
+      ? "An llm evaluator needs instructions."
+      : { ...common, kind: "llm", instructions: input.instructions, choices: { pass: 1, fail: 0 } }
+  }
+
+  if (input.kind === "threshold") {
+    return input.metric === undefined || input.max === undefined
+      ? "A threshold evaluator needs a metric and a max."
+      : // A limit is not something the agent can learn its way under, so it only gives feedback.
+        { ...common, learn: input.learn ?? false, kind: "threshold", metric: input.metric, max: input.max }
+  }
+
+  if (input.pattern === undefined) return "A code evaluator needs a pattern."
+
+  try {
+    new RegExp(input.pattern, "m")
+  } catch {
+    return `Not a valid regular expression: ${input.pattern}`
+  }
+
+  return {
+    ...common,
+    kind: "code",
+    pattern: input.pattern,
+    target: input.target ?? "transcript",
+    match_label: "fail",
+    otherwise_label: "pass",
+  }
+}
+
 // --- what an evaluator sees ------------------------------------------------
 
 export interface TurnRecord {
@@ -146,7 +205,12 @@ export const formatBytes = (bytes: number): string => {
 export const turnRecord = (store: Store, sessionId: string, traceId: string): TurnRecord => {
   const trace = store.readTrace(sessionId, traceId)
   const root = trace.ended.find((span) => span.parent_id === null)
-  const tools = trace.ended.filter((span) => kindOf(span) === "TOOL")
+
+  // Evaluators judge the work, not their own creation: a `create_eval` call holds the very pattern it forbids.
+  const tools = trace.ended.filter(
+    (span) => kindOf(span) === "TOOL" && stringAttr(span, OI.TOOL_NAME) !== "create_eval",
+  )
+
   const input = root === undefined ? "" : (stringAttr(root, OI.INPUT_VALUE) ?? "")
   const output = root === undefined ? "" : (stringAttr(root, OI.OUTPUT_VALUE) ?? "")
   const calls = tools.map((span) => `${span.name} ${stringAttr(span, OI.INPUT_VALUE) ?? ""}`)
@@ -214,6 +278,8 @@ export interface EvalRuntime {
   readonly store: Store
   readonly judge: Judge
   readonly distill: Distiller
+  /** Reads each prompt for durable steering; absent when steering is off. */
+  readonly detect?: Detector | undefined
 }
 
 const runCode = (definition: CodeEval, record: TurnRecord): Verdict => {
@@ -262,7 +328,8 @@ const usageSpan = (
   },
 })
 
-const reporterFor = (runtime: EvalRuntime, sessionId: string) =>
+/** Report each model call an evaluator makes as an `LLM` span under the current one. */
+export const reporterFor = (runtime: EvalRuntime, sessionId: string) =>
   Effect.gen(function* () {
     const span = yield* Effect.orDie(Effect.currentSpan)
 
