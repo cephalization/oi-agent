@@ -6,8 +6,11 @@
  * peer. Everything else here is input handling and slash commands.
  */
 import {
+  type ApprovalMode,
   type ApprovalRequest,
   chatgptAccount,
+  DECISION_ACCOUNT,
+  getSecret,
   type Engine,
   type ModelChoice,
   type ModelRef,
@@ -49,6 +52,15 @@ import { Editor } from "./editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
+
+/** The approval mode, as the status line shows it. */
+const APPROVAL_LABELS = new Map<ApprovalMode, string>([
+  ["allow", style.yellow("⏵⏵ yolo")],
+  ["auto", style.cyan("⏵ auto")],
+])
+
+const approvalLabel = (mode: ApprovalMode): string =>
+  APPROVAL_LABELS.get(mode) ?? style.gray("ask before tools")
 
 export interface AppOptions {
   readonly store: Store
@@ -390,7 +402,7 @@ class App {
         add(style.gray(`effort ${engine.config.effort}`), false)
       }
 
-      add(engine.approvals === "allow" ? style.yellow("⏵⏵ yolo") : style.gray("ask before tools"), false)
+      add(approvalLabel(engine.approvals), false)
     }
 
     if (this.share !== undefined) {
@@ -400,6 +412,14 @@ class App {
     }
 
     if (transcript.totalTokens > 0) add(style.gray(`${compact(transcript.totalTokens)} tokens`), true)
+
+    if (transcript.decisionTokens > 0)
+      add(
+        style.gray(
+          `${compact(transcript.decisionTokens)} decision tokens (~$${transcript.decisionCost.toFixed(6)})`,
+        ),
+        true,
+      )
 
     if (transcript.sessionBytes > 0) add(style.gray(formatBytes(transcript.sessionBytes)), true)
 
@@ -621,11 +641,18 @@ class App {
     this.done(id)
   }
 
-  /** Tab: ask before tools, or run them unasked. */
+  /** Tab: ask before tools, let the decision model approve (when there is one), or run them unasked. */
   private toggleApprovals(): void {
     const engine = this.options.engine
 
-    engine?.setApprovalMode(engine.approvals === "allow" ? "ask" : "allow")
+    if (engine === undefined) return
+
+    const modes: ReadonlyArray<ApprovalMode> =
+      engine.decider === undefined ? ["ask", "allow"] : ["ask", "auto", "allow"]
+
+    const next = modes[(modes.indexOf(engine.approvals) + 1) % modes.length] ?? "ask"
+
+    engine.setApprovalMode(next)
   }
 
   /** Shift+Tab: the next effort level the current model accepts. */
@@ -805,6 +832,17 @@ class App {
       ["anthropic", () => this.anthropicMenu(providers)],
       ["openai", () => this.openaiMenu(providers)],
       ["compatible", () => this.compatibleMenu(providers)],
+      [
+        DECISION_ACCOUNT,
+        async () => {
+          const action = await this.pick(
+            "TypeSafe decision model",
+            this.keyItems(providers, DECISION_ACCOUNT),
+          )
+
+          return action === undefined ? false : this.keyAction(providers, DECISION_ACCOUNT, action)
+        },
+      ],
     ])
 
     const picked = await this.pick("Which provider?", this.providerItems(providers))
@@ -828,6 +866,11 @@ class App {
     return [
       { value: "anthropic", label: "Anthropic", hint: describe("anthropic") },
       { value: "openai", label: "OpenAI", hint: this.openaiHint(providers) },
+      {
+        value: DECISION_ACCOUNT,
+        label: "TypeSafe decision model",
+        hint: "auto approvals and steering; not a chat model",
+      },
       {
         value: "compatible",
         label: "OpenAI-compatible",
@@ -854,7 +897,9 @@ class App {
   /** Add or replace a provider's key, and forget it once there is one. */
   private keyItems(providers: Providers, id: string): Array<Suggestion> {
     const provider = providers.find(id)
-    const key = provider === undefined ? undefined : providers.key(provider)
+
+    const key =
+      id === DECISION_ACCOUNT ? getSecret(id) : provider === undefined ? undefined : providers.key(provider)
 
     if (key === undefined)
       return [{ value: "key", label: "Add an API key", hint: "kept in the system keychain" }]
@@ -869,6 +914,9 @@ class App {
     if (action === "forget") {
       this.say([(await providers.forget(id)) ?? `Forgot ${id}'s key.`])
 
+      if (id === DECISION_ACCOUNT)
+        this.say(["Restart or /reload oi to apply the decision model's key change."])
+
       return true
     }
 
@@ -879,6 +927,10 @@ class App {
     const failed = key === "" ? "No key stored." : providers.setKey(id, key)
 
     if (failed !== undefined) this.say([failed])
+    else if (id === DECISION_ACCOUNT)
+      this.say([
+        "Stored the TypeSafe key. Restart or /reload oi to enable auto approvals and decision-model steering.",
+      ])
     else await this.listed(id, `Stored ${id}'s key in the keychain.`)
 
     return true
@@ -1131,6 +1183,21 @@ class App {
 
     if (name === "/revert") {
       return this.say([revertRules(this.cwd()) ? "Restored the previous rules." : "Nothing to revert."])
+    }
+
+    if (name === "/auto") {
+      const engine = this.options.engine
+
+      if (engine?.decider === undefined)
+        return this.say([
+          "Auto approvals need a decision model: store a TypeSafe key with `oi auth login typesafe`, then restart oi.",
+        ])
+
+      engine.setApprovalMode("auto")
+
+      return this.say([
+        `${engine.decider.settings.model} now approves tool calls it is confident are safe; you are asked about the rest. Tab switches mode.`,
+      ])
     }
 
     if (name === "/yolo") {

@@ -6,8 +6,8 @@
 import { describe, expect } from "vite-plus/test"
 import { expectOk, MODELS, scenario } from "../src/scenario.ts"
 
-// "auto" is not an approval mode yet (issue #12 adds it).
-const INVALID = { approvals: "auto" as const }
+// Not an approval mode: the sandbox config is written as is, so the CLI sees the bad value.
+const INVALID = { config: new Map([["approvals", "sometimes"]]) }
 
 describe("config file", () => {
   scenario(

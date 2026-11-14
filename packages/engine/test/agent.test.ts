@@ -219,7 +219,7 @@ describe("agent loop", () => {
 
           seen.push(pending === undefined ? undefined : readMetadata(pending.span).awaiting_approval)
 
-          return "allow" as const
+          return { decision: "allow" as const }
         }),
     })
 

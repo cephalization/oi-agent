@@ -19,6 +19,14 @@ import {
   tailcatForward,
   modelDistiller,
   modelDetector,
+  llmDetector,
+  decisionDetector,
+  DECISION_ACCOUNT,
+  type Config,
+  type Decider,
+  type Detector,
+  setSecret,
+  deleteSecret,
   shownInTerminal,
   phoenixJudge,
   type ApprovalMode,
@@ -30,6 +38,7 @@ import {
   lastModelOf,
   loadSession,
   parseEffort,
+  parseApprovals,
   parsePhoenixLink,
   PhoenixClient,
   PhoenixExporter,
@@ -57,7 +66,8 @@ Usage:
   oi setup                   Choose a model, store keys, connect Phoenix
   oi auth login [provider]   Store a provider's API key in the keychain (default
                              anthropic); \`oi auth login chatgpt\` signs in with
-                             a ChatGPT plan in the browser
+                             a ChatGPT plan in the browser; \`oi auth login
+                             typesafe\` stores the decision model's key
   oi auth logout <provider>  Forget a provider's key, or sign out of ChatGPT
   oi where                   Print the directory sessions are stored in
 
@@ -67,6 +77,7 @@ Options:
   -m, --model <id>           Model to use, as provider/model or a model of the
                              configured provider (default: claude-opus-5-5)
       --effort <level>       Reasoning effort: low, medium, high, xhigh or max
+      --approvals <mode>    Tool approvals: ask, auto or allow (overrides config)
       --yolo                 Run tools that change the machine without asking
       --check                Load every module and exit (what /reload checks first)
   -h, --help                 Show this help
@@ -79,6 +90,7 @@ const { values, positionals } = parseArgs({
     continue: { type: "boolean", short: "c", default: false },
     model: { type: "string", short: "m" },
     effort: { type: "string" },
+    approvals: { type: "string" },
     yolo: { type: "boolean", default: false },
     check: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -131,9 +143,19 @@ const store = new Store()
 
 const providers = new Providers()
 
+/** The requested approval mode, checked before any engine starts. */
+const approvalChoice = (): Config["approvals"] | undefined => {
+  const mode = parseApprovals(values.approvals)
+
+  if (values.approvals !== undefined && mode === undefined)
+    fail(`--approvals takes ask, auto or allow, not ${values.approvals}.`)
+
+  return mode
+}
+
 const buildEngine = (override?: ApprovalMode): Engine => {
   const base = loadConfig()
-  const approvals = override ?? base.approvals
+  const approvals = override ?? approvalChoice() ?? base.approvals
 
   // `-m openai/gpt-5.1` picks the provider too; a bare id stays with the configured one.
   const chosen =
@@ -149,8 +171,11 @@ const buildEngine = (override?: ApprovalMode): Engine => {
   const config = effort === undefined ? chosen : { ...chosen, effort }
 
   const redactor = new Redactor()
+  const decider = deciderFor(config)
 
   for (const key of providers.keys()) redactor.add(key)
+
+  redactor.add(decider?.apiKey)
 
   // Keys added in /provider during the session are scrubbed too.
   providers.onKey = (key) => redactor.add(key)
@@ -172,33 +197,135 @@ const buildEngine = (override?: ApprovalMode): Engine => {
     selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
     model,
     modelFor: (settings) => providers.modelFor(settings),
+    decider,
   })
 
-  // Evaluators judge with an Anthropic model, so they run only with an Anthropic key.
+  // LLM evaluators judge with an Anthropic model; code evaluators and steering need no key of their own.
   const judgeKey = getSecret("anthropic")
+  const steering = steeringSetup(config, redactor)
 
-  if (judgeKey !== undefined)
-    attachEvals(engine, {
-      store,
-      judge: phoenixJudge(judgeKey, config.judge_model),
-      distill: modelDistiller(judgeKey, config.judge_model),
-      detect: config.steering === "auto" ? modelDetector(judgeKey, config.judge_model) : undefined,
-    })
+  attachEvals(engine, {
+    store,
+    judge: judgeKey === undefined ? noJudge : phoenixJudge(judgeKey, config.judge_model),
+    distill: judgeKey === undefined ? noJudge : modelDistiller(judgeKey, config.judge_model),
+    detect: steering.detect,
+  })
 
   return engine
 }
 
+/** Stands in for the judge without an Anthropic key: the evaluator's span records why it did not run. */
+const noJudge = (): Promise<never> =>
+  Promise.reject(new Error("LLM evaluators need an Anthropic API key (oi auth login)."))
+
+/** The decision model, when its key is set. */
+const deciderFor = (config: Config): Decider | undefined => {
+  const apiKey = getSecret(DECISION_ACCOUNT)
+
+  return apiKey === undefined ? undefined : { settings: config.decision, apiKey }
+}
+
+/** A model for a background task (steering), or undefined when its provider has no credentials. */
+const backgroundModel = (config: Config, spec: string): ModelLayer | undefined => {
+  const ref = splitModel(config.providers, spec, "anthropic")
+
+  try {
+    return providers.modelFor({ ...config, ...ref, effort: "low", max_tokens: 8192 })
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * Settings that are on but cannot work: learning from corrections needs the
- * Anthropic key the judge model runs on. Shown under the banner, like a bad
+ * The detector for an LLM spec. Anthropic models use the detector the
+ * steering experiment measured; every other provider gets the same prompt
+ * through oi's own model layer.
+ */
+const llmDetectorFor = (config: Config, spec: string): Detector | undefined => {
+  const ref = splitModel(config.providers, spec, "anthropic")
+  const anthropicKey = getSecret("anthropic")
+
+  if (ref.provider === "anthropic")
+    return anthropicKey === undefined ? undefined : modelDetector(anthropicKey, ref.model)
+
+  const model = backgroundModel(config, spec)
+
+  return model === undefined ? undefined : llmDetector(model)
+}
+
+const DECISION_PREFIX = "decision:"
+
+/** The configured steering model; unset means the judge model with an Anthropic key, else the session's own. */
+const steeringModelOf = (config: Config): string => {
+  if (config.steering_model !== "") return config.steering_model
+
+  return getSecret("anthropic") === undefined ? `${config.provider}/${config.model}` : config.judge_model
+}
+
+/** The steering detector to run, or why there is none when steering is on. */
+interface SteeringSetup {
+  readonly detect?: Detector
+  readonly problem?: string
+}
+
+/**
+ * What reads prompts for durable corrections (`steering_model`), or why
+ * nothing can: `provider/model` needs that provider's credentials, and
+ * `decision:<model>` needs a TypeSafe key, with the judge model (or else
+ * the session's model) writing the evaluators it finds.
+ */
+const steeringSetup = (config: Config, redactor?: Redactor): SteeringSetup => {
+  if (config.steering === "off") return {}
+
+  const spec = steeringModelOf(config)
+  const fix = `Fix it, or set "steering_model" to a model you have a key for (or "steering": "off") in the config.`
+
+  if (spec.startsWith(DECISION_PREFIX)) {
+    const decider = deciderFor(config)
+
+    if (decider === undefined)
+      return {
+        problem: `Learning from corrections uses the decision model ${spec}, but there is no TypeSafe API key, so it is not running. Add one with \`oi auth login typesafe\` and restart oi. ${fix}`,
+      }
+
+    const writer =
+      llmDetectorFor(config, config.judge_model) ??
+      llmDetectorFor(config, `${config.provider}/${config.model}`)
+
+    const settings = { ...decider.settings, model: spec.slice(DECISION_PREFIX.length) }
+
+    return { detect: decisionDetector(settings, decider.apiKey, writer, redactor) }
+  }
+
+  const detect = llmDetectorFor(config, spec)
+
+  if (detect !== undefined) return { detect }
+
+  const ref = splitModel(config.providers, spec, "anthropic")
+
+  return {
+    problem: `Learning from corrections runs on ${ref.provider}/${ref.model}, but ${ref.provider} has no credentials here, so it is not running. Add them with \`oi auth login ${ref.provider}\` (or /provider) and restart oi. ${fix}`,
+  }
+}
+
+/**
+ * Settings that are on but cannot work, shown under the banner like a bad
  * config value, so nothing is silently off.
  */
-const inactiveFeatures = (): Array<string> =>
-  loadConfig().steering === "auto" && getSecret("anthropic") === undefined
-    ? [
-        'Learning from corrections is on, but it needs an Anthropic API key and there is none, so it is not running. Add one with `oi auth login` (or /provider), then restart oi; or set "steering": "off" in the config.',
-      ]
-    : []
+const inactiveFeatures = (): Array<string> => {
+  const config = loadConfig()
+  const problems: Array<string> = []
+  const steering = steeringSetup(config).problem
+
+  if (steering !== undefined) problems.push(steering)
+
+  if (config.approvals === "auto" && deciderFor(config) === undefined)
+    problems.push(
+      "Auto approvals need a decision model and there is no TypeSafe API key, so every tool call will ask, as in ask mode. Add one with `oi auth login typesafe` and restart oi.",
+    )
+
+  return problems
+}
 
 /** Phoenix, for reading sessions back as well as exporting, when an endpoint is configured. */
 const connectPhoenix = (): Phoenix | undefined => {
@@ -254,7 +381,8 @@ const open = async (sessions: Sessions, target: Target): Promise<Opened> =>
  * tools run here. Interactively they ask; `oi run` has nobody to ask.
  */
 const guard = (engine: Engine, opened: Opened, interactive: boolean): Array<string> => {
-  if (!opened.foreign || engine.approvals !== "allow") return [...opened.notes]
+  if (!opened.foreign || (engine.approvals !== "allow" && engine.approvals !== "auto"))
+    return [...opened.notes]
 
   engine.setApprovalMode(interactive ? "ask" : "deny")
 
@@ -262,7 +390,7 @@ const guard = (engine: Engine, opened: Opened, interactive: boolean): Array<stri
     ...opened.notes,
     interactive
       ? "It was written on another machine, so tools ask before running. Tab to change that."
-      : "It was written on another machine, so tools that change anything are denied despite --yolo.",
+      : "It was written on another machine, so tools that change anything are denied despite yolo or auto mode.",
   ]
 }
 
@@ -357,6 +485,8 @@ const reloadInto = (engine: Engine, sessionId: string): never => {
   const { provider, model, effort } = engine.config
   const args = ["-s", sessionId, "-m", `${provider}/${model}`, "--effort", effort]
 
+  if (engine.approvals !== "deny") args.push("--approvals", engine.approvals)
+
   if (engine.approvals === "allow") args.push("--yolo")
 
   tellLauncher(["reload", ...args])
@@ -380,7 +510,12 @@ const printEvents =
   }
 
 const run = async (prompt: string): Promise<void> => {
-  const engine = buildEngine(values.yolo ? "allow" : "deny")
+  // Nobody can answer a question here: auto mode runs what the decision model allows and denies the rest.
+  const requested = approvalChoice() ?? loadConfig().approvals
+  const auto = !values.yolo && requested === "auto"
+  const engine = buildEngine(values.yolo || approvalChoice() === "allow" ? "allow" : auto ? "auto" : "deny")
+
+  engine.onApproval((request) => engine.resolveApproval(request.span_id, "deny"))
   const remote = connectPhoenix()
   const sessions = new Sessions(store, remote)
   const target = await initialTarget(engine, remote)
@@ -596,6 +731,23 @@ const readLine = async (): Promise<string> => {
 }
 
 const authLogin = async (id: string): Promise<void> => {
+  // The decision model's key is not a chat provider's: it has no models to pick in /model.
+  if (id === DECISION_ACCOUNT) {
+    process.stderr.write("Paste your TypeSafe API key and press return: ")
+
+    const key = await readLine()
+
+    if (key === "") fail("No key given. Nothing was stored.")
+
+    if (!setSecret(DECISION_ACCOUNT, key)) fail("The system keychain did not accept the key.")
+
+    process.stderr.write(
+      'Stored in the system keychain. Use it with "approvals": "auto" or "steering_model": "decision:jev-latest".\n',
+    )
+
+    return
+  }
+
   const provider =
     providers.find(id) ?? fail(`No provider named ${id}. Built in: anthropic, openai, chatgpt.`)
 
@@ -622,6 +774,14 @@ const authLogin = async (id: string): Promise<void> => {
 }
 
 const authLogout = async (id: string): Promise<void> => {
+  if (id === DECISION_ACCOUNT) {
+    if (!deleteSecret(DECISION_ACCOUNT)) fail("There was no TypeSafe key in the keychain.")
+
+    process.stderr.write("Removed the TypeSafe key from the keychain.\n")
+
+    return
+  }
+
   const failed = await providers.forget(id)
 
   if (failed !== undefined) fail(failed)

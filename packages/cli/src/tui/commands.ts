@@ -60,6 +60,11 @@ export const COMMANDS: ReadonlyArray<Command> = [
     hostOnly: true,
   },
   { name: "/yolo", summary: "stop asking before running tools (same as tab)", hostOnly: true },
+  {
+    name: "/auto",
+    summary: "let the decision model approve tool calls it is sure are safe",
+    hostOnly: true,
+  },
   { name: "/quit", summary: "exit (the session stays on disk)", aliases: ["/exit"], hostOnly: false },
 ]
 
@@ -82,7 +87,7 @@ export const helpLines = (commands: ReadonlyArray<Command>): Array<string> => {
     "",
     "In the / menu: tab complete · ↑↓ pick · enter run · esc close",
     "In /resume:   tab keeps the session on disk, or only in Phoenix",
-    "Otherwise:  tab toggle yolo · shift+tab cycle reasoning effort",
+    "Otherwise:  tab cycle ask / auto / yolo · shift+tab cycle reasoning effort",
     "            enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
   ]
 }

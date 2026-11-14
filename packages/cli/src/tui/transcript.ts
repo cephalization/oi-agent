@@ -5,6 +5,7 @@
  */
 import {
   type AnnotationFile,
+  DECISION_ATTR,
   shownInTerminal,
   branchTo,
   type EndedSpan,
@@ -57,6 +58,8 @@ export class Transcript {
   private thinking = ""
   private wroteText = false
   private tokens = 0
+  private decisionInput = 0
+  private decisionOutput = 0
   private startedMs = 0
   private active = 0
   private bytes = 0
@@ -81,6 +84,16 @@ export class Transcript {
 
   get totalTokens(): number {
     return this.tokens
+  }
+
+  /** Decision usage is separate: it is not billed like generated LLM tokens. */
+  get decisionTokens(): number {
+    return this.decisionInput + this.decisionOutput
+  }
+
+  /** Estimated TypeSafe input cost in dollars; output is free ($0.042/M input tokens). */
+  get decisionCost(): number {
+    return (this.decisionInput * 0.042) / 1_000_000
   }
 
   /** Lines for the live region: whatever is still in motion. */
@@ -218,6 +231,11 @@ export class Transcript {
     const kind = kindOf(span)
 
     if (kind === "LLM") this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
+
+    if (kind === "DECISION") {
+      this.decisionInput += numberAttr(span, DECISION_ATTR.TOKENS_INPUT)
+      this.decisionOutput += numberAttr(span, DECISION_ATTR.TOKENS_OUTPUT)
+    }
 
     if (!this.turns.has(span.context.trace_id)) return
 

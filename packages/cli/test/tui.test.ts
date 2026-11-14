@@ -11,7 +11,9 @@ import {
 } from "../src/tui/commands.ts"
 import { Editor } from "../src/tui/editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
-import { EFFORTS } from "@oi-agent/engine"
+import { EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
+import { Screen } from "../src/tui/screen.ts"
+import { Transcript } from "../src/tui/transcript.ts"
 import { MarkdownStream } from "../src/tui/markdown.ts"
 
 describe("text measurement", () => {
@@ -186,5 +188,33 @@ describe("effort cycling", () => {
     expect(fitEffort("high", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
     expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
     expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "old" }))).toBeUndefined()
+  })
+})
+
+describe("decision usage", () => {
+  it("counts decision tokens separately from LLM tokens, with a TypeSafe-rate estimate", () => {
+    const transcript = new Transcript(new Screen(process.stdout), "tony")
+
+    const decision: EndedSpan = {
+      name: "decision approval",
+      context: { trace_id: "t", span_id: "s" },
+      parent_id: "p",
+      span_kind: "SPAN_KIND_INTERNAL",
+      start_time: "2026-11-13T00:00:00.000Z",
+      end_time: "2026-11-13T00:00:01.000Z",
+      status_code: "OK",
+      status_message: "",
+      events: [],
+      attributes: {
+        [OI.SPAN_KIND]: "DECISION",
+        [DECISION_ATTR.TOKENS_INPUT]: 1000,
+        [DECISION_ATTR.TOKENS_OUTPUT]: 50,
+      },
+    }
+
+    transcript.onEvent({ type: "span_end", session_id: "session", span: decision })
+    expect(transcript.totalTokens).toBe(0)
+    expect(transcript.decisionTokens).toBe(1050)
+    expect(transcript.decisionCost).toBeCloseTo(0.000042, 8)
   })
 })

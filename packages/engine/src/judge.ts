@@ -9,7 +9,7 @@ import { generateText, type LanguageModel, wrapLanguageModel } from "ai"
 import { Option, Schema } from "effect"
 import type { Distiller, Judge, UsageReporter } from "./evals.ts"
 import { parser } from "./format.ts"
-import { type Detector, looseVerdict, SteeringVerdict } from "./steering.ts"
+import { type Detector, looseVerdict, type SteeringInput, SteeringVerdict } from "./steering.ts"
 import { nowNs } from "./ids.ts"
 
 export const DEFAULT_JUDGE_MODEL = "claude-haiku-5-5"
@@ -110,10 +110,15 @@ Write one rule, a single imperative sentence of at most 25 words, that would hav
     return rule === "" || rule.toUpperCase() === "NONE" ? undefined : rule
   }
 
+/** What counts as a durable correction, shared by every detector so they judge the same thing. */
+export const DURABLE_MEANS = `Durable: corrections of a habit or style of the agent's; the project's conventions, tools or commands; how the user wants answers or work done; things to always or never do. A complaint about something the agent did counts when the same thing could come up again in a different task. It does not need words like "always".`
+
+export const NOT_DURABLE_MEANS = `Not durable: choices that only concern the current change (a particular name, wording or value, a one-time edit), questions, requests for new work, approval and thanks. Asking to redo the latest answer or change differently (more or less of something, another tone, another form) is about that answer only, unless the user signals it applies beyond it: that it keeps happening, or that it is how they always want things.`
+
 const DETECTOR_PROMPT = `You watch a user steer a coding agent. Decide whether the user's latest message corrects the agent, or states a preference, in a way that should apply to the agent's future work in this project, and not only to the current task.
 
-Durable: corrections of a habit or style of the agent's; the project's conventions, tools or commands; how the user wants answers or work done; things to always or never do. A complaint about something the agent did counts when the same thing could come up again in a different task. It does not need words like "always".
-Not durable: choices that only concern the current change (a particular name, wording or value, a one-time edit), questions, requests for new work, approval and thanks. Asking to redo the latest answer or change differently (more or less of something, another tone, another form) is about that answer only, unless the user signals it applies beyond it: that it keeps happening, or that it is how they always want things.
+{{durable}}
+{{not_durable}}
 
 The agent's previous turn, for context:
 <previous_turn>
@@ -160,20 +165,28 @@ export const parseVerdict = (text: string): SteeringVerdict | undefined => {
   return json === undefined ? undefined : Option.getOrUndefined(decodeVerdict(looseVerdict(json)))
 }
 
+/** The detector's prompt for one input. */
+export const detectorPrompt = (input: SteeringInput): string => {
+  const existing = input.existing.map((entry) => `${entry.name}: ${entry.description}`).join("\n")
+
+  const values = new Map([
+    ["durable", DURABLE_MEANS],
+    ["not_durable", NOT_DURABLE_MEANS],
+    ["previous", input.previous === "" ? "(none)" : input.previous],
+    ["existing", existing === "" ? "(none)" : existing],
+    ["prompt", input.prompt],
+  ])
+
+  return fillTemplate(DETECTOR_PROMPT, values)
+}
+
 export const modelDetector =
   (apiKey: string, model: string = DEFAULT_JUDGE_MODEL): Detector =>
   async (input, report) => {
-    const existing = input.existing.map((entry) => `${entry.name}: ${entry.description}`).join("\n")
-
-    const values = new Map([
-      ["previous", input.previous === "" ? "(none)" : input.previous],
-      ["existing", existing === "" ? "(none)" : existing],
-      ["prompt", input.prompt],
-    ])
-
-    const prompt = fillTemplate(DETECTOR_PROMPT, values)
-
-    const { text } = await generateText({ model: metered(apiKey, model, report), prompt })
+    const { text } = await generateText({
+      model: metered(apiKey, model, report.usage),
+      prompt: detectorPrompt(input),
+    })
 
     return parseVerdict(text)
   }

@@ -23,7 +23,7 @@ import {
   turnRecord,
   type UsageReporter,
 } from "./evals.ts"
-import { type AnnotationFile, OI, readMetadata, stringAttr, writeMetadata } from "./format.ts"
+import { type AnnotationFile, type EndedSpan, OI, readMetadata, stringAttr, writeMetadata } from "./format.ts"
 import { newId, nowNs, nsToIso } from "./ids.ts"
 import { truncate } from "./tools.ts"
 import { diskTracer } from "./tracer.ts"
@@ -69,8 +69,22 @@ export const looseVerdict = (value: Schema.Json): Schema.Json =>
       }),
   })
 
+/** How a detector records what it called, under the detection's `EVALUATOR` span. */
+export interface DetectorReport {
+  /** A model call, as a summary `LLM` span. */
+  readonly usage: UsageReporter
+  /** Any span the detector built itself (a `DECISION`, or an `LLM` span with the exact bodies). */
+  readonly span: (build: (parent: SpanParent) => EndedSpan) => void
+}
+
+export interface SpanParent {
+  readonly sessionId: string
+  readonly traceId: string
+  readonly spanId: string
+}
+
 /** Reads one prompt. Injected, like the judge, so the engine does not own a model. */
-export type Detector = (input: SteeringInput, report: UsageReporter) => Promise<SteeringVerdict | undefined>
+export type Detector = (input: SteeringInput, report: DetectorReport) => Promise<SteeringVerdict | undefined>
 
 /** Below this the detector is not sure enough to change how every later turn is judged. */
 export const STEERING_CONFIDENCE = 0.7
@@ -191,7 +205,17 @@ export const detectSteering = (
   const input = inputFor(runtime, sessionId, traceId, cwd)
 
   const run = Effect.gen(function* () {
-    const report = yield* reporterFor(runtime, sessionId)
+    const usage = yield* reporterFor(runtime, sessionId)
+    const parent = yield* Effect.orDie(Effect.currentSpan)
+
+    const report: DetectorReport = {
+      usage,
+      span: (build) =>
+        runtime.store.endSpan(
+          sessionId,
+          build({ sessionId, traceId: parent.traceId, spanId: parent.spanId }),
+        ),
+    }
 
     const verdict = yield* Effect.promise(() => detect(input, report))
     const decision = decide(verdict, input)
