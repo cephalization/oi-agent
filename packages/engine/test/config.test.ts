@@ -21,9 +21,29 @@ describe("config file", () => {
     expect(configProblems(env)).toEqual([])
   })
 
+  it("loads independent decision and steering settings, with an environment override for steering", () => {
+    const env = withFile(
+      JSON.stringify({
+        approvals: "auto",
+        decision: { model: "jev-custom", base_url: "http://localhost:8080" },
+        steering_model: "local/qwen3",
+      }),
+    )
+
+    expect(loadConfig(env)).toMatchObject({
+      approvals: "auto",
+      decision: { kind: "systemone", model: "jev-custom", base_url: "http://localhost:8080" },
+      steering_model: "local/qwen3",
+    })
+    expect(loadConfig({ ...env, OI_AGENT_STEERING_MODEL: "decision:jev-next" }).steering_model).toBe(
+      "decision:jev-next",
+    )
+    expect(configProblems(env)).toEqual([])
+  })
+
   it("keeps the valid settings when one value is not valid, and names the bad key", () => {
     const env = withFile(
-      JSON.stringify({ model: "gpt-5.6-luna", provider: "chatgpt", effort: "low", approvals: "auto" }),
+      JSON.stringify({ model: "gpt-5.6-luna", provider: "chatgpt", effort: "low", approvals: "sometimes" }),
     )
 
     const config = loadConfig(env)

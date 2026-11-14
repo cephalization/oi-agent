@@ -36,22 +36,39 @@ export interface ApprovalRequest {
   readonly span_id: string
   /** Who started the turn that wants to run this tool. */
   readonly user_id: string
+  /** The prompt of that turn, for a decision model to judge whether the call was asked for. */
+  readonly prompt: string
+  readonly cwd: string
 }
 
 export type ApprovalDecision = "allow" | "deny"
 
+/** A decision, and what is recorded about it on the `TOOL` span beyond who made it. */
+export interface Approval {
+  readonly decision: ApprovalDecision
+  /** Who decided, when not this device's user: `auto:<model>` for a decision model. */
+  readonly by?: string | undefined
+  readonly answers?: Readonly<Record<string, number>> | undefined
+  readonly asked_because?: string | undefined
+}
+
+type ApprovalRecord = NonNullable<EngineMetadata["approval"]>
+
+/** The approval written to a `TOOL` span, while it is being filled in. */
+type RecordedApproval = { -readonly [K in keyof ApprovalRecord]: ApprovalRecord[K] }
+
 /** Decides whether a tool that can change the machine may run. Host-side only. */
 export class Approver extends Context.Service<
   Approver,
-  { readonly decide: (request: ApprovalRequest) => Effect.Effect<ApprovalDecision> }
+  { readonly decide: (request: ApprovalRequest) => Effect.Effect<Approval> }
 >()("oi-agent/Approver") {}
 
 export const approveAll: Layer.Layer<Approver> = Layer.succeed(Approver, {
-  decide: () => Effect.succeed("allow"),
+  decide: () => Effect.succeed({ decision: "allow" }),
 })
 
 export const denyAll: Layer.Layer<Approver> = Layer.succeed(Approver, {
-  decide: () => Effect.succeed("deny"),
+  decide: () => Effect.succeed({ decision: "deny" }),
 })
 
 // --- turn ------------------------------------------------------------------
@@ -124,7 +141,7 @@ const modelStep = (env: TurnEnv, traceId: string) =>
     return model.dialect.reply(raw) ?? EMPTY_REPLY
   }).pipe(Effect.withSpan("llm", { attributes: { [OI.SPAN_KIND]: "LLM" } }, UNTRACED))
 
-const toolStep = (env: TurnEnv, use: ToolCall, userId: string) => {
+const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) => {
   const tool = env.tools.find((candidate) => candidate.name === use.name)
 
   return Effect.gen(function* () {
@@ -142,17 +159,28 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string) => {
       span.patchMetadata({ awaiting_approval: true })
       span.flush()
 
-      const decision = yield* approver.decide({
+      const approval = yield* approver.decide({
         tool: tool.name,
         input: use.input,
         trace_id: span.traceId,
         span_id: span.spanId,
         user_id: userId,
+        prompt,
+        cwd: env.cwd,
       })
 
-      span.patchMetadata({ awaiting_approval: false, approval: { decision, by: env.store.device().name } })
+      const recorded: RecordedApproval = {
+        decision: approval.decision,
+        by: approval.by ?? env.store.device().name,
+      }
 
-      if (decision === "deny")
+      if (approval.answers !== undefined) recorded.answers = approval.answers
+
+      if (approval.asked_because !== undefined) recorded.asked_because = approval.asked_because
+
+      span.patchMetadata({ awaiting_approval: false, approval: recorded })
+
+      if (approval.decision === "deny")
         return yield* new ToolFailed({ message: "The user declined to run this tool call." })
     }
 
@@ -211,7 +239,7 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       response = yield* modelStep(env, traceId)
 
       if (response.wantsTools) {
-        yield* Effect.forEach(response.calls, (use) => toolStep(env, use, input.userId), {
+        yield* Effect.forEach(response.calls, (use) => toolStep(env, use, input.userId, input.text), {
           concurrency: "unbounded",
           discard: true,
         })

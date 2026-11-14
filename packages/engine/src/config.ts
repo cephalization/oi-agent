@@ -7,6 +7,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { Option, Schema } from "effect"
+import { DEFAULT_DECISION, DecisionSettings } from "./decision.ts"
 import { ProviderConfig, splitModel } from "./providers.ts"
 
 export const Effort = Schema.Literals(["low", "medium", "high", "xhigh", "max"])
@@ -16,7 +17,8 @@ export type Effort = typeof Effort.Type
 /** Effort levels from least to most. */
 export const EFFORTS: ReadonlyArray<Effort> = Effort.literals
 
-export const Approvals = Schema.Literals(["ask", "allow"])
+/** `auto`: a decision model allows tool calls it is confident are safe, and a human is asked about the rest. */
+export const Approvals = Schema.Literals(["ask", "allow", "auto"])
 
 export type Approvals = typeof Approvals.Type
 
@@ -42,6 +44,16 @@ export const Config = Schema.Struct({
   judge_model: Schema.String,
   /** `auto`: a correction that applies beyond the current task becomes an evaluator. */
   steering: Steering,
+  /**
+   * What reads each prompt for durable corrections: `provider/model` (a
+   * bare id is an Anthropic model) for one model call per prompt, or
+   * `decision:<model>` to screen every prompt with the decision model and
+   * call `judge_model` (or the session's model) only for the durable ones.
+   * Empty: `judge_model` when there is an Anthropic key, else the session's model.
+   */
+  steering_model: Schema.String,
+  /** The decision model used by `approvals: "auto"` and by `steering_model: "decision:…"`. */
+  decision: DecisionSettings,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -64,6 +76,14 @@ const PartialConfig = Schema.fromJsonString(
     approvals: Schema.optionalKey(Approvals),
     judge_model: Schema.optionalKey(Schema.String),
     steering: Schema.optionalKey(Steering),
+    steering_model: Schema.optionalKey(Schema.String),
+    decision: Schema.optionalKey(
+      Schema.Struct({
+        kind: Schema.optionalKey(Schema.Literal("systemone")),
+        base_url: Schema.optionalKey(Schema.String),
+        model: Schema.optionalKey(Schema.String),
+      }),
+    ),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -75,6 +95,7 @@ const PartialConfig = Schema.fromJsonString(
 )
 
 const decodePartial = Schema.decodeUnknownOption(PartialConfig)
+const decodeApprovals = Schema.decodeUnknownOption(Approvals)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
 const decodeSteering = Schema.decodeUnknownOption(Steering)
 const encodeConfig = Schema.encodeSync(Config)
@@ -82,6 +103,10 @@ const encodeConfig = Schema.encodeSync(Config)
 /** An effort level from text, such as a command-line flag; undefined when it is not one. */
 export const parseEffort = (text: string | undefined): Effort | undefined =>
   Option.getOrUndefined(decodeEffort(text))
+
+/** An approval mode from a CLI flag, or undefined when it is not valid. */
+export const parseApprovals = (text: string | undefined): Approvals | undefined =>
+  Option.getOrUndefined(decodeApprovals(text))
 
 const readFile = (file: string): string | undefined => {
   try {
@@ -197,6 +222,12 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     approvals: file?.approvals ?? "ask",
     judge_model: env["OI_AGENT_JUDGE_MODEL"] ?? file?.judge_model ?? "claude-haiku-5-5",
     steering: Option.getOrUndefined(decodeSteering(env["OI_AGENT_STEERING"])) ?? file?.steering ?? "auto",
+    steering_model: env["OI_AGENT_STEERING_MODEL"] ?? file?.steering_model ?? "",
+    decision: {
+      kind: "systemone",
+      base_url: file?.decision?.base_url ?? DEFAULT_DECISION.base_url,
+      model: file?.decision?.model ?? DEFAULT_DECISION.model,
+    },
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

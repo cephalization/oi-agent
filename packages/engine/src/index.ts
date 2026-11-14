@@ -44,6 +44,10 @@ export * from "./rules.ts"
 
 export * from "./steering.ts"
 
+export * from "./decision.ts"
+
+export * from "./detectors.ts"
+
 export * from "./peer/client.ts"
 
 export * from "./peer/protocol.ts"

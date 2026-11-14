@@ -166,7 +166,15 @@ export const OI = {
   TOOL_PARAMETERS: "tool.parameters",
 } as const
 
-export const SpanKind = Schema.Literals(["AGENT", "LLM", "TOOL", "CHAIN", "EVALUATOR", "GUARDRAIL"])
+export const SpanKind = Schema.Literals([
+  "AGENT",
+  "LLM",
+  "TOOL",
+  "CHAIN",
+  "EVALUATOR",
+  "GUARDRAIL",
+  "DECISION",
+])
 
 export type SpanKind = typeof SpanKind.Type
 
@@ -230,8 +238,18 @@ export const EngineMetadata = Schema.Struct({
   /** A tool call that is waiting for the host to allow or deny it. */
   awaiting_approval: Schema.optionalKey(Schema.Boolean),
   approval: Schema.optionalKey(
-    Schema.Struct({ decision: Schema.Literals(["allow", "deny"]), by: Schema.String }),
+    Schema.Struct({
+      decision: Schema.Literals(["allow", "deny"]),
+      /** The device whose user decided, or `auto:<model>` when a decision model allowed it. */
+      by: Schema.String,
+      /** A decision model's answers (probability of yes per question), when one was asked. */
+      answers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Finite)),
+      /** Why auto mode asked a human instead: a hard rule, the answers, or a failed decision call. */
+      asked_because: Schema.optionalKey(Schema.String),
+    }),
   ),
+  /** On a `DECISION` span: what the decision was for. */
+  purpose: Schema.optionalKey(Schema.Literals(["approval", "steering"])),
   /** The trace an `EVALUATOR` span judged. */
   evaluates: Schema.optionalKey(Schema.String),
   /** On an `LLM` span: the wire format of its request and response bodies. Absent means Anthropic Messages. */

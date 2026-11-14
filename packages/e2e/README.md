@@ -89,7 +89,6 @@ making its scenarios pass, then removing `pending`.
 | Issue | File                            | Notes                                               |
 | ----- | ------------------------------- | --------------------------------------------------- |
 | #9    | `scenarios/instructions.e2e.ts` | fixture `agents`: a CLAUDE.md marker and two skills |
-| #12   | `scenarios/decisions.e2e.ts`    | fake System One server; `approvals: "auto"`         |
 | #13   | `scenarios/web.e2e.ts`          | fixture website; built-in search needs the real web |
 
 ## Writing a scenario
