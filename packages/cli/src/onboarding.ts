@@ -20,6 +20,7 @@ import {
   loadConfig,
   saveConfig,
   setSecret,
+  type Steering,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { ask, askSecret, choose, confirm, say } from "./prompts.ts"
@@ -136,6 +137,48 @@ const apiKeyStep = async (account: string, name: string, optional: boolean): Pro
   else warn("The keychain refused the key. Set it in your shell's environment instead.")
 
   return entered
+}
+
+/**
+ * Whether corrections become standing checks. They are judged by a small
+ * Anthropic model, so on any other provider this is where the key comes in;
+ * without one, say plainly that learning will not run.
+ */
+const steeringStep = async (current: Steering): Promise<Steering> => {
+  step(
+    "Learning from corrections",
+    'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. One small call per message.',
+  )
+
+  const steering = await choose(
+    "When you correct oi:",
+    [
+      { value: "auto" as const, label: "Learn lasting preferences", hint: "recommended" },
+      { value: "off" as const, label: "Don't learn from corrections" },
+    ],
+    current,
+  )
+
+  if (steering === "off" || getSecret("anthropic") !== undefined) return steering
+
+  say(
+    style.gray(
+      "  It runs on Anthropic's claude-haiku, so it needs an Anthropic API key, kept in your keychain.",
+    ),
+  )
+
+  const entered = await askSecret("Anthropic API key (input is hidden; leave empty to skip)")
+
+  if (entered === "") {
+    warn("Without an Anthropic key, oi will not learn from corrections. Add one later with `oi auth login`.")
+
+    return steering
+  }
+
+  if (setSecret("anthropic", entered)) ok("Saved to the keychain.")
+  else warn("The keychain refused the key. Set ANTHROPIC_API_KEY in your shell's environment instead.")
+
+  return steering
 }
 
 const signInStep = async (): Promise<boolean> => {
@@ -341,6 +384,7 @@ export const runOnboarding = async (): Promise<Config> => {
     current.approvals,
   )
 
+  const steering = await steeringStep(current.steering)
   const phoenix = await phoenixStep(current.phoenix)
 
   step(
@@ -349,7 +393,20 @@ export const runOnboarding = async (): Promise<Config> => {
   )
 
   const home = expand(await ask("Sessions directory", tilde(first ? defaultHome() : current.home)))
-  const config: Config = { ...current, user, provider, providers, model, effort, approvals, phoenix, home }
+
+  const config: Config = {
+    ...current,
+    user,
+    provider,
+    providers,
+    model,
+    effort,
+    approvals,
+    steering,
+    phoenix,
+    home,
+  }
+
   const file = saveConfig(config)
 
   say()

@@ -128,26 +128,54 @@ const decide = (
   return { evaluator }
 }
 
-const learnedAnnotation = (
+/**
+ * Every verdict, as an annotation on the turn it read: `learned`, or what the
+ * detector made of the prompt (`durable` but not learned, or `one-off`), with
+ * its confidence as the score. In Phoenix these are columns on the turn; the
+ * terminal shows only what was learned (`shownInTerminal`).
+ */
+const verdictAnnotation = (
   sessionId: string,
   traceId: string,
-  name: string,
-  statement: string,
-): AnnotationFile => ({
-  id: newId(),
-  scope: "trace",
-  target: { session_id: sessionId, trace_id: traceId },
-  created_at: nsToIso(nowNs()),
-  annotation: {
-    name: "steering",
-    label: "learned",
-    annotator_kind: "LLM",
-    identifier: "oi-agent",
-    explanation: `${statement} Checked from now on by evaluator ${name}.`,
-    // Not a failure, and nothing for the agent to be told: it is a note for the people watching.
-    metadata: { failed: false, feedback: false, evaluator: name },
-  },
-})
+  verdict: SteeringVerdict,
+  outcome: SteeringOutcome,
+): AnnotationFile => {
+  const label = outcome.learned ? "learned" : verdict.durable ? "durable" : "one-off"
+
+  const explanation = outcome.learned
+    ? `${outcome.statement} Checked from now on by evaluator ${outcome.name}.`
+    : verdict.durable
+      ? `${verdict.statement} Not learned: ${outcome.reason}.`
+      : "About the current task only."
+
+  // Not a failure, and nothing for the agent to be told: it is a note for the people watching.
+  const metadata = new Map<string, Schema.Json>([
+    ["failed", false],
+    ["feedback", false],
+  ])
+
+  if (outcome.learned) metadata.set("evaluator", outcome.name)
+
+  return {
+    id: newId(),
+    scope: "trace",
+    target: { session_id: sessionId, trace_id: traceId },
+    created_at: nsToIso(nowNs()),
+    annotation: {
+      name: "steering",
+      label,
+      score: verdict.confidence,
+      annotator_kind: "LLM",
+      identifier: "oi-agent",
+      explanation,
+      metadata: Object.fromEntries(metadata),
+    },
+  }
+}
+
+/** Whether a person at the terminal needs to see this annotation: steering verdicts only when something was learned. */
+export const shownInTerminal = (file: AnnotationFile): boolean =>
+  file.annotation.name !== "steering" || file.annotation.label === "learned"
 
 /** Read a finished turn's prompt for durable steering, and learn it as an evaluator. */
 export const detectSteering = (
@@ -183,12 +211,13 @@ export const detectSteering = (
           origin: { kind: "steering", session_id: sessionId, trace_id: traceId },
         })
 
-        const statement = verdict?.statement ?? ""
-
-        runtime.store.writeAnnotation(learnedAnnotation(sessionId, traceId, definition.name, statement))
-        outcome = { learned: true, name: definition.name, statement, file }
+        outcome = { learned: true, name: definition.name, statement: verdict?.statement ?? "", file }
       }
     }
+
+    // A verdict, whatever came of it, is an annotation on the turn; no verdict leaves nothing to say.
+    if (verdict !== undefined)
+      runtime.store.writeAnnotation(verdictAnnotation(sessionId, traceId, verdict, outcome))
 
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_VALUE, JSON.stringify({ verdict: verdict ?? null, outcome }))
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_MIME, "application/json")

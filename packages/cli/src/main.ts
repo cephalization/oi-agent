@@ -19,6 +19,7 @@ import {
   tailcatForward,
   modelDistiller,
   modelDetector,
+  shownInTerminal,
   phoenixJudge,
   type ApprovalMode,
   Engine,
@@ -186,6 +187,18 @@ const buildEngine = (override?: ApprovalMode): Engine => {
 
   return engine
 }
+
+/**
+ * Settings that are on but cannot work: learning from corrections needs the
+ * Anthropic key the judge model runs on. Shown under the banner, like a bad
+ * config value, so nothing is silently off.
+ */
+const inactiveFeatures = (): Array<string> =>
+  loadConfig().steering === "auto" && getSecret("anthropic") === undefined
+    ? [
+        'Learning from corrections is on, but it needs an Anthropic API key and there is none, so it is not running. Add one with `oi auth login` (or /provider), then restart oi; or set "steering": "off" in the config.',
+      ]
+    : []
 
 /** Phoenix, for reading sessions back as well as exporting, when an endpoint is configured. */
 const connectPhoenix = (): Phoenix | undefined => {
@@ -374,7 +387,12 @@ const run = async (prompt: string): Promise<void> => {
   const opened = await open(sessions, target)
   const sessionId = opened.sessionId
 
-  const notes = [...configProblems(), ...modelNotes(engine, sessionId, true), ...guard(engine, opened, false)]
+  const notes = [
+    ...configProblems(),
+    ...inactiveFeatures(),
+    ...modelNotes(engine, sessionId, true),
+    ...guard(engine, opened, false),
+  ]
 
   for (const note of notes) process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
 
@@ -392,7 +410,8 @@ const run = async (prompt: string): Promise<void> => {
   await engine.idle(sessionId)
 
   for (const annotation of store.listAnnotations(sessionId)) {
-    if (!outcome.ok || annotation.target.trace_id !== outcome.result.traceId) continue
+    if (!outcome.ok || annotation.target.trace_id !== outcome.result.traceId || !shownInTerminal(annotation))
+      continue
 
     const { name, label, explanation } = annotation.annotation
 
@@ -466,8 +485,13 @@ const interactive = async (): Promise<void> => {
   const sessions = new Sessions(store, remote)
   let target: Target | undefined = await initialTarget(engine, remote)
   let opened = await open(sessions, target)
+
   // Shown under the banner of the first session opened, with why this is the bundled build if a reload failed.
-  let problems = FALLBACK === undefined ? configProblems() : [FALLBACK, ...configProblems()]
+  let problems =
+    FALLBACK === undefined
+      ? [...configProblems(), ...inactiveFeatures()]
+      : [FALLBACK, ...configProblems(), ...inactiveFeatures()]
+
   let first = true
   let reloading: string | undefined
 

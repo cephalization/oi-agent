@@ -130,9 +130,13 @@ These work best on the session you are in, because the evidence is right there.
   which says whether the prompt is a correction that applies beyond the
   current task, and proposes an evaluator. Above 0.7 confidence, and when no
   existing evaluator covers it, it is saved with an `origin` naming the turn,
-  and a `steering` annotation on the turn says so. Each detection is an
+  Every verdict becomes a `steering` annotation on the turn (`learned`,
+  `durable` or `one-off`, with the confidence as score); the terminal shows
+  only `learned` ones (`shownInTerminal`). Each detection is also an
   `EVALUATOR` trace with the prompt as input and the verdict as output, so
-  you can read why it did or did not learn something. Why a detector and not
+  you can read why it did or did not learn something. It needs an Anthropic
+  key (the judge model); `oi setup` asks for one, and `inactiveFeatures` in
+  `source/cli/src/main.ts` says under the banner when there is none. Why a detector and not
   a wider prompt: `docs/experiments/steering.md` (in the repository).
 - **"How does resuming work?"** There is nothing to load. `/resume` (or
   `oi -s <id>`) points the terminal at another session folder: the screen is
