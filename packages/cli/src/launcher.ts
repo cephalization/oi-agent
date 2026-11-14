@@ -11,10 +11,11 @@
  * A reload re-reads that choice, so it picks up edited sources, or a build
  * that `pnpm dev` or an upgrade installed since.
  *
- * If code started by a reload exits with an error before its terminal is up,
- * the launcher starts the bundled build on the same session instead, with a
- * note saying why. That fallback cannot be turned off: it is what lets the
- * agent fix a patch that broke the agent.
+ * If code started by a reload exits before its terminal is up, or crashes
+ * later, the launcher starts the bundled build on the same session instead,
+ * with a note saying why. That fallback cannot be turned off: it is what
+ * lets the agent fix a patch that broke the agent. A child that was killed
+ * by a signal is not restarted: someone meant it to stop.
  *
  * This file must stay small and import only Node built-ins. It is the one
  * part a patch cannot break, because it is never reloaded.
@@ -27,10 +28,11 @@
  * - `reload`, then NUL-separated arguments: start again with these (the CLI
  *   then exits with `RELOAD_EXIT`).
  */
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import * as fs from "node:fs"
 import { constants } from "node:os"
 import * as path from "node:path"
+import { isatty } from "node:tty"
 import { fileURLToPath } from "node:url"
 
 /** `EX_TEMPFAIL`: the CLI exits with this after asking to reload. */
@@ -40,6 +42,21 @@ const RELOAD_EXIT = 75
 const CHANNEL_FD = 3
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+/** End synchronized output and bracketed paste, show the cursor: what the CLI turns back on as it exits. */
+const RESET_TERMINAL = "\u001B[?2026l\u001B[?2004l\u001B[?25h"
+
+// The terminal's settings as oi found them, to put back if a child dies without restoring them.
+const savedTty = isatty(0)
+  ? (spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() ??
+    "")
+  : ""
+
+const restoreTerminal = (): void => {
+  if (isatty(1)) process.stdout.write(RESET_TERMINAL)
+
+  if (savedTty !== "") spawnSync("stty", [savedTty], { stdio: ["inherit", "ignore", "ignore"] })
+}
 
 // Through the `oi` link to where this file really is, so a reinstalled link is followed on reload.
 const here = (): string => path.dirname(fs.realpathSync(process.argv[1] ?? fileURLToPath(import.meta.url)))
@@ -56,6 +73,8 @@ const chosen = (): string | undefined => {
 
 interface Outcome {
   readonly code: number
+  /** The signal that killed the child, if one did. */
+  readonly signal: NodeJS.Signals | null
   /** The child said its terminal was up. */
   readonly ready: boolean
   /** Arguments to start again with, when the child asked to reload. */
@@ -117,6 +136,7 @@ const start = (
 
       resolve({
         code: code ?? signalCode(signal),
+        signal,
         ready,
         reload: code === RELOAD_EXIT ? reload : undefined,
       })
@@ -148,12 +168,22 @@ const run = async (): Promise<number> => {
       continue
     }
 
-    const fallback = bundled()
+    const clean = outcome.code === 0 && outcome.signal === null
 
-    if (reloaded && !outcome.ready && outcome.code !== 0 && fallback !== undefined && entry !== fallback) {
+    if (!clean) restoreTerminal()
+
+    const fallback = bundled()
+    const failedStart = !outcome.ready
+    const crashed = outcome.code !== 0 && outcome.signal === null
+
+    if (reloaded && (failedStart || crashed) && fallback !== undefined && entry !== fallback) {
+      const what = failedStart
+        ? `exited with code ${outcome.code} before it started`
+        : `crashed with exit code ${outcome.code}`
+
       env.set(
         "OI_AGENT_FALLBACK",
-        `The reloaded code (${entry}) exited with code ${outcome.code} before it started, so this is the bundled build. Fix it and /reload to try again.`,
+        `The reloaded code (${entry}) ${what}, so this is the bundled build. Fix it and /reload to try again.`,
       )
       entry = fallback
       reloaded = false

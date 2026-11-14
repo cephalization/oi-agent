@@ -16,6 +16,9 @@ export const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url))
 
 export const CLI_ENTRY = path.join(REPO_ROOT, "packages/cli/src/main.ts")
 
+/** What `oi` runs: the launcher, which starts `CLI_ENTRY` (as `bin/oi` does) and restarts it on /reload. */
+export const LAUNCHER = path.join(REPO_ROOT, "packages/cli/src/launcher.ts")
+
 const FIXTURES = fileURLToPath(new URL("../fixtures/repos", import.meta.url))
 
 /** Settings written to the sandbox's `config.json`. Unset fields keep the CLI's defaults. */
@@ -186,9 +189,11 @@ export class Sandbox {
   oiCommand(
     args: ReadonlyArray<string>,
     overrides: ReadonlyMap<string, string> = new Map(),
-    entry: string = CLI_ENTRY,
+    entry: string = LAUNCHER,
   ): Array<string> {
-    const env = [...this.env(overrides)].map(([key, value]) => `${key}=${value}`)
+    // Through the launcher, as users run oi; it runs the checkout's sources unless told otherwise.
+    const launched = entry === LAUNCHER ? new Map([["OI_AGENT_ENTRY", CLI_ENTRY], ...overrides]) : overrides
+    const env = [...this.env(launched)].map(([key, value]) => `${key}=${value}`)
     const inner = ["/usr/bin/env", "-i", ...env, process.execPath, entry, ...args]
 
     return this.confined ? ["/usr/bin/sandbox-exec", "-f", this.profileFile, ...inner] : inner

@@ -1070,10 +1070,7 @@ class App {
     const failed = await check()
 
     if (failed !== undefined)
-      return this.say([
-        "The new code failed the preflight, so this build keeps running:",
-        ...failed.split("\n"),
-      ])
+      return this.say(["Not reloading; this build keeps running.", ...failed.split("\n")])
 
     this.finish({ next: undefined, reload: true })
   }
