@@ -21,6 +21,8 @@ import {
   saveConfig,
   setSecret,
   type Steering,
+  DECISION_ACCOUNT,
+  DEFAULT_DECISION,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { ask, askSecret, choose, confirm, say } from "./prompts.ts"
@@ -139,12 +141,41 @@ const apiKeyStep = async (account: string, name: string, optional: boolean): Pro
   return entered
 }
 
+/** Ask for a key for an account when it has none. Resolves to whether one is stored now. */
+const keyFor = async (account: string, name: string, why: string, without: string): Promise<boolean> => {
+  if (getSecret(account) !== undefined) return true
+
+  say(style.gray(`  ${why}`))
+
+  const entered = await askSecret(`${name} API key (input is hidden; leave empty to skip)`)
+
+  if (entered === "") {
+    warn(`${without} Add one later with \`oi auth login ${account}\`.`)
+
+    return false
+  }
+
+  if (setSecret(account, entered)) ok("Saved to the keychain.")
+  else warn("The keychain refused the key. Set it in your shell's environment instead.")
+
+  return true
+}
+
+const HAIKU = "claude-haiku-5-5"
+const JEV = `decision:${DEFAULT_DECISION.model}`
+
 /**
- * Whether corrections become standing checks. They are judged by a small
- * Anthropic model, so on any other provider this is where the key comes in;
- * without one, say plainly that learning will not run.
+ * Whether corrections become standing checks, and what reads each message
+ * for them: Anthropic's Haiku (the detector the experiment measured), the
+ * agent's own model (no extra key), a decision model, or any other
+ * `provider/model`. The default is whatever this machine already has a
+ * key for. Without the key a choice needs, say plainly that learning will
+ * not run.
  */
-const steeringStep = async (current: Steering): Promise<Steering> => {
+const steeringStep = async (
+  current: Config,
+  agentModel: string,
+): Promise<{ steering: Steering; steering_model: string }> => {
   step(
     "Learning from corrections",
     'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. One small call per message.',
@@ -156,29 +187,59 @@ const steeringStep = async (current: Steering): Promise<Steering> => {
       { value: "auto" as const, label: "Learn lasting preferences", hint: "recommended" },
       { value: "off" as const, label: "Don't learn from corrections" },
     ],
-    current,
+    current.steering,
   )
 
-  if (steering === "off" || getSecret("anthropic") !== undefined) return steering
+  if (steering === "off") return { steering, steering_model: current.steering_model }
 
-  say(
-    style.gray(
-      "  It runs on Anthropic's claude-haiku, so it needs an Anthropic API key, kept in your keychain.",
-    ),
+  const options = [
+    { value: agentModel, label: `The agent's model, ${agentModel}`, hint: "no extra key" },
+    { value: HAIKU, label: "Claude Haiku 5.5", hint: "measured for this; needs an Anthropic key" },
+    {
+      value: JEV,
+      label: "TypeSafe Jev decision model",
+      hint: "cheap screen per message; needs a TypeSafe key",
+    },
+    { value: "", label: "Another model (provider/model)" },
+  ]
+
+  if (current.steering_model !== "" && !options.some((option) => option.value === current.steering_model))
+    options.splice(options.length - 1, 0, {
+      value: current.steering_model,
+      label: current.steering_model,
+      hint: "current steering model",
+    })
+
+  const fallback = getSecret("anthropic") !== undefined ? HAIKU : agentModel
+
+  const known =
+    current.steering_model !== "" && options.some((option) => option.value === current.steering_model)
+
+  const picked = await choose(
+    "Which model reads your messages for corrections?",
+    options,
+    known ? current.steering_model : fallback,
   )
 
-  const entered = await askSecret("Anthropic API key (input is hidden; leave empty to skip)")
+  const steering_model = picked === "" ? await ask("Model (provider/model)", current.steering_model) : picked
 
-  if (entered === "") {
-    warn("Without an Anthropic key, oi will not learn from corrections. Add one later with `oi auth login`.")
+  if (steering_model === HAIKU)
+    await keyFor(
+      "anthropic",
+      "Anthropic",
+      "It runs on Anthropic's claude-haiku, so it needs an Anthropic API key, kept in your keychain.",
+      "Without an Anthropic key, oi will not learn from corrections.",
+    )
 
-    return steering
-  }
+  if (steering_model === JEV)
+    await keyFor(
+      DECISION_ACCOUNT,
+      "TypeSafe",
+      "The decision model needs a TypeSafe API key, kept in your keychain.",
+      "Without a TypeSafe key, oi will not learn from corrections.",
+    )
 
-  if (setSecret("anthropic", entered)) ok("Saved to the keychain.")
-  else warn("The keychain refused the key. Set ANTHROPIC_API_KEY in your shell's environment instead.")
-
-  return steering
+  return { steering, steering_model }
 }
 
 const signInStep = async (): Promise<boolean> => {
@@ -379,12 +440,26 @@ export const runOnboarding = async (): Promise<Config> => {
     "Before running a tool that changes your machine:",
     [
       { value: "ask" as const, label: "Ask me each time", hint: "recommended" },
+      {
+        value: "auto" as const,
+        label: "Let a decision model approve safe ones",
+        hint: "TypeSafe Jev; asks about the rest",
+      },
       { value: "allow" as const, label: "Just run it" },
     ],
     current.approvals,
   )
 
-  const steering = await steeringStep(current.steering)
+  if (approvals === "auto")
+    await keyFor(
+      DECISION_ACCOUNT,
+      "TypeSafe",
+      "Auto approvals ask TypeSafe's Jev decision model, which needs a TypeSafe API key, kept in your keychain.",
+      "Without a TypeSafe key, auto mode asks about every tool call.",
+    )
+
+  const agentModel = `${provider}/${model}`
+  const { steering, steering_model } = await steeringStep(current, agentModel)
   const phoenix = await phoenixStep(current.phoenix)
 
   step(
@@ -403,6 +478,7 @@ export const runOnboarding = async (): Promise<Config> => {
     effort,
     approvals,
     steering,
+    steering_model,
     phoenix,
     home,
   }

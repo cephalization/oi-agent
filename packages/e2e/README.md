@@ -89,7 +89,6 @@ making its scenarios pass, then removing `pending`.
 | Issue | File                            | Notes                                               |
 | ----- | ------------------------------- | --------------------------------------------------- |
 | #9    | `scenarios/instructions.e2e.ts` | fixture `agents`: a CLAUDE.md marker and two skills |
-| #12   | `scenarios/decisions.e2e.ts`    | fake System One server; `approvals: "auto"`         |
 | #13   | `scenarios/web.e2e.ts`          | fixture website; built-in search needs the real web |
 
 ## Writing a scenario
@@ -103,3 +102,16 @@ making its scenarios pass, then removing `pending`.
 - Wait on spans (`settledTurns`) rather than sleeping.
 - Keep secrets out of fixtures. Use `FAKE_SECRET`, which is built at run
   time.
+
+## Real decision service
+
+`pnpm e2e scenarios/typesafe.e2e.ts` uses a real TypeSafe key (keychain account
+`typesafe`, or `TYPESAFE_API_KEY`) and the cheap default chat model. It checks
+auto approval, hard-rule denial, steering screen/writer routing, and absence
+of the key from spans. It reports decision latency and estimated cost.
+The harness hides TypeSafe credentials from unrelated scenarios, so installing
+a key cannot change their Tab cycle or make replay call the real decision API.
+Without a key this scenario skips with `no TypeSafe credentials`; it is live-only and
+has no replay cassette. `scenarios/decisions.e2e.ts` continues to use the
+local fake, including an explicitly empty key override for its no-key case,
+so installing a real key does not change that test's meaning.

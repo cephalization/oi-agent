@@ -6,7 +6,7 @@
  */
 import { execFileSync } from "node:child_process"
 import * as path from "node:path"
-import { nowNs } from "@oi-agent/engine"
+import { getSecret, nowNs } from "@oi-agent/engine"
 import type { Schema } from "effect"
 import { it } from "vite-plus/test"
 import { PHOENIX_ENDPOINT, PHOENIX_PROJECT, phoenixUp, reportScenario } from "./phoenix.ts"
@@ -30,7 +30,7 @@ export const MODELS = {
 }
 
 /** Prerequisites beyond the scenario's own model, which is always checked. */
-export type Need = "rex" | "phoenix" | "second-model"
+export type Need = "rex" | "phoenix" | "second-model" | "typesafe"
 
 export interface ScenarioOptions {
   /** Fixture repo to work in (`fixtures/repos/<name>`). */
@@ -119,6 +119,8 @@ const hasProvider = (model: string): boolean => {
 /** Why a prerequisite is missing, or `undefined` when it is met. */
 const missing = async (need: Need): Promise<string | undefined> => {
   switch (need) {
+    case "typesafe":
+      return getSecret("typesafe") === undefined ? "no TypeSafe credentials" : undefined
     case "rex":
       return (await findRex()) === undefined ? "Rex is not installed" : undefined
     case "phoenix":
@@ -214,7 +216,13 @@ export const scenario = (
           phoenixProject: PHOENIX_PROJECT,
           extra: options.config ?? new Map(),
         },
-        env: new Map([...(proxy?.env() ?? []), ...(options.env ?? [])]),
+        // A developer's decision key must not add auto mode to unrelated TUI tests,
+        // or turn replay into real decision calls. Only the live service scenario opts in.
+        env: new Map([
+          ...(proxy?.env() ?? []),
+          ["TYPESAFE_API_KEY", needs.has("typesafe") ? (getSecret("typesafe") ?? "") : ""],
+          ...(options.env ?? []),
+        ]),
         confine: process.env["OI_E2E_CONFINE"] !== "0" && canConfine(),
       })
 

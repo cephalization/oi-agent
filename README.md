@@ -70,11 +70,64 @@ annotation on the turn (`learned`, `durable` or `one-off`, scored by
 confidence), so in Phoenix you can filter turns by what was learned. The
 terminal only mentions what was learned.
 
-It uses the same small Anthropic model as other evaluators (one call per
-message). `oi setup` asks whether to learn from corrections and, on other
-providers, offers to store an Anthropic key; without one, oi says under the
-banner that learning is not running. Turn it off with `"steering": "off"` in
-the config or `OI_AGENT_STEERING=off`.
+`oi setup` asks whether to learn and which model should read your messages.
+Set `"steering_model": "provider/model"` to use any configured provider,
+including ChatGPT or a local OpenAI-compatible server, without an Anthropic
+key. Unset (or empty) uses the judge model when an Anthropic key is available,
+otherwise the agent's model. The accuracy numbers above are for Haiku, not a
+promise about every model. Turn learning off with `"steering": "off"` or
+`OI_AGENT_STEERING=off`.
+
+For a cheap decision-model screen, set `"steering_model": "decision:jev-latest"`.
+Jev checks every message; only durable corrections go to an LLM to write the
+evaluator. That writer is `judge_model` when available, otherwise the agent's
+model. A failed screen falls back to the writer. LLM evaluators and rule
+distillation still use the Anthropic judge; configuring the steering model
+changes detection, not those tasks.
+
+### Decision models and auto approvals
+
+Decision models are separate from chat models: they answer typed questions
+with probabilities, not generated text, and are not offered in `/model`.
+Store a TypeSafe key with `oi auth login typesafe` (or `/provider` → TypeSafe),
+or set `TYPESAFE_API_KEY`. Configure its endpoint and model separately:
+
+```json
+{
+  "approvals": "auto",
+  "decision": {
+    "kind": "systemone",
+    "base_url": "https://api.typesafe.ai",
+    "model": "jev-latest"
+  },
+  "steering": "auto",
+  "steering_model": "decision:jev-latest"
+}
+```
+
+Auto mode allows a tool call only when all four answers clear the safety
+thresholds: irreversible damage < 0.1, writes or data uploads outside the
+workspace < 0.2, exposing secrets < 0.1, and directly requested work > 0.8.
+Requested read-only service queries and normal authentication to that service
+do not count as external changes or secret exposure merely because they use
+the network. Hard rules ask
+about destructive deletes outside the workspace, force pushes, sudo,
+discarding work, and file writes outside the workspace (including symlinks).
+Everything uncertain, missing or failed asks you; without a key it asks every
+time. The prompt explains why, including any probabilities that failed their
+thresholds. In auto mode, `y` allows only this call and `n` denies it; neither
+changes the mode. The approval dialog has no yolo shortcut in auto mode:
+use `/yolo` or the mode-cycle key separately if that is what you want. This is an approval aid, not an operating-system sandbox.
+
+`/auto` enables it for this session; `--approvals auto` selects it from the
+command line without changing config. `/reload` preserves the current mode. Tab cycles ask → auto → yolo when a
+TypeSafe key is available; otherwise it keeps the ask/yolo cycle. `oi run`
+in auto mode denies calls that would need a human. Restart or `/reload` after
+changing the TypeSafe key. Each call is a `DECISION` span under the tool or
+steering evaluator that asked, with `decision.*` usage and the request and
+response bodies (secrets scrubbed), never `llm.*`. The status line counts
+decision tokens separately, with an estimate at TypeSafe's input rate
+($0.042/M; output free). Other endpoints may charge differently.
 
 ## Try it
 
@@ -98,8 +151,8 @@ keychain. Run `oi setup` to change them.
 
 Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
-`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. `ANTHROPIC_BASE_URL` and
+`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`. `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
 
 | Command                        | What it does                                                              |
@@ -127,11 +180,11 @@ an API key (hidden as you type, kept in the keychain), signing in with a
 ChatGPT plan in the browser, or adding a server by name, base URL, optional
 key and a comma-separated list of models. A server's models go straight into
 `/model`, with the name and output limit the server reports for each. Switching provider mid-session works: the conversation carries over
-as text, tool calls and tool results. With the menu closed, Tab toggles between asking before tools
-and running them unasked (yolo), and Shift+Tab cycles reasoning effort
+as text, tool calls and tool results. With the menu closed, Tab cycles approval modes (ask, auto when configured,
+and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/tour`, `/help` and `/quit`.
+`/yolo`, `/auto`, `/tour`, `/help` and `/quit`.
 
 ### From source
 

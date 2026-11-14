@@ -7,6 +7,7 @@
  */
 import { Effect, Exit, Fiber, Layer, Option } from "effect"
 import {
+  type Approval,
   type ApprovalDecision,
   type ApprovalRequest,
   Approver,
@@ -15,14 +16,35 @@ import {
   type TurnResult,
 } from "./agent.ts"
 import type { Config } from "./config.ts"
+import {
+  askDecision,
+  APPROVAL_QUESTIONS,
+  approvalConcerns,
+  clearsThresholds,
+  decisionSpan,
+  type DecisionSettings,
+  mustAsk,
+} from "./decision.ts"
 import { loadSession } from "./fold.ts"
 import type { AnnotationFile, SessionHeader } from "./format.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
+import { readRules } from "./rules.ts"
 import type { Store } from "./store.ts"
 import { builtinTools, type ToolSpec } from "./tools.ts"
 
-export type ApprovalMode = "ask" | "allow" | "deny"
+/**
+ * `ask` waits for a human, `allow` and `deny` answer every call alike, and
+ * `auto` lets a decision model allow calls it is confident are safe and asks
+ * a human about the rest. Auto mode never denies on its own.
+ */
+export type ApprovalMode = "ask" | "allow" | "deny" | "auto"
+
+/** A decision model and the key to call it with. */
+export interface Decider {
+  readonly settings: DecisionSettings
+  readonly apiKey: string
+}
 
 export interface Prompt {
   readonly text: string
@@ -47,6 +69,8 @@ export interface EngineOptions {
   readonly redactor?: Redactor
   /** Directory with the agent's shipped source and docs. */
   readonly selfDir?: string | undefined
+  /** The decision model for `auto` approvals; without one, auto mode asks a human every time. */
+  readonly decider?: Decider | undefined
 }
 
 /** Hooks that run around a turn: evals and feedback plug in here. */
@@ -74,6 +98,7 @@ export class Engine {
   readonly redactor: Redactor
   readonly tools: ReadonlyArray<ToolSpec>
   readonly selfDir: string | undefined
+  readonly decider: Decider | undefined
   hooks: TurnHooks = NO_HOOKS
   private settings: Config
   private model: Layer.Layer<Model>
@@ -93,6 +118,7 @@ export class Engine {
     this.tools = options.tools ?? builtinTools
     this.redactor = options.redactor ?? new Redactor()
     this.selfDir = options.selfDir
+    this.decider = options.decider
   }
 
   // --- sessions -----------------------------------------------------------
@@ -160,20 +186,85 @@ export class Engine {
     return true
   }
 
-  private approver(): Layer.Layer<Approver> {
+  /** Wait for a human to answer. */
+  private askHuman(request: ApprovalRequest): Effect.Effect<ApprovalDecision> {
+    return Effect.callback<ApprovalDecision>((resume) => {
+      this.pending.set(request.span_id, (decision) => resume(Effect.succeed(decision)))
+
+      for (const listener of this.approvalListeners) listener(request)
+
+      return Effect.sync(() => {
+        this.pending.delete(request.span_id)
+      })
+    })
+  }
+
+  /**
+   * Auto mode: hard rules first, then one question to the decision model,
+   * recorded as a `DECISION` span under the `TOOL` span it decides. Only a
+   * confident answer on every question allows the call; anything else, a
+   * failed call included, goes to a human, as in `ask` mode.
+   */
+  private autoApprove(sessionId: string, request: ApprovalRequest): Effect.Effect<Approval> {
+    const human = (asked_because: string, answers?: Record<string, number>) =>
+      Effect.map(this.askHuman({ ...request, reason: asked_because }), (decision): Approval => ({
+        decision,
+        asked_because,
+        answers,
+      }))
+
+    const rule = mustAsk(request.tool, request.input, request.cwd)
+
+    if (rule !== undefined) return human(`always asked: ${rule}`)
+
+    const decider = this.decider
+
+    if (decider === undefined) return human("no decision model is set up")
+
+    const state = {
+      tool: request.tool,
+      input: this.redactor.scrub(JSON.stringify(request.input)),
+      working_directory: request.cwd,
+      user_prompt: this.redactor.scrub(request.prompt),
+      project_rules: readRules(request.cwd),
+    }
+
+    const store = this.store
+    const redactor = this.redactor
+
+    return Effect.gen(function* () {
+      const span = yield* Effect.orDie(Effect.currentSpan)
+
+      const call = yield* Effect.promise(() =>
+        askDecision(decider.settings, decider.apiKey, "approval", state, APPROVAL_QUESTIONS, redactor),
+      )
+
+      store.endSpan(sessionId, decisionSpan(sessionId, span, call))
+
+      if (call.error !== undefined) return yield* human(`the decision model failed: ${call.error}`)
+
+      const answers = Object.fromEntries(call.nouls)
+
+      if (clearsThresholds(call.nouls))
+        return { decision: "allow", by: `auto:${call.model ?? decider.settings.model}`, answers }
+
+      return yield* human(
+        `the decision model was not confident it is safe: ${approvalConcerns(call.nouls).join("; ")}`,
+        answers,
+      )
+    })
+  }
+
+  private approver(sessionId: string): Layer.Layer<Approver> {
     return Layer.succeed(Approver, {
       decide: (request) => {
-        if (this.approvalMode !== "ask") return Effect.succeed(this.approvalMode)
+        const mode = this.approvalMode
 
-        return Effect.callback<ApprovalDecision>((resume) => {
-          this.pending.set(request.span_id, (decision) => resume(Effect.succeed(decision)))
+        if (mode === "allow" || mode === "deny") return Effect.succeed({ decision: mode })
 
-          for (const listener of this.approvalListeners) listener(request)
+        if (mode === "auto") return this.autoApprove(sessionId, request)
 
-          return Effect.sync(() => {
-            this.pending.delete(request.span_id)
-          })
-        })
+        return Effect.map(this.askHuman(request), (decision): Approval => ({ decision }))
       },
     })
   }
@@ -248,7 +339,7 @@ export class Engine {
       previous: this.resolvePrevious(sessionId, prompt),
       injected: this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
-    }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver())))
+    }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver(sessionId))))
 
     const fiber = Effect.runFork(turn)
 

@@ -11,6 +11,7 @@ const ENV_NAMES = new Map([
   ["anthropic", "ANTHROPIC_API_KEY"],
   ["openai", "OPENAI_API_KEY"],
   ["phoenix", "PHOENIX_API_KEY"],
+  ["typesafe", "TYPESAFE_API_KEY"],
 ])
 
 const run = (command: string, args: ReadonlyArray<string>, input?: string): string | undefined => {

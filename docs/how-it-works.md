@@ -89,7 +89,7 @@ a side effect of tracing.
 | Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
 | Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
-| Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `modelDetector` in `judge.ts`       |
+| Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `judge.ts`, `detectors.ts`          |
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
 | Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
@@ -126,7 +126,8 @@ These work best on the session you are in, because the evidence is right there.
   tells the agent to call `create_eval` when asked for something to always or
   never do. And after each turn, `detectSteering`
   (`source/engine/src/steering.ts`) sends the prompt, the previous turn and
-  the existing evaluators to the judge model (`modelDetector` in `judge.ts`),
+  the existing evaluators to the configured steering model (`modelDetector`
+  in `judge.ts`, or `llmDetector` in `detectors.ts`),
   which says whether the prompt is a correction that applies beyond the
   current task, and proposes an evaluator. Above 0.7 confidence, and when no
   existing evaluator covers it, it is saved with an `origin` naming the turn,
@@ -134,10 +135,42 @@ These work best on the session you are in, because the evidence is right there.
   `durable` or `one-off`, with the confidence as score); the terminal shows
   only `learned` ones (`shownInTerminal`). Each detection is also an
   `EVALUATOR` trace with the prompt as input and the verdict as output, so
-  you can read why it did or did not learn something. It needs an Anthropic
-  key (the judge model); `oi setup` asks for one, and `inactiveFeatures` in
-  `source/cli/src/main.ts` says under the banner when there is none. Why a detector and not
+  you can read why it did or did not learn something. `steering_model` can
+  name any configured `provider/model`, or `decision:<model>`: the latter
+  calls System One to screen each prompt, then the judge model (or the
+  agent's own model) writes an evaluator only for a durable correction.
+  `decisionDetector` in `source/engine/src/detectors.ts` records the screen
+  as a `DECISION` span under the `EVALUATOR` span and the writer as an `LLM`
+  child beside it. If the screen fails, the writer decides alone. An unset
+  steering model defaults to the judge with an Anthropic key, else the
+  agent's model. `oi setup` offers these choices; `inactiveFeatures` in
+  `source/cli/src/main.ts` warns about missing credentials. LLM judging and
+  distillation still require the Anthropic judge key. Why a detector and not
   a wider prompt: `docs/experiments/steering.md` (in the repository).
+- **"How does auto mode decide whether tools may run?"** `Engine.autoApprove`
+  in `source/engine/src/engine.ts` checks hard rules first (`mustAsk` in
+  `decision.ts`): dangerous deletes, force pushes, sudo, discarding work and
+  file writes outside the working directory always ask. Then `askDecision`
+  calls the configured System One endpoint with the tool, input, working
+  directory, current user prompt and learned project rules. Four Nouls
+  assess irreversible damage, effects outside the workspace, secrets, and
+  whether the user requested it. Requested read-only service queries and
+  normal authentication are not counted as external changes or secret
+  exposure. `clearsThresholds` allows only when every risk is low and
+  relevance high. Failure, invalid probabilities or no key
+  asks a human, never auto-denies; headless `oi run` denies anything that
+  would ask. `TOOL` metadata records `approval.by = "auto:<model>"` and the
+  answers, or why it asked. `approvalConcerns` formats failed thresholds;
+  the engine includes the reason in the host's `ApprovalRequest`, and the
+  TUI shows it as `Auto asked`. The dialog accepts only `y`/`n` in auto
+  mode, leaving that mode unchanged (`source/cli/src/tui/approvals.ts`). In
+  ask mode, `a` is explicitly labelled "enable yolo for this session".
+  `decisionSpan` records the exact bodies (secrets
+  scrubbed) and `decision.*` usage under that tool. No `llm.*` attributes are
+  set, and `kindOf` recognizes `DECISION`; the fold ignores these spans.
+  The TUI reports their usage separately at an estimated TypeSafe rate.
+  This is not an OS sandbox: the model can be wrong, and hard rules are not
+  a complete shell parser. `/auto` enables it, or use `approvals: "auto"`.
 - **"How does resuming work?"** There is nothing to load. `/resume` (or
   `oi -s <id>`) points the terminal at another session folder: the screen is
   rebuilt by reading its root spans, and the next model request comes from
@@ -189,7 +222,8 @@ These work best on the session you are in, because the evidence is right there.
   (`bin/oi` sets it to the checkout's sources), else the bundled build
   beside it. `/reload` first runs that code with `--check`, which loads every
   module and exits, and refuses if that fails. Otherwise the CLI writes
-  `reload` and its arguments (`-s <session> -m <model> --effort <level>`) to
+  `reload` and its arguments (`-s <session> -m <model> --effort <level>
+  --approvals <mode>`) to
   a pipe the launcher gave it, and exits with 75. The launcher starts the
   code again with those arguments. Nothing is handed over in memory: the new
   process folds the same span files. If code started by a reload exits

@@ -16,6 +16,7 @@ import {
   checkModel,
   type Config,
   deleteSecret,
+  DECISION_ACCOUNT,
   findProvider,
   getSecret,
   listModels,
@@ -90,7 +91,10 @@ export class Providers {
 
   /** Every API key in use, for the redactor. */
   keys(): Array<string> {
-    return this.all().flatMap((provider) => this.key(provider) ?? [])
+    return [
+      ...this.all().flatMap((provider) => this.key(provider) ?? []),
+      ...[getSecret(DECISION_ACCOUNT)].filter((key) => key !== undefined),
+    ]
   }
 
   /** Whether a provider can be used now. Compatible servers may need no key. */
@@ -323,6 +327,12 @@ export class Providers {
 
   /** Store a provider's API key. `unsaved` allows a server not yet in config. */
   setKey(id: string, key: string, unsaved = false): string | undefined {
+    if (id === DECISION_ACCOUNT) {
+      this.onKey(key)
+
+      return setSecret(id, key) ? undefined : "The keychain did not accept the key."
+    }
+
     const provider: ProviderConfig | undefined =
       this.find(id) ?? (unsaved ? { id, name: id, kind: "openai-compatible" } : undefined)
 
@@ -337,6 +347,8 @@ export class Providers {
 
   /** Forget a key, or sign out of ChatGPT. */
   async forget(id: string): Promise<string | undefined> {
+    if (id === DECISION_ACCOUNT) return deleteSecret(id) ? undefined : "TypeSafe had no key to remove."
+
     const provider = this.find(id)
 
     if (provider === undefined) return `No provider named ${id}.`
