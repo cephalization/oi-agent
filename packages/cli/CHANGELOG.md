@@ -1,5 +1,15 @@
 # oi-agent
 
+## 0.4.0
+
+### Minor Changes
+
+- [#19](https://github.com/cephalization/oi-agent/pull/19) [`59279a1`](https://github.com/cephalization/oi-agent/commit/59279a11961190625d4a6745a35946d1b15ba395) Thanks [@cephalization](https://github.com/cephalization)! - `/reload` restarts oi on its current code without leaving the session. The `oi` command is now a small launcher that runs the CLI and starts it again when asked to, carrying over the session, model, effort and approval mode. Before restarting, it checks that the new code loads, and keeps the current build running if it does not. If code started by a reload fails to start or crashes, oi falls back to the bundled build on the same session and says why, and a later `/reload` tries the fixed code again. If oi dies abnormally, the launcher restores the terminal's settings. Run from a checkout with `bin/oi`, this means edits to oi's own sources take effect in place. Also new: `--effort <level>`, and `--check`, which loads every module and exits.
+
+- [#18](https://github.com/cephalization/oi-agent/pull/18) [`ce8b4dc`](https://github.com/cephalization/oi-agent/commit/ce8b4dcc4324b2e1ffe05158b1a9afb736131047) Thanks [@cephalization](https://github.com/cephalization)! - Switching to a session with `/resume`, or opening one with `oi resume` or `oi -s`, now continues on the model, provider and effort that session last used, read from its spans. An explicit `-m` still wins. If the session's model is no longer available (its provider was removed, or there is no key), oi stays on the current model and says so. New sessions keep the current model.
+
+- [#21](https://github.com/cephalization/oi-agent/pull/21) [`268688c`](https://github.com/cephalization/oi-agent/commit/268688c06156d7da034e868ece96652c68135eff) Thanks [@cephalization](https://github.com/cephalization)! - oi learns from your corrections. After each turn a small model (the judge model, which needs an Anthropic key) reads your prompt, and when it corrects the agent in a way that applies beyond the current task, oi saves it as an evaluator, with a note under the turn and a link back to the prompt it came from. Corrections that only concern the task at hand are left alone. Turn it off with `"steering": "off"` in the config or `OI_AGENT_STEERING=off`. Also fixed: an evaluator created with `create_eval` could fail on the turn that created it, because its own definition contained the pattern it checks for.
+
 ## 0.3.0
 
 ### Minor Changes
