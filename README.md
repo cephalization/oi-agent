@@ -17,7 +17,8 @@ Experimental. See [PLAN.md](PLAN.md) for the design and
 Correct oi the way you'd correct a colleague. When the correction is about
 how you always want things done, not just this task, oi writes it down and
 checks its own work against it from then on. You never have to say "make a
-rule".
+rule". Reports of bugs in the software being developed belong in code and
+regression tests—not standing rules about the coding agent's behavior.
 
 Think of a kitchen. You're the head chef and oi is the line cook, with a
 sous-chef at the pass taking notes. "Less salt on this one" is about one

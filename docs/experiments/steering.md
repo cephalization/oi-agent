@@ -148,3 +148,57 @@ presses `a` then `y`, verifies another uncertain call still asks, denies it,
 and verifies a later safe call is approved by the decision model. The
 original session records the human approval, but not the raw keypress, so
 it cannot establish which key the dialog received.
+
+## Product defects are not standing agent preferences
+
+The live detector learned `auto_mode_no_permission_prompts` from:
+
+> i asked that question in auto mode and it still asked for permission to run bash and switched to yolo after
+
+That was a bug report about the approval UI, not a request to prohibit all
+future safety deferrals. The saved evaluator's criterion failed turns that
+asked for tool approval in auto mode; `learn: true` could then distill a rule
+that penalized correct behavior. Removed that evaluator from the project's
+mutable configuration. There was no derived rules file to undo. Historical
+spans and annotations remain unchanged.
+
+Before the fix, sending the original request context to Haiku again reproduced
+`durable: true`, confidence 0.8, and another proposed no-permission evaluator.
+The new CLI regression also failed on the incorrect durable classification.
+The detector instructions now distinguish the coding agent's working habits
+from product defects, including the self-referential case where the product
+is an agent harness. Application-generated authorization dialogs and runtime
+state changes are not conversational choices by the coding model. None of
+the regression messages are quoted as examples in the production prompt.
+
+The first wording still misclassified the report once in three runs. Making
+that harness/model distinction explicit produced three consecutive passing
+runs of `product bug reports do not become standing preferences for the coding
+agent`: your exact report and two held-out product complaints create no
+evaluators and receive non-durable detector verdicts; a genuine implicit
+preference for concise answers still becomes an evaluator. All three product
+reports are also in the broader scored scenario's negative set. New/changed
+replayable scenarios have fresh cassettes.
+
+Rechecking the original session context after that change gave Haiku
+non-durable verdicts three times (confidence 0.85, 0.85, 0.9). The real Jev
+screen was uncertain (durability probabilities 0.54, 0.55, 0.54), below the
+0.7 learning threshold: no writer calls or proposed evaluators. This is not
+a claim that Jev confidently classified the report as non-durable.
+
+Also found that `decisionDetector` overwrote a writer's non-durable verdict
+with `durable: true` whenever the screen had passed. It now honors the
+writer's veto. A deterministic test with a 0.95 screen and a rejecting writer
+failed before this fix and passes after it. The screen's probability still
+supplies confidence when the writer agrees that the correction is durable.
+
+Final verification: check, build and 139 unit tests pass. Full replay passes
+35 scenarios with 8 skips (four live-only scenarios and four pending web
+features). The full live invocation completed 38 scenarios without a failure,
+including the expanded scored scenario: 18/18 durable corrections learned and
+1/27 one-off messages incorrectly learned. It hit the 20-minute command limit
+before the sandbox scenario completed; rerunning that remaining scenario
+passed, with the four pending web scenarios skipped. Thus all 39 currently
+runnable live scenarios passed across the two invocations, not in one
+uninterrupted full-suite run. The nonzero false-positive rate remains a reason
+to inspect learned checks rather than treat automatic classification as exact.

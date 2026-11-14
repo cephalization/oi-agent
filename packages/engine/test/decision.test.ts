@@ -388,6 +388,22 @@ describe("decision detector", () => {
     expect(verdict).toMatchObject({ durable: true, confidence: 0.92, evaluator: { name: "use_pnpm" } })
   })
 
+  it("honors the writer's non-durable verdict even when the screen is confident", async () => {
+    answer({ durable: 0.95 })
+
+    const reject: Detector = () =>
+      Promise.resolve({
+        durable: false,
+        confidence: 0.99,
+        statement: "",
+        evaluator: null,
+      })
+
+    const verdict = await decisionDetector(settings, "k", reject)(INPUT, recorder().report)
+
+    expect(verdict).toMatchObject({ durable: false, confidence: 0.99, evaluator: null })
+  })
+
   it("lets the writer decide alone when the decision call fails", async () => {
     answer({}, 500)
 

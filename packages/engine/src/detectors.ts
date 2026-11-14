@@ -127,7 +127,8 @@ const stateOf = (input: SteeringInput) => ({
 /**
  * Screen with the decision model; write with `writer` only when the screen is
  * confident the prompt is durable. The verdict's confidence is the decision
- * model's calibrated probability, not the writer's own estimate. When the
+ * model's calibrated probability, not the writer's own estimate. A writer
+ * that identifies a non-durable message can veto learning it. When the
  * decision call fails, the writer decides alone, as it would without one.
  */
 export const decisionDetector =
@@ -166,5 +167,9 @@ export const decisionDetector =
 
     if (written === undefined) return verdict
 
-    return { ...written, durable: true, confidence: durable }
+    // A screen can mistake a product bug for a working preference. The writer
+    // sees the full generation instructions and may veto learning it.
+    if (!written.durable) return written
+
+    return { ...written, confidence: durable }
   }

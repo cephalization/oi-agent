@@ -129,7 +129,11 @@ These work best on the session you are in, because the evidence is right there.
   the existing evaluators to the configured steering model (`modelDetector`
   in `judge.ts`, or `llmDetector` in `detectors.ts`),
   which says whether the prompt is a correction that applies beyond the
-  current task, and proposes an evaluator. Above 0.7 confidence, and when no
+  current task, and proposes an evaluator. Reports of defects in the product
+  being developed are not standing preferences for the coding agent, even
+  when the product is itself an agent harness. Application authorization
+  dialogs and runtime mode changes are product behavior, not conversational
+  habits to reward or punish. Above 0.7 confidence, and when no
   existing evaluator covers it, it is saved with an `origin` naming the turn,
   Every verdict becomes a `steering` annotation on the turn (`learned`,
   `durable` or `one-off`, with the confidence as score); the terminal shows
@@ -139,6 +143,8 @@ These work best on the session you are in, because the evidence is right there.
   name any configured `provider/model`, or `decision:<model>`: the latter
   calls System One to screen each prompt, then the judge model (or the
   agent's own model) writes an evaluator only for a durable correction.
+  The writer can veto the screen's durable verdict; its non-durable answer
+  is not overwritten by the screen's probability.
   `decisionDetector` in `source/engine/src/detectors.ts` records the screen
   as a `DECISION` span under the `EVALUATOR` span and the writer as an `LLM`
   child beside it. If the screen fails, the writer decides alone. An unset

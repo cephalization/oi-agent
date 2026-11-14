@@ -11,7 +11,8 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { kindOf, projectDir } from "@oi-agent/engine"
+import { kindOf, parser, projectDir, SteeringVerdict, stringAttr, OI } from "@oi-agent/engine"
+import { Schema } from "effect"
 import { describe, expect } from "vite-plus/test"
 import { expectOk, MODELS, type Scenario, scenario } from "../src/scenario.ts"
 
@@ -56,8 +57,27 @@ const IMPLICIT: ReadonlyArray<Case> = [
   },
 ]
 
+/** Product behavior is the task to fix, not a preference for how the coding agent works. */
+const PRODUCT_BUGS: ReadonlyArray<Case> = [
+  {
+    setup:
+      "We are developing a coding-agent CLI with configurable decision models and auto/ask/yolo permission modes. Summarize those features in one sentence without using tools.",
+    steer:
+      "i asked that question in auto mode and it still asked for permission to run bash and switched to yolo after",
+  },
+  {
+    setup: "We are debugging a text editor's settings screen. Reply with just: ready",
+    steer: "the preview pane keeps reopening after I close it; the app should remember that it was closed",
+  },
+  {
+    setup: "We are implementing a CSV export button in a web app. Reply with just: ready",
+    steer: "the download still repeats the column headings on every row, that needs fixing",
+  },
+]
+
 /** Corrections about this task only: none should become an evaluator. */
 const ONE_OFF: ReadonlyArray<Case> = [
+  ...PRODUCT_BUGS,
   {
     setup: "Suggest a new name for the greet function. Reply with just the name.",
     steer: "No, call it sayHello for this change.",
@@ -155,6 +175,55 @@ describe("learning from steering", () => {
 
       expect(durableHits / durableTotal).toBeGreaterThanOrEqual(2 / 3)
       expect(oneOffHits / oneOffTotal).toBeLessThanOrEqual(1 / 6)
+    },
+  )
+
+  scenario(
+    "product bug reports do not become standing preferences for the coding agent",
+    {
+      needs: ["second-model"],
+      config: new Map([
+        ["steering", "auto"],
+        ["steering_model", MODELS.second],
+      ]),
+    },
+    async (s) => {
+      for (const entry of PRODUCT_BUGS) {
+        const created = await learned(s, entry)
+        const session = s.spans.sessions().at(-1) ?? ""
+
+        const detection = s.spans
+          .ended(session)
+          .filter((span) => span.name === "steering" && span.parent_id === null)
+          .at(-1)
+
+        // Read the detector, not just the whole-system outcome: the agent may independently create checks.
+        const output = detection === undefined ? "" : (stringAttr(detection, OI.OUTPUT_VALUE) ?? "")
+
+        const verdict = parser(Schema.Struct({ verdict: SteeringVerdict }))(output)?.verdict
+
+        expect(verdict).toBeDefined()
+        expect(verdict?.durable).toBe(false)
+        expect(verdict?.evaluator ?? null).toBeNull()
+        expect(created).toEqual([])
+        s.note(`not learned: ${entry.steer}`)
+      }
+
+      // The exclusion must not suppress an actual preference about the agent's working style.
+      const created = await learned(s, IMPLICIT[2]!)
+      const session = s.spans.sessions().at(-1) ?? ""
+
+      const detection = s.spans
+        .ended(session)
+        .filter((span) => span.name === "steering" && span.parent_id === null)
+        .at(-1)
+
+      const output = detection === undefined ? "" : (stringAttr(detection, OI.OUTPUT_VALUE) ?? "")
+      const verdict = parser(Schema.Struct({ verdict: SteeringVerdict }))(output)?.verdict
+
+      expect(verdict?.durable).toBe(true)
+      expect(created.length).toBeGreaterThan(0)
+      s.note("genuine preference about concise answers: learned")
     },
   )
 
