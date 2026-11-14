@@ -89,6 +89,7 @@ a side effect of tracing.
 | Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
 | Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
+| Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `modelDetector` in `judge.ts`       |
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
 | Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
@@ -121,6 +122,18 @@ These work best on the session you are in, because the evidence is right there.
 - **"How does an eval change your behaviour?"** Show an annotation file, then
   the `<eval-feedback>` block at the start of the next turn's first request,
   then the rules file if a rule was learned.
+- **"How do you learn from my corrections?"** Two ways. The system prompt
+  tells the agent to call `create_eval` when asked for something to always or
+  never do. And after each turn, `detectSteering`
+  (`source/engine/src/steering.ts`) sends the prompt, the previous turn and
+  the existing evaluators to the judge model (`modelDetector` in `judge.ts`),
+  which says whether the prompt is a correction that applies beyond the
+  current task, and proposes an evaluator. Above 0.7 confidence, and when no
+  existing evaluator covers it, it is saved with an `origin` naming the turn,
+  and a `steering` annotation on the turn says so. Each detection is an
+  `EVALUATOR` trace with the prompt as input and the verdict as output, so
+  you can read why it did or did not learn something. Why a detector and not
+  a wider prompt: `docs/experiments/steering.md` (in the repository).
 - **"How does resuming work?"** There is nothing to load. `/resume` (or
   `oi -s <id>`) points the terminal at another session folder: the screen is
   rebuilt by reading its root spans, and the next model request comes from

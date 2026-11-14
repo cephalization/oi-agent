@@ -42,6 +42,8 @@ export * from "./judge.ts"
 
 export * from "./rules.ts"
 
+export * from "./steering.ts"
+
 export * from "./peer/client.ts"
 
 export * from "./peer/protocol.ts"

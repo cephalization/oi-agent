@@ -34,7 +34,7 @@ keychain. Run `oi setup` to change them.
 
 Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
-`OI_AGENT_HOME`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
+`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
 
@@ -113,6 +113,15 @@ Phoenix, a failure is shown to the agent at the start of its next turn, and
 the failure is distilled into a standing rule in that folder's `rules.md`.
 Nothing is written into the project itself. `/revert`
 undoes the latest rule.
+
+**Or just correct it.** You don't have to ask for a check. After each turn a
+small model reads your prompt, and when it corrects the agent in a way that
+applies beyond the task at hand ("hmm, var? this codebase is const/let only",
+not "call it msg here"), oi learns it as an evaluator by itself and notes it
+under the turn (`◆ steering: learned`). The evaluator records the prompt it
+came from. Set `"steering": "off"` in the config (or `OI_AGENT_STEERING=off`)
+to stop it. It needs an Anthropic key, like the other evaluators. How it was
+measured, and what went wrong in measuring it: [docs/experiments/steering.md](docs/experiments/steering.md).
 
 Evaluators can also put a limit on something the harness measures. Each turn's
 root span records the session's size on disk (`metadata.oi_agent.session_bytes`),

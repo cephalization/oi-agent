@@ -104,8 +104,19 @@ export class Spans {
       .flatMap((traceId) => this.store.readTrace(sessionId, traceId).open.map((entry) => entry.span))
   }
 
+  /**
+   * Ended spans of the agent's own turns, oldest first. Evaluator and
+   * steering traces are left out: they call a judge model of their own.
+   */
+  agent(sessionId: string): Array<EndedSpan> {
+    return this.turns(sessionId)
+      .flatMap((turn) => this.store.readTrace(sessionId, turn.trace_id).ended)
+      .sort(byStart)
+  }
+
+  /** Spans of one kind in the agent's turns. */
   ofKind(sessionId: string, kind: SpanKind): Array<EndedSpan> {
-    return this.ended(sessionId).filter((span) => kindOf(span) === kind)
+    return this.agent(sessionId).filter((span) => kindOf(span) === kind)
   }
 
   /** Ended spans of one turn (trace), oldest first. */
@@ -126,7 +137,7 @@ export class Spans {
     return { model: `${provider}/${model}`, effort }
   }
 
-  /** The model that served the session's most recent model call. */
+  /** The model that served the agent's most recent model call. */
   lastModel(sessionId: string): ModelUse | undefined {
     const last = this.ofKind(sessionId, "LLM").at(-1)
 

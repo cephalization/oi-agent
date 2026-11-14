@@ -6,7 +6,10 @@
 import { createAnthropic } from "@ai-sdk/anthropic"
 import { createClassificationEvaluator } from "@arizeai/phoenix-evals"
 import { generateText, type LanguageModel, wrapLanguageModel } from "ai"
+import { Option, Schema } from "effect"
 import type { Distiller, Judge, UsageReporter } from "./evals.ts"
+import { parser } from "./format.ts"
+import { type Detector, looseVerdict, SteeringVerdict } from "./steering.ts"
 import { nowNs } from "./ids.ts"
 
 export const DEFAULT_JUDGE_MODEL = "claude-haiku-5-5"
@@ -105,4 +108,72 @@ Write one rule, a single imperative sentence of at most 25 words, that would hav
     const rule = text.trim()
 
     return rule === "" || rule.toUpperCase() === "NONE" ? undefined : rule
+  }
+
+const DETECTOR_PROMPT = `You watch a user steer a coding agent. Decide whether the user's latest message corrects the agent, or states a preference, in a way that should apply to the agent's future work in this project, and not only to the current task.
+
+Durable: corrections of a habit or style of the agent's; the project's conventions, tools or commands; how the user wants answers or work done; things to always or never do. A complaint about something the agent did counts when the same thing could come up again in a different task. It does not need words like "always".
+Not durable: choices that only concern the current change (a particular name, wording or value, a one-time edit), questions, requests for new work, approval and thanks. Asking to redo the latest answer or change differently (more or less of something, another tone, another form) is about that answer only, unless the user signals it applies beyond it: that it keeps happening, or that it is how they always want things.
+
+The agent's previous turn, for context:
+<previous_turn>
+{{previous}}
+</previous_turn>
+
+The user's latest message:
+<message>
+{{prompt}}
+</message>
+
+Evaluators that already exist in this project (name: description):
+<evaluators>
+{{existing}}
+</evaluators>
+
+If an existing evaluator already checks the same thing, set covered_by to its name.
+
+If the message is durable, propose an evaluator that reviews each later turn and fails when the agent goes against the correction:
+- kind "code", with a JavaScript regular expression "pattern" that matches a violation, and a "target": "tool_input" for commands the agent runs and edits it makes, "output" for its replies. Use it only when the pattern cannot match work that follows the correction.
+- otherwise kind "llm", with "instructions": the criterion a judge applies to one turn, phrased so that meeting it passes. Say that turns where it does not apply pass.
+Give it a short snake_case "name" and a one-sentence "description".
+
+Reply with JSON only, no prose:
+{"durable": true or false, "confidence": a number from 0 to 1, "statement": "the preference as one imperative sentence", "covered_by": a name or null, "evaluator": {"name": "...", "description": "...", "kind": "code" or "llm", "pattern": "...", "target": "...", "instructions": "..."} or null}`
+
+/**
+ * Fill `{{key}}` placeholders in one pass, with a function: text from the
+ * user can hold `$&` or a placeholder of its own, and must come through as is.
+ */
+export const fillTemplate = (template: string, values: ReadonlyMap<string, string>): string =>
+  template.replaceAll(/\{\{(\w+)\}\}/g, (whole, key: string) => values.get(key) ?? whole)
+
+/** The first JSON object in a reply, which models sometimes wrap in a code fence. */
+const jsonIn = (text: string): string => text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)
+
+const parseJson = parser(Schema.Json)
+const decodeVerdict = Schema.decodeUnknownOption(SteeringVerdict)
+
+/** A verdict from a reply, forgiving `""` for fields that do not apply. */
+export const parseVerdict = (text: string): SteeringVerdict | undefined => {
+  const json = parseJson(jsonIn(text))
+
+  return json === undefined ? undefined : Option.getOrUndefined(decodeVerdict(looseVerdict(json)))
+}
+
+export const modelDetector =
+  (apiKey: string, model: string = DEFAULT_JUDGE_MODEL): Detector =>
+  async (input, report) => {
+    const existing = input.existing.map((entry) => `${entry.name}: ${entry.description}`).join("\n")
+
+    const values = new Map([
+      ["previous", input.previous === "" ? "(none)" : input.previous],
+      ["existing", existing === "" ? "(none)" : existing],
+      ["prompt", input.prompt],
+    ])
+
+    const prompt = fillTemplate(DETECTOR_PROMPT, values)
+
+    const { text } = await generateText({ model: metered(apiKey, model, report), prompt })
+
+    return parseVerdict(text)
   }

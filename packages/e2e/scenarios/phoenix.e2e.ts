@@ -5,7 +5,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { PhoenixClient, readMetadata } from "@oi-agent/engine"
+import { kindOf, PhoenixClient, readMetadata } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
 import { PHOENIX_ENDPOINT, PHOENIX_PROJECT } from "../src/phoenix.ts"
 import { expectOk, scenario } from "../src/scenario.ts"
@@ -56,7 +56,11 @@ describe("Phoenix", () => {
         "both turns in Phoenix",
         async () => {
           const traces = (await client.session(session))?.traces.map((trace) => trace.trace_id) ?? []
-          const found = await client.spans(traces, { roots: true })
+
+          // Steering and evaluator traces have roots too; the turns are the AGENT ones.
+          const found = (await client.spans(traces, { roots: true })).filter(
+            (root) => kindOf(root) === "AGENT",
+          )
 
           return found.length >= 2 ? found : undefined
         },

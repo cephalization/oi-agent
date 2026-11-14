@@ -44,6 +44,27 @@ const setup = (respond: (call: ModelCall, step: number) => Json) => {
 }
 
 describe("evaluators", () => {
+  it("does not judge an evaluator's own creation: its definition holds the pattern it forbids", async () => {
+    const { engine, store, sessionId } = setup((_call, step) =>
+      step === 0
+        ? use("create_eval", {
+            name: "use_pnpm",
+            description: "Never run npm install; use pnpm.",
+            kind: "code",
+            pattern: String.raw`\bnpm install\b`,
+            target: "tool_input",
+          })
+        : say("Done."),
+    )
+
+    await engine.submit(sessionId, { text: "we use pnpm here", userId: "tony" })
+    await engine.idle(sessionId)
+
+    const verdict = store.listAnnotations(sessionId).find((file) => file.annotation.name === "use_pnpm")
+
+    expect(verdict?.annotation.label).toBe("pass")
+  })
+
   it("records session size on each turn and fails a threshold evaluator when it is exceeded", async () => {
     const seen: Array<ReadonlyArray<Json>> = []
 
