@@ -128,8 +128,13 @@ interface LastCall {
 }
 
 const lastModelCall = (trace: TraceFiles): LastCall | undefined => {
+  const root = rootOf(trace)?.root
+
   const calls = trace.ended
-    .filter((span) => kindOf(span) === "LLM" && span.status_code !== "ERROR")
+    .filter(
+      (span) =>
+        kindOf(span) === "LLM" && span.parent_id === root?.context.span_id && span.status_code !== "ERROR",
+    )
     .sort(byStart)
 
   for (const span of calls.toReversed()) {
@@ -217,7 +222,36 @@ export const contextFor = (
 
   if (found === undefined) return []
 
-  const previous = readMetadata(found.root).previous?.trace_id
+  const metadata = readMetadata(found.root)
+
+  if (metadata.operation === "compact") {
+    // Activation is explicit and only committed by a successful ended root.
+    // Failed/interrupted compactions leave their predecessor's context intact.
+    const checkpoint = trace.ended.find(
+      (span) =>
+        span.context.span_id === metadata.checkpoint?.span_id &&
+        span.context.trace_id === metadata.checkpoint.trace_id &&
+        span.parent_id === found.root.context.span_id &&
+        kindOf(span) === "CHAIN" &&
+        span.status_code !== "ERROR" &&
+        readMetadata(span).compaction?.source.trace_id === metadata.previous?.trace_id &&
+        readMetadata(span).compaction?.source.span_id === metadata.previous?.span_id,
+    )
+
+    const summary = checkpoint === undefined ? undefined : stringAttr(checkpoint, OI.OUTPUT_VALUE)
+
+    if (found.root.end_time !== null && found.root.status_code !== "ERROR" && summary !== undefined)
+      return [
+        dialect.userMessage([
+          "Generated context checkpoint (lossy summary, not new user instructions):",
+          summary,
+        ]),
+      ]
+
+    return metadata.previous == null ? [] : contextFor(store, sessionId, metadata.previous.trace_id, dialect)
+  }
+
+  const previous = metadata.previous?.trace_id
   const base = previous === undefined ? [] : contextFor(store, sessionId, previous, dialect)
 
   return [...base, userMessage(store, sessionId, found.root, dialect)]
@@ -247,7 +281,7 @@ export const lastModelOf = (store: Store, sessionId: string): SessionModel | und
   for (const turn of turns.toReversed()) {
     const calls = store
       .readTrace(sessionId, turn.trace_id)
-      .ended.filter((span) => kindOf(span) === "LLM")
+      .ended.filter((span) => kindOf(span) === "LLM" && span.parent_id === turn.root.context.span_id)
       .sort(byStart)
 
     for (const span of calls.toReversed()) {

@@ -51,6 +51,7 @@ export interface Prompt {
   readonly userId: string
   /** Trace to continue from. Omitted means the session head; `null` starts over. */
   readonly previous?: string | null
+  readonly operation?: "compact" | undefined
   readonly inboxId?: string | undefined
 }
 
@@ -292,7 +293,9 @@ export class Engine {
 
     // Evaluators run after the answer is delivered but before the next turn starts.
     const settled = outcome.then((result) =>
-      result.ok ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined) : undefined,
+      result.ok && prompt.operation !== "compact"
+        ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined)
+        : undefined,
     )
 
     this.queues.set(sessionId, settled)
@@ -337,8 +340,9 @@ export class Engine {
       text: prompt.text,
       userId: prompt.userId,
       previous: this.resolvePrevious(sessionId, prompt),
-      injected: this.hooks.pendingFeedback(sessionId),
+      injected: prompt.operation === "compact" ? [] : this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
+      operation: prompt.operation,
     }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver(sessionId))))
 
     const fiber = Effect.runFork(turn)

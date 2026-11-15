@@ -30,6 +30,12 @@ export const COMMANDS: ReadonlyArray<Command> = [
     argument: { name: "session", required: true },
     hostOnly: true,
   },
+  {
+    name: "/compact",
+    summary: "summarize context in this thread; preserve original spans",
+    argument: { name: "focus", required: false },
+    hostOnly: true,
+  },
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
   {
     name: "/model",

@@ -48,6 +48,25 @@ the spec says what model answered, not which harness policy requested it.
 Approval answers and the reason a human was asked extend gap 5 above; the
 model's answer is not the same thing as permission to run a tool.
 
+## Context checkpoint semantics
+
+A `CHAIN` span with an `LLM` child accurately describes summarization, but
+OpenInference does not say which context it replaces or when it becomes
+active. The manual compaction implementation records:
+
+- `metadata.oi_agent.operation = "compact"` on the command's `AGENT` root.
+- `metadata.oi_agent.compaction = { source: { trace_id, span_id }, trigger,
+  policy_version }` on the `context.compact` chain. Its output is the brief.
+- `metadata.oi_agent.checkpoint = { trace_id, span_id }` on the successful
+  root: explicit activation of that ended chain, not "use the latest summary".
+
+The source head identifies the whole replaced context on that branch. Failed
+or open roots do not activate a checkpoint. Summarizer model calls are nested
+under the chain, not treated as agent continuation calls. This is harness
+replay policy, not a standard meaning of `CHAIN`. Live testing verified that
+the new fields and brief survive Phoenix export/import with identical folded
+context. No historical request or response is rewritten.
+
 ## Round trip through Phoenix
 
 Checked by importing a session back from Phoenix's REST API

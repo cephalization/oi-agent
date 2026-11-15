@@ -117,7 +117,10 @@ Built and verified against the live Anthropic API and a Phoenix 21 server:
 - Phases 1 to 5: format, fold, engine, terminal UI, Phoenix export, local
   evaluators with feedback and learned rules, `/share` with driver and viewer
   roles over tailcat.
-- Not built: forks in the UI (the format supports them), compaction,
+- Manual `/compact` now records a CHAIN/LLM checkpoint and explicit activation;
+  resume from disk and Phoenix is verified. Automatic compaction and handoff
+  are not built. The first version replaces the whole preceding context.
+- Not built: forks in the UI (the format supports them),
   subagents, the GPUI viewer, pulling human annotations back from Phoenix,
   experiments over past spans, a browser viewer.
 

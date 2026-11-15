@@ -223,6 +223,18 @@ export type Workspace = typeof Workspace.Type
 export const EngineMetadata = Schema.Struct({
   /** The turn this turn continues. `null` for the first turn of a session. */
   previous: Schema.optionalKey(Schema.NullOr(SpanRef)),
+  /** A user-requested context transformation, not an ordinary model turn. */
+  operation: Schema.optionalKey(Schema.Literal("compact")),
+  /** The ended CHAIN checkpoint explicitly activated by this successful turn. */
+  checkpoint: Schema.optionalKey(SpanRef),
+  /** On a context.compact CHAIN: the exact branch head replaced by its output. */
+  compaction: Schema.optionalKey(
+    Schema.Struct({
+      source: SpanRef,
+      trigger: Schema.Literal("manual"),
+      policy_version: Schema.Literal("1"),
+    }),
+  ),
   /** Device that wrote the span. */
   device: Schema.optionalKey(Schema.String),
   /** Process that owns an in-flight span, for liveness checks. */
