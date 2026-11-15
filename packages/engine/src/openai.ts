@@ -6,15 +6,25 @@
  * the `LLM` span is byte for byte what was sent. Responses stream as
  * server-sent events; the stored response is the final response object
  * (Responses API) or the stream folded into a completion (Chat Completions).
+ *
+ * Responses API requests can instead travel over a WebSocket (see
+ * `openai-socket.ts`), which carries the same body and the same events.
  */
+import { createHash } from "node:crypto"
 import { Effect, Layer, Option, Schema } from "effect"
 import type { Effort } from "./config.ts"
 import type { Dialect } from "./dialect.ts"
 import { openaiChat, openaiResponses } from "./dialects/index.ts"
 import { Model, type ModelCall, ModelError, type ModelHooks, type ModelOption } from "./model.ts"
+import { ResponsesSockets, SocketInterrupted, SocketUnavailable } from "./openai-socket.ts"
 import type { Json } from "./wire.ts"
 
 export type OpenAIApi = "chat" | "responses"
+
+export type OpenAITransport = "http" | "websocket"
+
+/** OpenTelemetry's attribute for the protocol a request used, set on the `LLM` span. */
+export const NETWORK_PROTOCOL = "network.protocol.name"
 
 export interface OpenAISettings {
   /** Provider id, for `llm.provider` and messages. */
@@ -30,6 +40,12 @@ export interface OpenAISettings {
   readonly token: () => Promise<string | undefined>
   /** What to tell the user when the credentials are rejected. */
   readonly onUnauthorized: string
+  /**
+   * How Responses API requests travel. `websocket` keeps one connection per
+   * conversation so the prompt cache is reused, and falls back to HTTP when a
+   * socket cannot be opened. Defaults to `http`. Chat Completions is always HTTP.
+   */
+  readonly transport?: OpenAITransport
 }
 
 const Nullable = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.NullOr(schema))
@@ -72,6 +88,9 @@ const failure = (settings: OpenAISettings, status: number, body: string): ModelE
 
 const describe = (settings: OpenAISettings, cause: unknown): ModelError => {
   if (cause instanceof ModelError) return cause
+
+  if (cause instanceof SocketInterrupted)
+    return new ModelError({ message: `${settings.provider}: ${cause.message}` })
 
   const message = cause instanceof Error ? cause.message : String(cause)
 
@@ -237,7 +256,11 @@ const ResponsesEvent = Schema.Struct({
   delta: Nullable(Schema.String),
   output_index: Nullable(Schema.Finite),
   response: Nullable(Schema.Json),
+  /** Server-sent `error` events carry the message here. */
   message: Nullable(Schema.String),
+  /** WebSocket `error` events carry a status and an error object instead. */
+  status: Nullable(Schema.Finite),
+  error: Nullable(Schema.Struct({ message: Nullable(Schema.String), code: Nullable(Schema.String) })),
 })
 
 const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(ResponsesEvent))
@@ -273,7 +296,8 @@ const chatBody = (settings: OpenAISettings, call: ModelCall): Json => {
   return Object.fromEntries(body)
 }
 
-const responsesBody = (settings: OpenAISettings, call: ModelCall): Json => {
+/** The fields of a Responses API request, in the order they are sent. */
+const responsesFields = (settings: OpenAISettings, call: ModelCall): Array<[string, Json]> => {
   const body: Array<[string, Json]> = [
     ["model", settings.model],
     ["instructions", call.system],
@@ -301,7 +325,7 @@ const responsesBody = (settings: OpenAISettings, call: ModelCall): Json => {
     body.push(["include", ["reasoning.encrypted_content"]])
   }
 
-  return Object.fromEntries(body)
+  return body
 }
 
 const post = async (
@@ -331,7 +355,12 @@ const post = async (
   return response
 }
 
-const runChat = async (settings: OpenAISettings, call: ModelCall, hooks: ModelHooks, signal: AbortSignal) => {
+const runChat = async (
+  settings: OpenAISettings,
+  call: ModelCall,
+  hooks: ModelHooks,
+  signal: AbortSignal,
+): Promise<Served> => {
   const body = JSON.stringify(chatBody(settings, call))
 
   hooks.onRequest(body)
@@ -341,54 +370,139 @@ const runChat = async (settings: OpenAISettings, call: ModelCall, hooks: ModelHo
 
   for await (const data of events(response.body ?? new ReadableStream())) accumulator.add(data, hooks)
 
-  return JSON.stringify(accumulator.completion())
+  return { response: JSON.stringify(accumulator.completion()), transport: "http" }
+}
+
+/**
+ * Apply one Responses stream event, from either transport. Returns the final
+ * response body once the response is complete, and `undefined` until then.
+ */
+const responsesEvent = (settings: OpenAISettings, data: string, hooks: ModelHooks): string | undefined => {
+  const event = Option.getOrUndefined(decodeEvent(data))
+
+  if (event === undefined) return undefined
+
+  const delta = event.delta ?? ""
+  const index = event.output_index ?? 0
+
+  if (event.type === "response.output_text.delta") hooks.onDelta({ k: "text", i: index, d: delta })
+
+  if (event.type === "response.reasoning_summary_text.delta")
+    hooks.onDelta({ k: "thinking", i: index, d: delta })
+
+  if (event.type === "response.function_call_arguments.delta")
+    hooks.onDelta({ k: "tool_input", i: index, d: delta })
+
+  if (
+    (event.type === "response.completed" || event.type === "response.incomplete") &&
+    event.response !== undefined
+  )
+    return JSON.stringify(event.response)
+
+  if (event.type === "response.failed") {
+    const reason = Option.getOrUndefined(decodeFailed(event.response))?.error?.message
+
+    throw new ModelError({ message: `${settings.provider}: ${reason ?? "the response failed"}` })
+  }
+
+  if (event.type === "error") {
+    const message = event.error?.message ?? event.message ?? data
+
+    throw event.status === undefined || event.status === null
+      ? new ModelError({ message: `${settings.provider}: ${message}` })
+      : failure(settings, event.status, JSON.stringify({ message }))
+  }
+
+  return undefined
+}
+
+const INCOMPLETE = "ended the response stream before it completed."
+
+const runResponsesHttp = async (
+  settings: OpenAISettings,
+  body: string,
+  hooks: ModelHooks,
+  signal: AbortSignal,
+): Promise<string> => {
+  const response = await post(settings, "responses", body, signal)
+
+  for await (const data of events(response.body ?? new ReadableStream())) {
+    const done = responsesEvent(settings, data, hooks)
+
+    if (done !== undefined) return done
+  }
+
+  throw new ModelError({ message: `${settings.provider} ${INCOMPLETE}` })
+}
+
+/**
+ * The same request as a WebSocket `response.create` message: the HTTP body
+ * without `stream`, which the socket implies.
+ */
+const socketPayload = (fields: ReadonlyArray<[string, Json]>): string =>
+  JSON.stringify(
+    Object.fromEntries([["type", "response.create"], ...fields.filter(([name]) => name !== "stream")]),
+  )
+
+/**
+ * Which connection a call belongs on. Calls of one conversation share their
+ * instructions and first message, and the cache follows the connection.
+ */
+const conversationKey = (call: ModelCall): string =>
+  createHash("sha256")
+    .update(call.system)
+    .update(JSON.stringify(call.messages[0] ?? null))
+    .digest("hex")
+
+const runResponsesSocket = async (
+  settings: OpenAISettings,
+  sockets: ResponsesSockets,
+  call: ModelCall,
+  fields: ReadonlyArray<[string, Json]>,
+  hooks: ModelHooks,
+  signal: AbortSignal,
+): Promise<string> => {
+  for await (const data of sockets.request(conversationKey(call), socketPayload(fields), signal)) {
+    const done = responsesEvent(settings, data, hooks)
+
+    if (done !== undefined) return done
+  }
+
+  throw new ModelError({ message: `${settings.provider} ${INCOMPLETE}` })
+}
+
+interface Served {
+  readonly response: string
+  readonly transport: OpenAITransport
 }
 
 const runResponses = async (
   settings: OpenAISettings,
+  sockets: ResponsesSockets | undefined,
   call: ModelCall,
   hooks: ModelHooks,
   signal: AbortSignal,
-) => {
-  const body = JSON.stringify(responsesBody(settings, call))
+): Promise<Served> => {
+  const fields = responsesFields(settings, call)
+  const text = JSON.stringify(Object.fromEntries(fields))
 
-  hooks.onRequest(body)
+  // The stored request is the HTTP body whichever way it travels, so a span
+  // reads and replays the same regardless of transport.
+  hooks.onRequest(text)
 
-  const response = await post(settings, "responses", body, signal)
-
-  for await (const data of events(response.body ?? new ReadableStream())) {
-    const event = Option.getOrUndefined(decodeEvent(data))
-
-    if (event === undefined) continue
-
-    const delta = event.delta ?? ""
-    const index = event.output_index ?? 0
-
-    if (event.type === "response.output_text.delta") hooks.onDelta({ k: "text", i: index, d: delta })
-
-    if (event.type === "response.reasoning_summary_text.delta")
-      hooks.onDelta({ k: "thinking", i: index, d: delta })
-
-    if (event.type === "response.function_call_arguments.delta")
-      hooks.onDelta({ k: "tool_input", i: index, d: delta })
-
-    if (
-      (event.type === "response.completed" || event.type === "response.incomplete") &&
-      event.response !== undefined
-    )
-      return JSON.stringify(event.response)
-
-    if (event.type === "response.failed") {
-      const reason = Option.getOrUndefined(decodeFailed(event.response))?.error?.message
-
-      throw new ModelError({ message: `${settings.provider}: ${reason ?? "the response failed"}` })
+  if (sockets?.available === true) {
+    try {
+      return {
+        response: await runResponsesSocket(settings, sockets, call, fields, hooks, signal),
+        transport: "websocket",
+      }
+    } catch (error) {
+      // Nothing was received, so sending the request again over HTTP is safe.
+      if (!(error instanceof SocketUnavailable)) throw error
     }
-
-    if (event.type === "error")
-      throw new ModelError({ message: `${settings.provider}: ${event.message ?? data}` })
   }
 
-  throw new ModelError({ message: `${settings.provider} ended the response stream before it completed.` })
+  return { response: await runResponsesHttp(settings, text, hooks, signal), transport: "http" }
 }
 
 const DIALECTS = new Map<OpenAIApi, Dialect>([
@@ -396,19 +510,28 @@ const DIALECTS = new Map<OpenAIApi, Dialect>([
   ["responses", openaiResponses],
 ])
 
-export const openaiModel = (settings: OpenAISettings): Layer.Layer<Model> =>
-  Layer.succeed(Model, {
+export const openaiModel = (settings: OpenAISettings): Layer.Layer<Model> => {
+  const sockets =
+    settings.api === "responses" && settings.transport === "websocket"
+      ? new ResponsesSockets(settings.baseUrl, settings.token)
+      : undefined
+
+  return Layer.succeed(Model, {
     dialect: DIALECTS.get(settings.api) ?? openaiChat,
     provider: settings.provider,
     run: (call, hooks) =>
       Effect.tryPromise({
         try: (signal) =>
           settings.api === "responses"
-            ? runResponses(settings, call, hooks, signal)
+            ? runResponses(settings, sockets, call, hooks, signal)
             : runChat(settings, call, hooks, signal),
         catch: (cause) => describe(settings, cause),
-      }),
+      }).pipe(
+        Effect.tap((served) => Effect.annotateCurrentSpan(NETWORK_PROTOCOL, served.transport)),
+        Effect.map((served) => served.response),
+      ),
   })
+}
 
 // --- model lists ------------------------------------------------------------------------
 

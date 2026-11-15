@@ -7,5 +7,9 @@
   "dependencies": {
     "@oi-agent/engine": "workspace:*",
     "effect": "^4.1.4"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "ws": "^8.23.0"
   }
 }

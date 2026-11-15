@@ -222,6 +222,12 @@ export class Providers {
 
     return openaiModel({
       provider: provider.id,
+      // OpenAI's own Responses API keeps its prompt cache per connection, so use one.
+      // Other servers get plain HTTP; OI_AGENT_OPENAI_TRANSPORT=http forces it everywhere.
+      transport:
+        provider.kind === "openai-compatible" || process.env["OI_AGENT_OPENAI_TRANSPORT"] === "http"
+          ? "http"
+          : "websocket",
       api: provider.api ?? (provider.kind === "openai-compatible" ? "chat" : "responses"),
       baseUrl: provider.base_url ?? OPENAI_BASE_URL,
       model: settings.model,

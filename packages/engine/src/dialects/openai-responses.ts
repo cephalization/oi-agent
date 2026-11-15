@@ -58,7 +58,12 @@ const ResponsesResponse = Schema.Struct({
     Schema.Struct({
       input_tokens: Nullable(Schema.Finite),
       output_tokens: Nullable(Schema.Finite),
-      input_tokens_details: Nullable(Schema.Struct({ cached_tokens: Nullable(Schema.Finite) })),
+      input_tokens_details: Nullable(
+        Schema.Struct({
+          cached_tokens: Nullable(Schema.Finite),
+          cache_write_tokens: Nullable(Schema.Finite),
+        }),
+      ),
     }),
   ),
 })
@@ -254,6 +259,7 @@ const responseAttributes: Dialect["responseAttributes"] = (raw) => {
   out.set(OI.TOKENS_COMPLETION, completion)
   out.set(OI.TOKENS_TOTAL, prompt + completion)
   out.set(OI.TOKENS_CACHE_READ, usage?.input_tokens_details?.cached_tokens ?? 0)
+  out.set(OI.TOKENS_CACHE_WRITE, usage?.input_tokens_details?.cache_write_tokens ?? 0)
 
   if (response.model !== undefined && response.model !== null) out.set(OI.LLM_MODEL, response.model)
 
