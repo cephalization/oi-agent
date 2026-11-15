@@ -392,7 +392,7 @@ class App {
           ? ref.model
           : `${ref.provider}/${ref.model}`
 
-    const parts = [style.gray(label)]
+    const parts = [style.gray(`session ${options.sessionId.slice(0, 18)}`)]
     // Dropped last-added first when the line is wider than the terminal.
     const optional: Array<string> = []
 
@@ -401,6 +401,8 @@ class App {
 
       if (droppable) optional.push(part)
     }
+
+    add(style.gray(label), true)
 
     if (engine !== undefined) {
       if (ref !== undefined && effortsFor(this.catalog(), ref).length > 0) {
@@ -1165,6 +1167,9 @@ class App {
     if (findCommand(typed, this.commands) === undefined) return this.say([`Only the host can run ${name}.`])
 
     if (name === "/help") return this.say(helpLines(this.commands))
+
+    if (name === "/session")
+      return this.say([`Session: ${this.options.sessionId}`, `Resume: oi -s ${this.options.sessionId}`])
 
     if (name === "/quit") return this.done()
 

@@ -69,8 +69,10 @@ Follow along in `source/engine/src/agent.ts`.
 
 The link between "a span" and "a file" is `source/engine/src/tracer.ts`: an
 Effect tracer whose `span()` writes the open file and whose `end()` writes the
-finished one. The agent loop only ever calls `Effect.withSpan`; persistence is
-a side effect of tracing.
+finished one. Normal agent, model and tool execution uses `Effect.withSpan`;
+persistence is a side effect of tracing. Handoff bootstrap copies use the
+synchronous span writer in `source/engine/src/handoff.ts`, shared by initial
+creation and crash recovery.
 
 ## Concept to file
 
@@ -182,7 +184,12 @@ These work best on the session you are in, because the evidence is right there.
   rebuilt by reading its root spans, and the next model request comes from
   `contextFor` reading that session's latest `LLM` span, exactly as for the
   next step of a running turn. `/resume` lists sessions from their root spans
-  (`source/cli/src/sessions.ts`) and hides ones with no turns.
+  (`source/cli/src/sessions.ts`) and hides unused sessions, but includes a
+  pending handoff seed even before its first agent turn. The status bar in
+  `source/cli/src/tui/app.ts` keeps an 18-character session-id prefix ahead of
+  optional model/usage details, so it survives status-line crowding. `/session`
+  prints the full copyable ID and resume command for both hosts and joined
+  peers.
 - **"What does /compact do?"** `runTurn` in `source/engine/src/agent.ts`
   records the command as an `AGENT` root with `metadata.oi_agent.operation =
   "compact"`. Its `context.compact` `CHAIN` child records the exact source
