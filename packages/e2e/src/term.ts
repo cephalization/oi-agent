@@ -19,6 +19,8 @@ export interface Terminal {
   line(text: string): Promise<void>
   /** The screen and scrollback as plain text. */
   screen(): Promise<string>
+  /** Only the visible viewport, excluding terminal scrollback. */
+  viewport(): Promise<string>
   /** Resolve with the screen once it matches, or fail with the last screen after `timeoutMs`. */
   waitFor(pattern: RegExp, timeoutMs?: number): Promise<string>
   /** The program's exit status once it has exited, else `undefined` after `timeoutMs`. */
@@ -97,6 +99,12 @@ const decodeCreated = Schema.decodeUnknownSync(Created)
 const ExitPayload = Schema.fromJsonString(Schema.Struct({ exit_code: Schema.optionalKey(Schema.Int) }))
 const decodeExit = Schema.decodeUnknownOption(ExitPayload)
 
+const decodeSize = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Struct({ rows: Schema.Int })))
+
+const decodeFormat = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ content: Schema.String })),
+)
+
 export class RexTerminal implements Terminal {
   private readonly rex: string
   readonly session: string
@@ -147,6 +155,19 @@ export class RexTerminal implements Terminal {
 
   async screen(): Promise<string> {
     return exec(this.rex, ["capture", ...this.target(), "--trim"])
+  }
+
+  async viewport(): Promise<string> {
+    const [size, formatted] = await Promise.all([
+      exec(this.rex, ["block", "call", ...this.target(), "size"]),
+      exec(this.rex, ["block", "call", ...this.target(), "format", '{"format":"vt"}']),
+    ])
+
+    // VT format keeps the blank screen rows that text capture omits.
+    const visible = decodeFormat(formatted).content.split("\r\n").slice(-decodeSize(size).rows).join("\n")
+
+    // oxlint-disable-next-line no-control-regex
+    return visible.replace(/\u001B\[[0-9;?]*[A-Za-z]/g, "")
   }
 
   async waitFor(pattern: RegExp, timeoutMs = 60_000): Promise<string> {

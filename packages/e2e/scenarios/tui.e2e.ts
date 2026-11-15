@@ -29,6 +29,45 @@ describe("interactive", () => {
     expect(await term.exited()).toBe(0)
   })
 
+  scenario(
+    "session switches start a fresh viewport without deleting scrollback",
+    { needs: ["rex"] },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(PROMPT)
+      const first = s.spans.onlySession()
+
+      await term.line("/session")
+      await term.waitFor(new RegExp(`Resume: oi -s ${first}`))
+      await term.line("/new")
+
+      const second = await s.spans.waitFor("second session", () =>
+        s.spans.sessions().find((id) => id !== first),
+      )
+
+      await s.spans.waitFor("second session viewport", async () =>
+        (await term.viewport()).includes(`session ${second.slice(0, 18)}`) ? true : undefined,
+      )
+      const secondView = await term.viewport()
+
+      expect(secondView).toMatch(/^oi-agent /)
+      expect(secondView).not.toContain(`Resume: oi -s ${first}`)
+      expect(await term.screen()).toContain(`Resume: oi -s ${first}`)
+      await term.line("/session")
+      await term.waitFor(new RegExp(`Resume: oi -s ${second}`))
+      await term.line(`/resume ${first}`)
+      await s.spans.waitFor("first session viewport", async () =>
+        (await term.viewport()).includes(`session ${first.slice(0, 18)}`) ? true : undefined,
+      )
+      const firstView = await term.viewport()
+
+      expect(firstView).toMatch(/^oi-agent /)
+      expect(firstView).not.toContain(`Resume: oi -s ${second}`)
+      expect(await term.screen()).toContain(`Resume: oi -s ${second}`)
+    },
+  )
+
   scenario("asks before a mutating tool, and records allow and deny", { needs: ["rex"] }, async (s) => {
     const term = await s.tui()
 

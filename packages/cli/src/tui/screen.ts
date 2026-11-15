@@ -62,6 +62,18 @@ export class Screen {
     this.out.write(`${control.beginFrame}${this.erase()}${text}${this.paint(this.last)}${control.endFrame}`)
   }
 
+  /** Start a blank viewport, pushing prior output into scrollback instead of erasing it. */
+  freshViewport(): void {
+    const rows = Math.max(this.out.rows ?? 24, 1)
+
+    this.out.write(
+      `${control.beginFrame}${this.erase()}${"\r\n".repeat(rows)}${control.home}${control.clearDown}${control.endFrame}`,
+    )
+    this.liveRows = 0
+    this.cursorRow = 0
+    this.last = { lines: [], cursor: { line: 0, column: 1 } }
+  }
+
   /** Remove the live region, leaving the cursor where it started. */
   clear(): void {
     this.out.write(this.erase())

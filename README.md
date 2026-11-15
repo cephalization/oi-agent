@@ -190,6 +190,9 @@ through the levels the current model accepts. The others are `/share`,
 The status bar keeps a session-id prefix visible, including after switching or
 handing off threads. Run `/session` to print the full copyable ID and an
 `oi -s <id>` resume command. Unique prefixes work with `/resume` and `oi -s`.
+Switching sessions with `/new`, `/resume`, or `/handoff` starts a fresh viewport
+with the destination banner and status bar. Earlier output stays in terminal
+scrollback; scroll up to see it.
 
 ### Compact context without rewriting history
 

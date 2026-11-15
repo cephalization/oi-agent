@@ -31,6 +31,13 @@ scenario(
     const turn = turns[0]!
 
     expect(await term.screen()).toContain(`session ${destination.slice(0, 18)}`)
+    const viewport = await term.viewport()
+
+    expect(viewport).toMatch(/^oi-agent /)
+    expect(viewport).toContain(`session ${destination.slice(0, 18)}`)
+    expect(viewport).toContain("Handoff from session")
+    expect(viewport).not.toContain(`Resume: oi -s ${source}`)
+    expect(await term.screen()).toContain(`Resume: oi -s ${source}`)
     await term.line("/session")
     await term.waitFor(new RegExp(`Session: ${destination}`))
     expect(turn.input).toBe(query)

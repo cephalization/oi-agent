@@ -1477,6 +1477,8 @@ class App {
 
     process.stdout.write(`${style.gray(farewell)}\n\n`)
 
+    if (next !== undefined) this.screen.freshViewport()
+
     return exit
   }
 }
