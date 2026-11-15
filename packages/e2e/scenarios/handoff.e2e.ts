@@ -14,6 +14,10 @@ scenario(
     await term.line("Remember: the migration codename is walrus. Reply with just: ok")
     const source = await s.spans.waitFor("source session", () => s.spans.sessions()[0])
     const first = (await s.spans.settledTurns(source, 1))[0]!
+
+    expect(await term.screen()).toContain(`session ${source.slice(0, 18)}`)
+    await term.line("/session")
+    await term.waitFor(new RegExp(`Session: ${source}`))
     const original = contextFor(s.spans.store, source, first.trace_id)
     const query = "What is the migration codename? Reply with just the codename."
 
@@ -26,6 +30,9 @@ scenario(
     const turns = await s.spans.settledTurns(destination, 1)
     const turn = turns[0]!
 
+    expect(await term.screen()).toContain(`session ${destination.slice(0, 18)}`)
+    await term.line("/session")
+    await term.waitFor(new RegExp(`Session: ${destination}`))
     expect(turn.input).toBe(query)
     expect(turn.output?.toLowerCase()).toContain("walrus")
     expect(readMetadata(turn.root).previous).toBeNull()

@@ -185,7 +185,11 @@ as text, tool calls and tool results. With the menu closed, Tab cycles approval 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/handoff`, `/tour`, `/help` and `/quit`.
+`/yolo`, `/auto`, `/compact`, `/handoff`, `/session`, `/tour`, `/help` and `/quit`.
+
+The status bar keeps a session-id prefix visible, including after switching or
+handing off threads. Run `/session` to print the full copyable ID and an
+`oi -s <id>` resume command. Unique prefixes work with `/resume` and `oi -s`.
 
 ### Compact context without rewriting history
 

@@ -24,6 +24,7 @@ export interface Command {
 
 export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/help", summary: "list commands and keys", hostOnly: false },
+  { name: "/session", summary: "print this session's full id and resume command", hostOnly: false },
   {
     name: "/resume",
     summary: "switch to a prior session, on disk or in Phoenix",
