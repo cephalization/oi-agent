@@ -63,6 +63,8 @@ const describeTool = (span: SpanFile, columns: number): string => {
   return `${style.magenta("⏵")} ${style.bold(span.name)} ${style.gray(clip(input, Math.max(columns - span.name.length - 6, 10)))}`
 }
 
+const failedVerdict = (file: AnnotationFile): boolean => file.annotation.metadata?.["failed"] === true
+
 export class Transcript {
   private readonly screen: Screen
   private readonly self: string
@@ -78,6 +80,8 @@ export class Transcript {
   private startedMs = 0
   private active = 0
   private bytes = 0
+  private passes = 0
+  private verdictTrace = ""
 
   constructor(screen: Screen, self: string) {
     this.screen = screen
@@ -215,17 +219,38 @@ export class Transcript {
     this.screen.commit([style.gray(`  ⎿ ${seconds(span)}`)])
   }
 
+  /**
+   * An evaluator verdict. A pass is only counted, for the status line; a
+   * failure, and a steering note that something was learned, is printed.
+   */
   annotation(file: AnnotationFile): void {
     if (!shownInTerminal(file)) return
 
-    const failed = file.annotation.metadata?.["failed"] === true
-    const mark = failed ? style.red("◆") : style.green("◆")
+    const traceId = file.target.trace_id ?? ""
+
+    if (traceId !== this.verdictTrace) {
+      this.verdictTrace = traceId
+      this.passes = 0
+    }
+
+    if (file.annotation.name !== "steering" && !failedVerdict(file)) {
+      this.passes += 1
+
+      return
+    }
+
+    const mark = failedVerdict(file) ? style.red("◆") : style.green("◆")
     const verdict = file.annotation.label ?? String(file.annotation.score ?? "")
 
     const reason =
       file.annotation.explanation === undefined ? "" : style.gray(` — ${file.annotation.explanation}`)
 
     this.screen.commit([`${mark} ${style.bold(file.annotation.name)}: ${verdict}${reason}`])
+  }
+
+  /** Evaluators that passed the most recent turn they reviewed. */
+  get passedEvals(): number {
+    return this.passes
   }
 
   private opened(span: SpanFile): void {
