@@ -74,7 +74,10 @@ Create your own session, and close it when done.
 ## Commits and releases
 
 - Use Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
-  `ci:`, `chore:`). PR titles are checked, since PRs are squash-merged.
+  `ci:`, `chore:`). PRs are rebase-merged (the repo allows nothing else), so
+  every commit on the branch lands on `main` as written: each commit message
+  must be a Conventional Commit, not just the PR title. Tidy the branch
+  history before merging (`gh pr merge --rebase`).
 - Every PR gets a changeset unless Tony says otherwise: a
   `.changeset/<name>.md` file naming the package and bump
   (`"oi-agent": minor`) above a release note written for users. Changesets

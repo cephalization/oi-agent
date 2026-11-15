@@ -360,8 +360,8 @@ Key files in the engine, in reading order: `format.ts` (the on-disk format),
 ## Development
 
 Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org).
-Pull requests are squash-merged and their titles are checked, because the
-title becomes the commit. Releases use [Changesets](https://github.com/changesets/changesets):
+Pull requests are rebase-merged, so every commit on a branch lands on `main`
+and each commit message must follow the convention; titles are checked too. Releases use [Changesets](https://github.com/changesets/changesets):
 each pull request that changes something users see adds a `.changeset/*.md`
 file (`pnpm changeset`) naming the bump and a release note. On each push to
 `main`, a "version packages" pull request collects them into versions and

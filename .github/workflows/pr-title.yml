@@ -1,7 +1,7 @@
 name: PR title
 
-# Pull requests are squash-merged, so the title becomes the commit message
-# the CHANGELOG links to. Keep it a Conventional Commit.
+# Pull requests are rebase-merged, so their commits land on main as written;
+# this checks the title, which should match them. Keep it a Conventional Commit.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
