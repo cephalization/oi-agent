@@ -135,6 +135,13 @@ These work best on the session you are in, because the evidence is right there.
 - **"How does an eval change your behaviour?"** Show an annotation file, then
   the `<eval-feedback>` block at the start of the next turn's first request,
   then the rules file if a rule was learned.
+- **"Where do eval results show up?"** `Transcript.annotation`
+  (`source/cli/src/tui/transcript.ts`) prints a failed verdict, and a
+  `steering` note that something was learned, in the transcript. A pass is
+  only counted: the status line shows `◆ N evals passed` for the latest
+  turn reviewed. `/verdicts` (`verdicts` in `source/cli/src/tui/app.ts`)
+  reads that turn's annotation files from disk and prints every field,
+  passes included.
 - **"How do you learn from my corrections?"** Two ways. The system prompt
   tells the agent to call `create_eval` when asked for something to always or
   never do. And after each turn, `detectSteering`

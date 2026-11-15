@@ -22,7 +22,9 @@ import {
   type ModelOption,
   formatBytes,
   formatShareLink,
+  branchTo,
   listRuleVersions,
+  loadSession,
   loadEvals,
   type PeerConnection,
   type PeerServer,
@@ -427,6 +429,12 @@ class App {
 
     if (transcript.totalTokens > 0) add(style.gray(`${compact(transcript.totalTokens)} tokens`), true)
 
+    if (transcript.passedEvals > 0)
+      add(
+        style.green(`◆ ${transcript.passedEvals} eval${transcript.passedEvals === 1 ? "" : "s"} passed`),
+        false,
+      )
+
     if (transcript.decisionTokens > 0)
       add(
         style.gray(
@@ -571,6 +579,47 @@ class App {
   }
 
   // --- commands -----------------------------------------------------------
+
+  /** Every annotation on the latest turn that has any, read from disk, with all its fields. */
+  private verdicts(): Array<string> {
+    const { store, sessionId } = this.options
+    const view = loadSession(store, sessionId)
+    const turns = view.head === undefined ? [] : branchTo(view, view.head.trace_id)
+    const annotations = store.listAnnotations(sessionId)
+    const columns = this.screen.columns - 4
+
+    const turn = turns.findLast((candidate) =>
+      annotations.some((file) => file.target.trace_id === candidate.trace_id),
+    )
+
+    if (turn === undefined) return [style.gray("No evaluator has reviewed a turn in this session yet.")]
+
+    const lines = [
+      style.gray(`Verdicts on the turn "${clip(turn.input.replaceAll(/\s+/g, " "), columns - 20)}":`),
+    ]
+
+    for (const file of annotations.filter((candidate) => candidate.target.trace_id === turn.trace_id)) {
+      const { name, label, score, annotator_kind, explanation, metadata } = file.annotation
+      const failed = metadata?.["failed"] === true
+
+      const verdict = [label, score === undefined ? undefined : `score ${score}`].filter(
+        (part) => part !== undefined,
+      )
+
+      lines.push(
+        "",
+        `${failed ? style.red("◆") : style.green("◆")} ${style.bold(name)}: ${verdict.join(", ")} ${style.gray(`(${annotator_kind})`)}`,
+      )
+
+      if (explanation !== undefined)
+        lines.push(...explanation.split("\n").flatMap((line) => wrap(`  ${line}`, columns)))
+
+      if (metadata !== undefined && Object.keys(metadata).length > 0)
+        lines.push(...wrap(`  ${JSON.stringify(metadata)}`, columns).map((line) => style.gray(line)))
+    }
+
+    return lines
+  }
 
   private async startShare(local: boolean): Promise<void> {
     const { engine, sessionId } = this.options
@@ -1262,6 +1311,8 @@ class App {
         evals.length === 0 ? ["No evaluators yet. Ask the agent for a standing check to create one."] : evals,
       )
     }
+
+    if (name === "/verdicts") return this.screen.commit(this.verdicts())
 
     if (name === "/rules") {
       const rules = readRules(this.cwd()).trim()

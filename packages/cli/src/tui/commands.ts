@@ -64,6 +64,11 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   { name: "/unshare", summary: "stop sharing", hostOnly: true },
   { name: "/evals", summary: "list the evaluators that review each turn", hostOnly: false },
+  {
+    name: "/verdicts",
+    summary: "show every evaluator verdict on the last reviewed turn, passes included",
+    hostOnly: false,
+  },
   { name: "/rules", summary: "show rules learned from evaluator failures", hostOnly: false },
   { name: "/revert", summary: "undo the most recent learned rule", hostOnly: true },
   { name: "/export", summary: "send this session to Phoenix now", hostOnly: true },

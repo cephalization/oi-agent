@@ -186,7 +186,7 @@ key and a comma-separated list of models. A server's models go straight into
 as text, tool calls and tool results. With the menu closed, Tab cycles approval modes (ask, auto when configured,
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
-`/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
+`/share local`, `/unshare`, `/evals`, `/verdicts`, `/rules`, `/revert`, `/export`,
 `/yolo`, `/auto`, `/compact`, `/handoff`, `/session`, `/tour`, `/help` and `/quit`.
 
 The status bar keeps a session-id prefix visible, including after switching or
@@ -290,6 +290,8 @@ that". It writes an evaluator to
 evaluator runs, its verdict is stored as an annotation and exported to
 Phoenix, a failure is shown to the agent at the start of its next turn, and
 the failure is distilled into a standing rule in that folder's `rules.md`.
+In the terminal a failure is printed in full; passes are only counted in the
+status bar, and `/verdicts` shows every verdict on the last reviewed turn.
 Nothing is written into the project itself. `/revert`
 undoes the latest rule.
 

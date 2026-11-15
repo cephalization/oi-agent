@@ -12,7 +12,7 @@ import {
 import { approvalAction } from "../src/tui/approvals.ts"
 import { Editor } from "../src/tui/editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
-import { EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
+import { type AnnotationFile, EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
 import { Screen } from "../src/tui/screen.ts"
 import { compact, Transcript } from "../src/tui/transcript.ts"
 import { MarkdownStream } from "../src/tui/markdown.ts"
@@ -258,5 +258,46 @@ describe("compact counts", () => {
     ]
 
     for (const [count, text] of cases) expect(compact(count)).toBe(text)
+  })
+})
+
+/** A screen that keeps what was committed instead of drawing it. */
+class RecordingScreen extends Screen {
+  readonly committed: Array<string> = []
+
+  override commit(lines: ReadonlyArray<string>): void {
+    this.committed.push(...lines.map(strip))
+  }
+}
+
+const verdict = (traceId: string, name: string, failed: boolean): AnnotationFile => ({
+  id: `${traceId}-${name}`,
+  scope: "trace",
+  target: { session_id: "s", trace_id: traceId },
+  created_at: "2026-11-15T00:00:00.000Z",
+  annotation: {
+    name,
+    label: failed ? "fail" : "pass",
+    annotator_kind: "CODE",
+    explanation: `${name} explanation`,
+    metadata: { failed, feedback: failed },
+  },
+})
+
+describe("evaluator verdicts", () => {
+  it("counts passes for the status line and prints only failures", () => {
+    const screen = new RecordingScreen(process.stdout)
+    const transcript = new Transcript(screen, "tony")
+
+    transcript.annotation(verdict("t1", "uses_pnpm", false))
+    transcript.annotation(verdict("t1", "ran_tests", false))
+    transcript.annotation(verdict("t1", "no_secrets", true))
+
+    expect(transcript.passedEvals).toBe(2)
+    expect(screen.committed).toEqual(["◆ no_secrets: fail — no_secrets explanation"])
+
+    // The next turn's verdicts replace the count rather than adding to it.
+    transcript.annotation(verdict("t2", "uses_pnpm", false))
+    expect(transcript.passedEvals).toBe(1)
   })
 })
