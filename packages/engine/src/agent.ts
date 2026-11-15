@@ -7,6 +7,7 @@
  * exactly what is on disk.
  */
 import { Context, Effect, Layer, Schema } from "effect"
+import { completeHandoff } from "./handoff.ts"
 import { sessionIdForTrace } from "./ids.ts"
 import { contextFor } from "./fold.ts"
 import { type AnnotationFile, type EngineMetadata, OI, writeMetadata } from "./format.ts"
@@ -324,39 +325,13 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       if (input.operation === "handoff") {
         const destination = sessionIdForTrace(root.traceId)
 
-        root.patchMetadata({ handoff_target: destination })
+        root.patchMetadata({ handoff_target: destination, checkpoint })
         root.flush()
 
-        if (env.store.readHeader(destination) === undefined) env.store.createSession(env.cwd, destination)
+        const command = env.store.readTraceRoots(env.sessionId, traceId).open[0]?.span
 
-        const brief = env.store
-          .readTrace(env.sessionId, checkpoint.trace_id)
-          .ended.find((span) => span.context.span_id === checkpoint.span_id)
-
-        if (brief === undefined) return yield* new ModelError({ message: "Handoff checkpoint is missing." })
-
-        yield* Effect.void.pipe(
-          Effect.withSpan(
-            "handoff.seed",
-            {
-              root: true,
-              attributes: {
-                [OI.SPAN_KIND]: "CHAIN",
-                [OI.USER_ID]: input.userId,
-                [OI.INPUT_VALUE]: input.text,
-                [OI.INPUT_MIME]: "text/plain",
-                [OI.OUTPUT_VALUE]: brief.attributes[OI.OUTPUT_VALUE] ?? "",
-                [OI.OUTPUT_MIME]: "text/plain",
-                [OI.METADATA]: writeMetadata(undefined, {
-                  handoff: { source_session_id: env.sessionId, checkpoint },
-                  workspace: workspaceOf(env.cwd),
-                }),
-              },
-            },
-            UNTRACED,
-          ),
-          Effect.withTracer(diskTracer(env.store, destination)),
-        )
+        if (command === undefined || completeHandoff(env.store, env.sessionId, command) === undefined)
+          return yield* new ModelError({ message: "Handoff checkpoint is missing." })
 
         const output = `Handoff ready in session ${destination}. Original thread preserved.`
 

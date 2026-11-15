@@ -214,8 +214,9 @@ These work best on the session you are in, because the evidence is right there.
   query in `input.value`, the brief in `output.value`, and source session and
   checkpoint references in `metadata.oi_agent.handoff`. These are provenance,
   not edges the fold follows. Only after this span ends does the terminal
-  switch sessions. `Engine.resumeHandoff` serializes pickup with the turn
-  queue, and submits the seed only if the destination has no agent turns.
+  switch sessions. Both `Engine.submit` and `Engine.resumeHandoff` serialize
+  pickup with the turn queue, before ordinary prompts or inbox inputs, and
+  submit the seed only if the destination has no agent turns.
   The first turn has `previous: null` and `handoff_seed` pointing at the local
   seed. Its first model request contains a labelled generated brief and a
   separate user message with the exact query. Later requests follow the usual

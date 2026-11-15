@@ -25,6 +25,7 @@ import {
   type DecisionSettings,
   mustAsk,
 } from "./decision.ts"
+import { completeHandoff, recoverHandoff } from "./handoff.ts"
 import { handoffSeedFor, loadSession } from "./fold.ts"
 import { type AnnotationFile, type EngineMetadata, OI, type SessionHeader, stringAttr } from "./format.ts"
 import { type Model, ModelError } from "./model.ts"
@@ -290,7 +291,15 @@ export class Engine {
    */
   submit(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
     const previous = this.queues.get(sessionId) ?? Promise.resolve()
-    const outcome = previous.then(() => this.execute(sessionId, prompt))
+
+    const outcome = previous.then(async () => {
+      // Seed pickup belongs to the engine queue, not to a UI's startup order.
+      const handoff = await this.pickupHandoff(sessionId)
+
+      if (handoff !== undefined && !handoff.ok) return handoff
+
+      return this.execute(sessionId, prompt)
+    })
 
     // Evaluators run after the answer is delivered but before the next turn starts.
     const settled = outcome.then((result) =>
@@ -311,30 +320,37 @@ export class Engine {
     const previous = this.queues.get(sessionId) ?? Promise.resolve()
 
     const outcome = previous.then(() => {
-      const view = loadSession(this.store, sessionId)
+      for (const turn of loadSession(this.store, sessionId).turns)
+        completeHandoff(this.store, sessionId, turn.root)
 
-      if (view.turns.length > 0) return undefined
-
-      const seed = handoffSeedFor(this.store, sessionId)
-
-      if (seed === undefined) return undefined
-
-      return this.execute(sessionId, {
-        text: stringAttr(seed, OI.INPUT_VALUE) ?? "",
-        userId: stringAttr(seed, OI.USER_ID) ?? this.settings.user,
-        previous: null,
-        handoffSeed: seed.context,
-      })
+      return this.pickupHandoff(sessionId)
     })
 
     this.queues.set(
       sessionId,
-      outcome.then((result) =>
-        result?.ok
-          ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined)
-          : undefined,
-      ),
+      outcome.then(() => undefined),
     )
+
+    return outcome
+  }
+
+  private async pickupHandoff(sessionId: string): Promise<TurnOutcome | undefined> {
+    if (loadSession(this.store, sessionId).turns.length > 0) return undefined
+
+    if (handoffSeedFor(this.store, sessionId) === undefined) recoverHandoff(this.store, sessionId)
+
+    const seed = handoffSeedFor(this.store, sessionId)
+
+    if (seed === undefined) return undefined
+
+    const outcome = await this.execute(sessionId, {
+      text: stringAttr(seed, OI.INPUT_VALUE) ?? "",
+      userId: stringAttr(seed, OI.USER_ID) ?? this.settings.user,
+      previous: null,
+      handoffSeed: seed.context,
+    })
+
+    if (outcome.ok) await this.hooks.afterTurn(sessionId, outcome.result.traceId).catch(() => undefined)
 
     return outcome
   }
