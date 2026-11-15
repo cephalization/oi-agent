@@ -62,7 +62,10 @@ skipped, not failed.
 
 The proxy sits in front of the CLI through `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL`. It stores response bodies byte for byte, streams
-included, and never stores request headers. Replies are matched in order per
+included, and never stores request headers. OpenAI's Responses API is also
+proxied over a WebSocket, which the CLI uses by default; a socket exchange is
+stored in the same form as an HTTP one, so one cassette replays over either
+transport. Replies are matched in order per
 method, path and model, so after changing a scenario's prompts, record it
 again. Replay serves the ChatGPT model as `openai/`, since a ChatGPT
 sign-in cannot be faked. Scenarios marked `liveOnly` (scored ones, real web

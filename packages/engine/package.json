@@ -12,6 +12,10 @@
     "@arizeai/openinference-semantic-conventions": "^2.16.0",
     "@arizeai/phoenix-evals": "^2.7.1",
     "ai": "7.0.152",
-    "effect": "^4.1.4"
+    "effect": "^4.1.4",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
   }
 }

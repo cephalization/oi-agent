@@ -155,6 +155,8 @@ Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`. `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
+OpenAI and ChatGPT models are called over a WebSocket so the prompt cache is
+reused between calls; `OI_AGENT_OPENAI_TRANSPORT=http` uses plain HTTP instead.
 
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |

@@ -11,6 +11,11 @@
  * ChatGPT). Responses are stored as raw bytes, server-sent events included,
  * and replayed verbatim, which is what oi itself does with stored bodies.
  *
+ * OpenAI's Responses API is also served over a WebSocket, which is how the CLI
+ * calls it by default. A socket exchange is stored in the same form as an
+ * HTTP one (the events as a server-sent stream, under `POST /responses`), so
+ * one cassette replays over either transport.
+ *
  * Exchanges are matched in order within a queue per method, path and model,
  * so a scenario must make the same calls in the same order as when it was
  * recorded. Volatile request content (temp paths, timestamps) is ignored.
@@ -23,6 +28,7 @@ import { setTimeout } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { gunzipSync, gzipSync } from "node:zlib"
 import { Option, Schema } from "effect"
+import WebSocket, { type WebSocket as ClientSocket, WebSocketServer } from "ws"
 
 export const ModelsMode = Schema.Literals(["live", "record", "replay"])
 
@@ -73,6 +79,51 @@ const readBody = async (request: IncomingMessage): Promise<Buffer> => {
 
 const queueKey = (method: string, rel: string, model: string): string => `${method} ${rel} ${model}`
 
+const EventType = Schema.fromJsonString(Schema.Struct({ type: Schema.String }))
+const decodeEventType = Schema.decodeUnknownOption(EventType)
+
+/** Events that end a Responses API response, on either transport. */
+const TERMINAL = new Set(["response.completed", "response.incomplete", "response.failed", "error"])
+
+const isTerminal = (message: string): boolean =>
+  Option.match(decodeEventType(message), { onNone: () => false, onSome: (event) => TERMINAL.has(event.type) })
+
+/** The `data:` payloads of a recorded server-sent event stream. */
+const ssePayloads = (body: string): Array<string> =>
+  body
+    .split(/\r?\n\r?\n/)
+    .map((event) =>
+      event
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n"),
+    )
+    .filter((data) => data !== "" && data !== "[DONE]")
+
+const socketError = (status: number, message: string): string =>
+  JSON.stringify({ type: "error", status, error: { type: "proxy_error", message } })
+
+interface Route {
+  readonly provider: string
+  readonly rel: string
+  readonly search: string
+}
+
+/** Where a proxied URL goes: the provider prefix and the path below the upstream root. */
+const routeOf = (requestUrl: string | undefined): Route => {
+  const url = new URL(requestUrl ?? "/", "http://proxy")
+  const [, provider = "", ...restParts] = url.pathname.split("/")
+  const rel = `/${restParts.join("/")}`
+
+  // The Anthropic SDK puts /v1 in the path; the AI SDK puts it in the base URL.
+  return {
+    provider,
+    rel: provider === "anthropic" && !rel.startsWith("/v1/") ? `/v1${rel}` : rel,
+    search: url.search,
+  }
+}
+
 /** Headers passed to the upstream: everything but hop-by-hop and encoding ones. */
 const forwardHeaders = (request: IncomingMessage): Headers => {
   const headers = new Headers()
@@ -91,6 +142,9 @@ export class ModelProxy {
   readonly mode: ModelsMode
   readonly cassette: string
   private readonly server: Server
+  private readonly sockets = new WebSocketServer({ noServer: true })
+  /** Upstream sockets opened while recording, closed when the proxy stops. */
+  private readonly upstreams = new Set<WebSocket>()
   private readonly recorded: Array<Exchange> = []
   private readonly queues = new Map<string, Array<Exchange>>()
   /** Exchanges still streaming from upstream; the CLI may exit before they finish. */
@@ -118,6 +172,10 @@ export class ModelProxy {
 
       this.inflight.add(handled)
       void handled.finally(() => this.inflight.delete(handled))
+    })
+
+    this.server.on("upgrade", (request, socket, head) => {
+      this.sockets.handleUpgrade(request, socket, head, (client) => this.attach(request, client))
     })
 
     if (mode === "replay") {
@@ -162,14 +220,113 @@ export class ModelProxy {
     return env
   }
 
+  /** Serve one client WebSocket: each message is a `response.create` request. */
+  private attach(request: IncomingMessage, client: ClientSocket): void {
+    const { provider, rel } = routeOf(request.url)
+    let upstream: Promise<WebSocket> | undefined
+    // One response at a time per connection, in the order the requests arrived.
+    let tail = Promise.resolve()
+
+    const exchange = async (payload: string): Promise<void> => {
+      const model = modelOf(payload)
+
+      if (this.mode === "replay") return this.replaySocket(rel, model, client)
+
+      upstream ??= this.dial(provider, rel, request.headers.authorization)
+
+      const messages = await this.relay(await upstream, payload, client)
+
+      this.recorded.push({
+        method: "POST",
+        path: rel,
+        model,
+        status: 200,
+        content_type: "text/event-stream",
+        body: messages.map((message) => `data: ${message}\n\n`).join(""),
+      })
+    }
+
+    client.on("message", (data: Buffer) => {
+      const handled = tail
+        .then(() => exchange(data.toString("utf8")))
+        .catch((error: Error) => {
+          client.send(socketError(599, error.message))
+        })
+
+      tail = handled
+      this.inflight.add(handled)
+      void handled.finally(() => this.inflight.delete(handled))
+    })
+  }
+
+  private dial(provider: string, rel: string, authorization: string | undefined): Promise<WebSocket> {
+    const root = UPSTREAMS.get(provider)
+
+    if (root === undefined) throw new Error(`Unknown provider prefix for a WebSocket: ${provider}`)
+
+    const headers = authorization === undefined ? {} : { authorization }
+    const socket = new WebSocket(`${root.replace(/^http/, "ws")}${rel}`, { headers })
+
+    this.upstreams.add(socket)
+
+    return new Promise((resolve, reject) => {
+      socket.once("open", () => resolve(socket))
+      socket.once("error", () => reject(new Error(`Could not open a WebSocket to ${provider}.`)))
+    })
+  }
+
+  /** Send one request upstream and pass its events to the client, returning them for the cassette. */
+  private relay(upstream: WebSocket, payload: string, client: ClientSocket): Promise<Array<string>> {
+    return new Promise((resolve, reject) => {
+      const messages: Array<string> = []
+
+      const finish = (settle: () => void): void => {
+        upstream.off("message", onMessage)
+        upstream.off("close", onClose)
+        settle()
+      }
+
+      const onMessage = (data: Buffer): void => {
+        const message = data.toString("utf8")
+
+        messages.push(message)
+        client.send(message)
+
+        if (isTerminal(message)) finish(() => resolve(messages))
+      }
+
+      const onClose = (): void =>
+        finish(() => reject(new Error("The upstream WebSocket closed mid-response.")))
+
+      upstream.on("message", onMessage)
+      upstream.on("close", onClose)
+      upstream.send(payload)
+    })
+  }
+
+  private replaySocket(rel: string, model: string, client: ClientSocket): void {
+    const next = (this.queues.get(queueKey("POST", rel, model)) ?? []).shift()
+
+    if (next === undefined) {
+      const miss = `POST ${rel} (model ${model || "none"})`
+
+      this.misses.push(miss)
+      client.send(socketError(599, `The cassette has no recorded reply for ${miss}.`))
+
+      return
+    }
+
+    if (next.status !== 200) {
+      client.send(socketError(next.status, next.body))
+
+      return
+    }
+
+    for (const message of ssePayloads(next.body)) client.send(message)
+  }
+
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const url = new URL(request.url ?? "/", "http://proxy")
-    const [, provider = "", ...restParts] = url.pathname.split("/")
-    let rel = `/${restParts.join("/")}`
-
-    // The Anthropic SDK puts /v1 in the path; the AI SDK puts it in the base URL.
-    if (provider === "anthropic" && !rel.startsWith("/v1/")) rel = `/v1${rel}`
-
+    const { provider, rel, search } = routeOf(request.url)
     const method = request.method ?? "GET"
     const body = await readBody(request)
     const model = modelOf(body.toString("utf8"))
@@ -178,13 +335,13 @@ export class ModelProxy {
 
     const upstream = UPSTREAMS.get(provider)
 
-    if (upstream === undefined) throw new Error(`Unknown provider prefix in ${url.pathname}`)
+    if (upstream === undefined) throw new Error(`Unknown provider prefix in ${request.url ?? "/"}`)
 
     const init: RequestInit = { method, headers: forwardHeaders(request), redirect: "error" }
 
     if (method !== "GET" && method !== "HEAD") init.body = body
 
-    const reply = await fetch(`${upstream}${rel}${url.search}`, init)
+    const reply = await fetch(`${upstream}${rel}${search}`, init)
     const contentType = reply.headers.get("content-type") ?? "application/octet-stream"
 
     response.writeHead(reply.status, { "content-type": contentType })
@@ -239,6 +396,11 @@ export class ModelProxy {
     // Let exchanges the CLI stopped reading finish recording (a stream's last
     // events can arrive after the CLI has what it needs and exited).
     await Promise.race([Promise.allSettled(this.inflight), setTimeout(30_000)])
+
+    for (const upstream of this.upstreams) upstream.terminate()
+
+    for (const client of this.sockets.clients) client.terminate()
+
     await new Promise<void>((resolve) => {
       this.server.close(() => resolve())
       this.server.closeAllConnections()

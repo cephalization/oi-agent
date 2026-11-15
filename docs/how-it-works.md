@@ -294,6 +294,20 @@ These work best on the session you are in, because the evidence is right there.
   exit the launcher puts the terminal's settings back. The protocol is tested
   against fake CLIs in `packages/cli/test/launcher.test.ts`. `/reload` waits for a running turn. Continuing a turn that a restart
   cut short is not built yet: the next turn folds it in as interrupted.
+- **"Why are calls to OpenAI sent over a WebSocket?"** For the prompt cache.
+  OpenAI finds a cached prefix only on the machine that wrote it, and plain
+  HTTP requests land on different machines: measured on a ChatGPT plan, even
+  an identical request repeated back to back usually read nothing from the
+  cache. `source/engine/src/openai-socket.ts` keeps one connection per
+  conversation, which stays on one machine, so calls after the first reuse
+  the prefix. Nothing else changes: each call still sends the whole
+  conversation derived from the spans, `previous_response_id` is never used,
+  and the request stored on the span is the same HTTP body either way. Show
+  `network.protocol.name` on an `LLM` span (`websocket` or `http`) next to
+  `llm.token_count.prompt_details.cache_read`. A connection is replaced
+  before OpenAI's 60-minute limit and after an interrupt, which costs one
+  uncached call; if a socket cannot be opened the call goes over HTTP.
+  `OI_AGENT_OPENAI_TRANSPORT=http` turns it off.
 - **"How do you talk to OpenAI or a local model?"** Each API is a dialect
   (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
   Completions (what "OpenAI-compatible" servers speak) and OpenAI
