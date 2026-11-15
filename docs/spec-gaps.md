@@ -67,6 +67,29 @@ replay policy, not a standard meaning of `CHAIN`. Live testing verified that
 the new fields and brief survive Phoenix export/import with identical folded
 context. No historical request or response is rewritten.
 
+## Handoff between sessions
+
+A root destination `CHAIN` (`handoff.seed`) records the actual bootstrap
+operation: input is the user's exact query, output is the generated brief.
+OpenInference has no context-transfer or durable-prompt-consumption semantics.
+The harness records these under `metadata.oi_agent`:
+
+- `operation = "handoff"` and `handoff_target` on the source command's `AGENT`
+  root. The destination id is derived from this trace id. No checkpoint is
+  activated in the source context.
+- `handoff = { source_session_id, checkpoint: { trace_id, span_id } }` on the
+  destination seed, linking back to the real source summarization operation.
+- `handoff_seed = { trace_id, span_id }` on the first destination agent turn,
+  recording consumption of its local seed. `previous` is null: this is a new
+  conversation, not a continuation edge across sessions.
+
+The seed is an ended span so it exports/imports through Phoenix even if no
+model call has started in the destination. Query and brief remain distinct in
+the first model request. The fold never fetches source-session files. A seed
+is picked up only while the destination has no agent turns; interrupted turns
+are not automatically rerun because tools may have had effects. This policy
+is harness-specific, not a standard meaning of `CHAIN` or `session.id`.
+
 ## Round trip through Phoenix
 
 Checked by importing a session back from Phoenix's REST API

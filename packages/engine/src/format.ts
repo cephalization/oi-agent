@@ -224,9 +224,15 @@ export const EngineMetadata = Schema.Struct({
   /** The turn this turn continues. `null` for the first turn of a session. */
   previous: Schema.optionalKey(Schema.NullOr(SpanRef)),
   /** A user-requested context transformation, not an ordinary model turn. */
-  operation: Schema.optionalKey(Schema.Literal("compact")),
+  operation: Schema.optionalKey(Schema.Literals(["compact", "handoff"])),
   /** The ended CHAIN checkpoint explicitly activated by this successful turn. */
   checkpoint: Schema.optionalKey(SpanRef),
+  /** Source command's destination, also recorded before creating it for crash recovery. */
+  handoff_target: Schema.optionalKey(Schema.String),
+  /** On a destination bootstrap CHAIN: provenance only, never a context-following edge. */
+  handoff: Schema.optionalKey(Schema.Struct({ source_session_id: Schema.String, checkpoint: SpanRef })),
+  /** On the first destination AGENT root: the local bootstrap consumed by this turn. */
+  handoff_seed: Schema.optionalKey(SpanRef),
   /** On a context.compact CHAIN: the exact branch head replaced by its output. */
   compaction: Schema.optionalKey(
     Schema.Struct({

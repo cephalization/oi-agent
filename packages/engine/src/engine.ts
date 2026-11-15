@@ -25,8 +25,8 @@ import {
   type DecisionSettings,
   mustAsk,
 } from "./decision.ts"
-import { loadSession } from "./fold.ts"
-import type { AnnotationFile, SessionHeader } from "./format.ts"
+import { handoffSeedFor, loadSession } from "./fold.ts"
+import { type AnnotationFile, type EngineMetadata, OI, type SessionHeader, stringAttr } from "./format.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
 import { readRules } from "./rules.ts"
@@ -51,7 +51,8 @@ export interface Prompt {
   readonly userId: string
   /** Trace to continue from. Omitted means the session head; `null` starts over. */
   readonly previous?: string | null
-  readonly operation?: "compact" | undefined
+  readonly operation?: "compact" | "handoff" | undefined
+  readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
 }
 
@@ -293,12 +294,47 @@ export class Engine {
 
     // Evaluators run after the answer is delivered but before the next turn starts.
     const settled = outcome.then((result) =>
-      result.ok && prompt.operation !== "compact"
+      result.ok && prompt.operation === undefined
         ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined)
         : undefined,
     )
 
     this.queues.set(sessionId, settled)
+
+    return outcome
+  }
+
+  /** Consume a durable destination seed once, serialized with all other turns.
+   * An interrupted first turn is not retried automatically: tools may have run.
+   */
+  resumeHandoff(sessionId: string): Promise<TurnOutcome | undefined> {
+    const previous = this.queues.get(sessionId) ?? Promise.resolve()
+
+    const outcome = previous.then(() => {
+      const view = loadSession(this.store, sessionId)
+
+      if (view.turns.length > 0) return undefined
+
+      const seed = handoffSeedFor(this.store, sessionId)
+
+      if (seed === undefined) return undefined
+
+      return this.execute(sessionId, {
+        text: stringAttr(seed, OI.INPUT_VALUE) ?? "",
+        userId: stringAttr(seed, OI.USER_ID) ?? this.settings.user,
+        previous: null,
+        handoffSeed: seed.context,
+      })
+    })
+
+    this.queues.set(
+      sessionId,
+      outcome.then((result) =>
+        result?.ok
+          ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined)
+          : undefined,
+      ),
+    )
 
     return outcome
   }
@@ -340,9 +376,10 @@ export class Engine {
       text: prompt.text,
       userId: prompt.userId,
       previous: this.resolvePrevious(sessionId, prompt),
-      injected: prompt.operation === "compact" ? [] : this.hooks.pendingFeedback(sessionId),
+      injected: prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
       operation: prompt.operation,
+      handoffSeed: prompt.handoffSeed,
     }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver(sessionId))))
 
     const fiber = Effect.runFork(turn)

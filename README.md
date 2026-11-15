@@ -185,7 +185,7 @@ as text, tool calls and tool results. With the menu closed, Tab cycles approval 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/tour`, `/help` and `/quit`.
+`/yolo`, `/auto`, `/compact`, `/handoff`, `/tour`, `/help` and `/quit`.
 
 ### Compact context without rewriting history
 
@@ -200,7 +200,29 @@ conversation. It is lossy: inspect the `context.compact` span's output if you
 need to check what was retained. Resume from disk or Phoenix uses the same
 checkpoint. Failed or interrupted compactions retain the original context.
 Run it between turns, before the context is too large to summarize. Automatic
-compaction and handoff into a new thread are not implemented yet.
+compaction is not implemented yet.
+
+### Hand off work into a new thread
+
+`/handoff <query>` writes a task-focused working brief, opens a fresh session
+in the same directory, and submits your query there. For example:
+
+```text
+/handoff Implement the migration using the decisions above, then run its tests.
+```
+
+The query is kept separate from the generated brief, not rewritten by the
+summarizer. The original thread and its model context are preserved. The new
+thread stores its own brief and provenance, so resuming it from disk or Phoenix
+does not need the old thread's files. It keeps your current model and approval
+mode when opened in the running CLI.
+
+Run handoff between turns, with a nonempty query and an existing conversation.
+If summarization fails, oi stays in the source thread. A destination created
+before a crash is recoverable through `/resume`; its query and brief are durable
+spans, not an in-memory pending prompt. An interrupted destination turn is not
+automatically retried, because its tools may already have run. Handoff currently
+requires the slash command; natural-language trigger phrases are not detected.
 
 ### From source
 

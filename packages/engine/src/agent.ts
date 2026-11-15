@@ -7,6 +7,7 @@
  * exactly what is on disk.
  */
 import { Context, Effect, Layer, Schema } from "effect"
+import { sessionIdForTrace } from "./ids.ts"
 import { contextFor } from "./fold.ts"
 import { type AnnotationFile, type EngineMetadata, OI, writeMetadata } from "./format.ts"
 import { Model, ModelError } from "./model.ts"
@@ -90,7 +91,8 @@ export interface TurnInput {
   readonly userId: string
   /** The turn to continue from; `null` starts the conversation. */
   readonly previous: { readonly trace_id: string; readonly span_id: string } | null
-  readonly operation?: "compact" | undefined
+  readonly operation?: "compact" | "handoff" | undefined
+  readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
   /** Eval feedback to put in front of the user's text. */
   readonly injected?: ReadonlyArray<AnnotationFile>
@@ -100,6 +102,7 @@ export interface TurnResult {
   readonly traceId: string
   readonly output: string
   readonly stopReason: string
+  readonly destination?: string
   readonly steps: number
 }
 
@@ -312,8 +315,58 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
     // The fold reads this turn's input from the root span's in-flight file.
     root.flush()
 
-    if (input.operation === "compact") {
+    if (input.operation !== undefined) {
+      if (input.operation === "handoff" && input.text.trim() === "")
+        return yield* new ModelError({ message: "Usage: /handoff <query>" })
+
       const checkpoint = yield* compactContext(env, input)
+
+      if (input.operation === "handoff") {
+        const destination = sessionIdForTrace(root.traceId)
+
+        root.patchMetadata({ handoff_target: destination })
+        root.flush()
+
+        if (env.store.readHeader(destination) === undefined) env.store.createSession(env.cwd, destination)
+
+        const brief = env.store
+          .readTrace(env.sessionId, checkpoint.trace_id)
+          .ended.find((span) => span.context.span_id === checkpoint.span_id)
+
+        if (brief === undefined) return yield* new ModelError({ message: "Handoff checkpoint is missing." })
+
+        yield* Effect.void.pipe(
+          Effect.withSpan(
+            "handoff.seed",
+            {
+              root: true,
+              attributes: {
+                [OI.SPAN_KIND]: "CHAIN",
+                [OI.USER_ID]: input.userId,
+                [OI.INPUT_VALUE]: input.text,
+                [OI.INPUT_MIME]: "text/plain",
+                [OI.OUTPUT_VALUE]: brief.attributes[OI.OUTPUT_VALUE] ?? "",
+                [OI.OUTPUT_MIME]: "text/plain",
+                [OI.METADATA]: writeMetadata(undefined, {
+                  handoff: { source_session_id: env.sessionId, checkpoint },
+                  workspace: workspaceOf(env.cwd),
+                }),
+              },
+            },
+            UNTRACED,
+          ),
+          Effect.withTracer(diskTracer(env.store, destination)),
+        )
+
+        const output = `Handoff ready in session ${destination}. Original thread preserved.`
+
+        root.attribute(OI.OUTPUT_VALUE, output)
+        root.attribute(OI.OUTPUT_MIME, "text/plain")
+        root.patchMetadata({ session_bytes: env.store.sessionBytes(env.sessionId) })
+
+        return { traceId, output, stopReason: "handoff", steps: 1, destination }
+      }
+
       const output = "Context compacted. Original history preserved."
 
       root.patchMetadata({ checkpoint, session_bytes: env.store.sessionBytes(env.sessionId) })
@@ -374,6 +427,8 @@ export const runTurn = (
   }))
 
   if (input.operation !== undefined) metadata.operation = input.operation
+
+  if (input.handoffSeed !== undefined) metadata.handoff_seed = input.handoffSeed
 
   if (input.inboxId !== undefined) metadata.inbox_id = input.inboxId
 

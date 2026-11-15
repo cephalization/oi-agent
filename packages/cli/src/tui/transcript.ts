@@ -219,7 +219,7 @@ export class Transcript {
     if (kind === "AGENT" && span.parent_id === null) {
       this.turns.add(span.context.trace_id)
 
-      if (readMetadata(span).operation === "compact") this.compactions.add(span.context.trace_id)
+      if (readMetadata(span).operation !== undefined) this.compactions.add(span.context.trace_id)
       this.active += 1
       this.startedMs = Date.now()
       this.wroteText = false

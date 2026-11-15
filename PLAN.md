@@ -118,8 +118,11 @@ Built and verified against the live Anthropic API and a Phoenix 21 server:
   evaluators with feedback and learned rules, `/share` with driver and viewer
   roles over tailcat.
 - Manual `/compact` now records a CHAIN/LLM checkpoint and explicit activation;
-  resume from disk and Phoenix is verified. Automatic compaction and handoff
-  are not built. The first version replaces the whole preceding context.
+  resume from disk and Phoenix is verified. `/handoff <query>` reuses the
+  summarizer and writes a self-contained destination seed before switching
+  threads; restart pickup, branch isolation and Phoenix restore are verified.
+  Automatic compaction is not built. Compaction replaces the whole preceding
+  context; handoff submits the query separately from the generated brief.
 - Not built: forks in the UI (the format supports them),
   subagents, the GPUI viewer, pulling human annotations back from Phoenix,
   experiments over past spans, a browser viewer.
