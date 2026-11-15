@@ -183,6 +183,27 @@ These work best on the session you are in, because the evidence is right there.
   `contextFor` reading that session's latest `LLM` span, exactly as for the
   next step of a running turn. `/resume` lists sessions from their root spans
   (`source/cli/src/sessions.ts`) and hides ones with no turns.
+- **"What does /compact do?"** `runTurn` in `source/engine/src/agent.ts`
+  records the command as an `AGENT` root with `metadata.oi_agent.operation =
+  "compact"`. Its `context.compact` `CHAIN` child records the exact source
+  head, manual trigger and policy version; an `LLM` child of that chain
+  records the real summarization request and response, using the current
+  model with no tools. It receives a normalized text/tool transcript as data,
+  not a continuation of old tool calls or signed reasoning blocks; the
+  original raw wire bodies remain untouched. The chain's `output.value` is
+  the generated brief.
+  Only after that chain ends does the root record `metadata.oi_agent.checkpoint`
+  pointing at it. `contextFor` activates it only when the root has ended
+  successfully, returning the brief explicitly labelled as lossy generated
+  context, not new user instructions. Failed/interrupted roots instead return
+  their predecessor's context. Old span files and other branches never change.
+  The fold only treats direct `LLM` children of an agent root as continuation
+  calls, so it cannot accidentally replay the summarizer's conversation.
+  Compaction does not consume pending evaluator feedback or run turn judges.
+  The terminal hides the summarizer's text stream but counts its tokens and
+  displays the root's completion notice. This first version replaces the
+  whole preceding context; it does not retain a verbatim suffix, compact
+  automatically, or create a handoff session.
 - **"Can I resume from Phoenix?"** Yes, because the raw request and response
   bodies the fold replays reach Phoenix byte for byte. `oi resume <id or URL>`
   (`source/engine/src/remote/`) reads a session's spans and annotations back

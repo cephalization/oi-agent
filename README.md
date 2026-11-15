@@ -185,7 +185,22 @@ as text, tool calls and tool results. With the menu closed, Tab cycles approval 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/tour`, `/help` and `/quit`.
+`/yolo`, `/auto`, `/compact`, `/tour`, `/help` and `/quit`.
+
+### Compact context without rewriting history
+
+`/compact [focus]` summarizes this branch into a working brief for the next
+model request. For example: `/compact preserve the migration decisions and
+remaining tests`. It uses the current model, with no tools, and records the
+summarization as a `CHAIN` span with an `LLM` child. The original spans stay
+unchanged; the terminal reports when the checkpoint is committed.
+
+The brief replaces the whole preceding model context, not the visible
+conversation. It is lossy: inspect the `context.compact` span's output if you
+need to check what was retained. Resume from disk or Phoenix uses the same
+checkpoint. Failed or interrupted compactions retain the original context.
+Run it between turns, before the context is too large to summarize. Automatic
+compaction and handoff into a new thread are not implemented yet.
 
 ### From source
 

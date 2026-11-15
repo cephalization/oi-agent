@@ -1168,6 +1168,24 @@ class App {
 
     if (name === "/resume") return this.resume(argument)
 
+    if (name === "/compact") {
+      const { engine, sessionId, user } = this.options
+
+      if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+      if (engine === undefined) return
+
+      const previous = this.from
+
+      this.from = undefined
+
+      const outcome = await engine.submit(sessionId, { text, userId: user, previous, operation: "compact" })
+
+      if (!outcome.ok) this.say([outcome.message])
+
+      return
+    }
+
     if (name === "/new") return this.startNew()
 
     if (name === "/reload") return this.reload()

@@ -176,6 +176,8 @@ export class Transcript {
     ])
   }
 
+  private readonly compactions = new Set<string>()
+
   private turnEnded(span: EndedSpan): void {
     this.flushText()
     this.active = Math.max(this.active - 1, 0)
@@ -216,6 +218,8 @@ export class Transcript {
 
     if (kind === "AGENT" && span.parent_id === null) {
       this.turns.add(span.context.trace_id)
+
+      if (readMetadata(span).operation === "compact") this.compactions.add(span.context.trace_id)
       this.active += 1
       this.startedMs = Date.now()
       this.wroteText = false
@@ -247,7 +251,7 @@ export class Transcript {
   }
 
   private delta(event: Extract<StoreEvent, { type: "delta" }>): void {
-    if (!this.turns.has(event.trace_id)) return
+    if (!this.turns.has(event.trace_id) || this.compactions.has(event.trace_id)) return
 
     if (event.delta.k === "text") this.text(event.delta.d)
 
