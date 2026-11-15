@@ -1,5 +1,23 @@
 # oi-agent
 
+## 0.5.0
+
+### Minor Changes
+
+- [#26](https://github.com/cephalization/oi-agent/pull/26) [`1eb7201`](https://github.com/cephalization/oi-agent/commit/1eb7201c6f3de1ebea60eefcc07d584aada40ce9) Thanks [@cephalization](https://github.com/cephalization)! - Add `/compact [focus]` to summarize a thread's context without changing its historical spans. Compaction is traced with explicit checkpoint provenance, survives resume from disk or Phoenix, and retains the original context if summarization fails or is interrupted.
+
+- [#29](https://github.com/cephalization/oi-agent/pull/29) [`25130bd`](https://github.com/cephalization/oi-agent/commit/25130bd3e2297828cda8dcf7f16520a60fc9fdde) Thanks [@cephalization](https://github.com/cephalization)! - Call OpenAI and ChatGPT models over a WebSocket so the prompt cache is reused between calls. Over plain HTTP most calls on a ChatGPT plan read nothing from the cache; with one connection per conversation, calls after the first read most of the prompt from it, which lowers plan usage and latency in long sessions. oi falls back to HTTP when a socket cannot be opened, and `OI_AGENT_OPENAI_TRANSPORT=http` turns the WebSocket off. `LLM` spans now record the transport as `network.protocol.name`, and cache writes reported by OpenAI as `llm.token_count.prompt_details.cache_write`.
+
+- [#26](https://github.com/cephalization/oi-agent/pull/26) [`62e82b1`](https://github.com/cephalization/oi-agent/commit/62e82b1878c2931f20bc35ed1bb494cc7a9c833d) Thanks [@cephalization](https://github.com/cephalization)! - Add `/handoff <query>` to open a new thread with a generated working brief and your exact query. The original thread is preserved, and the new thread carries its own durable context and provenance for restart and Phoenix restore. Interrupted destination turns are not automatically retried.
+
+- [#26](https://github.com/cephalization/oi-agent/pull/26) [`2c1a552`](https://github.com/cephalization/oi-agent/commit/2c1a552ca4c15de380f42a944cb10d73387289d9) Thanks [@cephalization](https://github.com/cephalization)! - Keep the current session ID visible in the status bar, including after a handoff or session switch. Add `/session` to print the full copyable ID and resume command.
+
+### Patch Changes
+
+- [#27](https://github.com/cephalization/oi-agent/pull/27) [`a80b45c`](https://github.com/cephalization/oi-agent/commit/a80b45ce51ce313d9b147cac36f78970b25569f0) Thanks [@cephalization](https://github.com/cephalization)! - Make session switches visibly distinct: `/handoff`, `/new`, and `/resume` start a fresh viewport with the destination banner and status bar. Previous output remains available in terminal scrollback.
+
+- [#26](https://github.com/cephalization/oi-agent/pull/26) [`a14a767`](https://github.com/cephalization/oi-agent/commit/a14a767e9875e00545351babc24c675ab0133876) Thanks [@cephalization](https://github.com/cephalization)! - Repair handoffs interrupted between destination header creation and seed completion, using the source's durable spans without rerunning summarization. Initialize pending handoffs before ordinary queued or inbox prompts so the original query and brief cannot be bypassed.
+
 ## 0.4.0
 
 ### Minor Changes
