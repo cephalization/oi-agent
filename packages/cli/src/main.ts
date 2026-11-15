@@ -8,6 +8,7 @@ import { isCancelled } from "./prompts.ts"
 import { Providers } from "./providers.ts"
 import { ago, summarizeSessions } from "./sessions.ts"
 import { type Opened, type Phoenix, Sessions } from "./storage.ts"
+import { ProgramStatus } from "./program-status.ts"
 import { runApp } from "./tui/app.ts"
 import {
   type ApprovalMode,
@@ -532,7 +533,18 @@ const run = async (prompt: string): Promise<void> => {
 
   for (const note of notes) process.stderr.write(`\u001B[2m${note}\u001B[0m\n`)
 
-  const unsubscribe = store.subscribe(printEvents(sessionId))
+  const status = new ProgramStatus((text) => {
+    if (process.stdout.isTTY) process.stdout.write(text)
+  }, engine.redactor)
+
+  const print = printEvents(sessionId)
+
+  const unsubscribe = store.subscribe((event) => {
+    print(event)
+
+    if (event.session_id === sessionId) status.event(event)
+  })
+
   const phoenix = remote?.exporter
   const stopExport = phoenix?.watch()
 

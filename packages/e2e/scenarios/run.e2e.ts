@@ -12,6 +12,7 @@ describe("oi run", () => {
 
     expectOk(result)
     expect(result.stdout.toLowerCase()).toContain("pong")
+    expect(result.stdout).not.toContain("\u001B]7501;")
 
     const session = spans.onlySession()
     const [turn] = await spans.settledTurns(session, 1)

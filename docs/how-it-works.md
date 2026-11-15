@@ -95,6 +95,7 @@ creation and crash recovery.
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
 | Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
+| Terminal status (OSC 7501)                       | `source/cli/src/program-status.ts`, `source/cli/src/tui/ansi.ts`     |
 | The terminal interface                           | `source/cli/src/tui/`                                                |
 | Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                     |
 | Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                            |
@@ -104,6 +105,16 @@ creation and crash recovery.
 
 These work best on the session you are in, because the evidence is right there.
 
+- **"How does the terminal know you need attention?"** On a TTY,
+  `source/cli/src/program-status.ts` projects root AGENT open/end events into
+  OSC 7501 working, done, error or idle reports; the TUI's approval callbacks
+  report blocked/permission and return to working when answered. Shared peers
+  use the same root span events for working and completion; approvals stay
+  with the host. The next key acknowledges done/error; leaving the TUI clears
+  the record. `oi run` leaves completion visible after exit and sends no OSCs
+  to redirected stdout. `programStatus` in `source/cli/src/tui/ansi.ts` encodes
+  scrubbed messages as base64, removes controls and caps UTF-8 bytes. This is
+  only a terminal projection, not new session state or a heartbeat.
 - **"What did you actually send the model?"** Open the latest `LLM` span in
   the current turn's folder and show `input.value`: the system prompt, the
   tool definitions and every message. This is the whole of what a model

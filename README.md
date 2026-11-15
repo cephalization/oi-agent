@@ -196,6 +196,18 @@ Switching sessions with `/new`, `/resume`, or `/handoff` starts a fresh viewport
 with the destination banner and status bar. Earlier output stays in terminal
 scrollback; scroll up to see it.
 
+### Terminal status
+
+On a TTY, oi reports working, approval-blocked, done and error states using
+[OSC 7501 (Program Status Protocol)](https://www.superlogical.com/rex/docs/build/program-status).
+Supporting terminals such as Rex can show which panes need attention without
+reading their screens. The next keypress acknowledges a result; interrupting
+returns to idle, and leaving the interactive session clears its status.
+`oi run` leaves done or error behind when it exits. Redirected stdout contains
+no status sequences. Messages are secret-scrubbed and bounded to the protocol's
+UTF-8 limits. Unknown OSCs are ignored by other terminals; tmux users need to
+configure passthrough themselves (oi does not wrap these sequences).
+
 ### Compact context without rewriting history
 
 `/compact [focus]` summarizes this branch into a working brief for the next
