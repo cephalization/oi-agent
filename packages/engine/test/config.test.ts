@@ -2,7 +2,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { describe, expect, it } from "vite-plus/test"
-import { configProblems, loadConfig } from "../src/config.ts"
+import { configProblems, loadConfig, saveApprovals } from "../src/config.ts"
 
 /** An environment whose config directory holds `text` as config.json. */
 const withFile = (text: string): NodeJS.ProcessEnv => {
@@ -14,6 +14,21 @@ const withFile = (text: string): NodeJS.ProcessEnv => {
 }
 
 describe("config file", () => {
+  it("saves the approval mode for the next start and keeps every other key as written", () => {
+    const env = withFile(JSON.stringify({ model: "claude-haiku-5-5", approvals: "ask", unknown_key: 1 }))
+
+    saveApprovals("allow", env)
+
+    expect(loadConfig(env).approvals).toBe("allow")
+    expect(
+      JSON.parse(fs.readFileSync(path.join(env["OI_AGENT_CONFIG_DIR"] ?? "", "config.json"), "utf8")),
+    ).toEqual({
+      model: "claude-haiku-5-5",
+      approvals: "allow",
+      unknown_key: 1,
+    })
+  })
+
   it("reads every setting from a valid file and reports nothing", () => {
     const env = withFile(JSON.stringify({ model: "claude-haiku-5-5", effort: "low", approvals: "allow" }))
 

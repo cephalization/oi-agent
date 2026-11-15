@@ -7,6 +7,7 @@
  */
 import {
   type ApprovalMode,
+  type Approvals,
   type ApprovalRequest,
   chatgptAccount,
   DECISION_ACCOUNT,
@@ -29,6 +30,7 @@ import {
   type ProviderConfig,
   readRules,
   revertRules,
+  saveApprovals,
   servePeers,
   type Store,
   tailcatServe,
@@ -675,12 +677,23 @@ class App {
 
     if (engine === undefined) return
 
-    const modes: ReadonlyArray<ApprovalMode> =
+    const modes: ReadonlyArray<Approvals> =
       engine.decider === undefined ? ["ask", "allow"] : ["ask", "auto", "allow"]
 
-    const next = modes[(modes.indexOf(engine.approvals) + 1) % modes.length] ?? "ask"
+    const next = modes[(modes.findIndex((mode) => mode === engine.approvals) + 1) % modes.length] ?? "ask"
 
-    engine.setApprovalMode(next)
+    this.chooseApprovals(next)
+  }
+
+  /** A mode the user picked: it applies now and is the default the next time oi starts. */
+  private chooseApprovals(mode: Approvals): void {
+    this.options.engine?.setApprovalMode(mode)
+
+    try {
+      saveApprovals(mode)
+    } catch (error) {
+      this.notice = `Could not save the approval mode: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
 
   /** Shift+Tab: the next effort level the current model accepts. */
@@ -1272,7 +1285,7 @@ class App {
           "Auto approvals need a decision model: store a TypeSafe key with `oi auth login typesafe`, then restart oi.",
         ])
 
-      engine.setApprovalMode("auto")
+      this.chooseApprovals("auto")
 
       return this.say([
         `${engine.decider.settings.model} now approves tool calls it is confident are safe; you are asked about the rest. Tab switches mode.`,
@@ -1280,7 +1293,7 @@ class App {
     }
 
     if (name === "/yolo") {
-      this.options.engine?.setApprovalMode("allow")
+      this.chooseApprovals("allow")
 
       return this.say(["Tools now run without asking. Tab switches back."])
     }
