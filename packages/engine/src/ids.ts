@@ -15,9 +15,10 @@ export const newTraceId = (nowMs: number = Date.now()): string => {
 export const newSpanId = (): string => randomBytes(8).toString("hex")
 
 /** Session ids use the same time-prefixed scheme, formatted as a UUID. */
-export const newSessionId = (nowMs: number = Date.now()): string => {
-  const hex = newTraceId(nowMs)
+export const newSessionId = (nowMs: number = Date.now()): string => sessionIdForTrace(newTraceId(nowMs))
 
+/** A stable UUID-shaped destination for a traced operation, using the session id convention. */
+export const sessionIdForTrace = (hex: string): string => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7${hex.slice(13, 16)}-${(
     (parseInt(hex.slice(16, 18), 16) & 0x3f) |
     0x80

@@ -11,6 +11,8 @@ import {
   chatgptAccount,
   DECISION_ACCOUNT,
   getSecret,
+  handoffSeedFor,
+  readMetadata,
   type Engine,
   type ModelChoice,
   type ModelRef,
@@ -207,7 +209,9 @@ class App {
   /** Sessions the picker offers, in the order it shows them. */
   private pickable(): Array<SessionSummary> {
     // Sessions with no turns are launches that never sent a prompt.
-    return this.listSessions().filter((session) => session.id !== this.options.sessionId && session.turns > 0)
+    return this.listSessions().filter(
+      (session) => session.id !== this.options.sessionId && (session.turns > 0 || session.title !== ""),
+    )
   }
 
   private sessionSuggestions(): Array<Suggestion> {
@@ -1168,6 +1172,36 @@ class App {
 
     if (name === "/resume") return this.resume(argument)
 
+    if (name === "/handoff") {
+      const { engine, sessionId, user } = this.options
+
+      if (argument === "") return this.say(["Usage: /handoff <query>"])
+
+      if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+      if (engine === undefined) return
+
+      const previous = this.from
+
+      this.from = undefined
+
+      // Strip only the command separator, not the user's query formatting.
+      const query = text.slice(typed.length).replace(/^\s/, "")
+
+      const outcome = await engine.submit(sessionId, {
+        text: query,
+        userId: user,
+        previous,
+        operation: "handoff",
+      })
+
+      if (!outcome.ok) return this.say([outcome.message])
+
+      this.done(outcome.result.destination)
+
+      return
+    }
+
     if (name === "/compact") {
       const { engine, sessionId, user } = this.options
 
@@ -1356,6 +1390,15 @@ class App {
         wrap(note, this.screen.columns).map((line) => style.yellow(line)),
       ),
     ])
+    const handoff = handoffSeedFor(store, sessionId)
+
+    if (handoff !== undefined)
+      this.screen.commit([
+        style.gray(
+          `Handoff from session ${readMetadata(handoff).handoff?.source_session_id}. Original thread preserved.`,
+        ),
+      ])
+
     this.editor.seedHistory(this.transcript.replay(store, sessionId))
 
     const unsubscribe = store.subscribe((event) => {
@@ -1388,6 +1431,11 @@ class App {
     process.stdout.write(control.bracketedPasteOn)
     this.draw()
     this.options.onStart?.()
+    void engine?.resumeHandoff(sessionId).then((outcome) => {
+      if (outcome !== undefined && !outcome.ok && !outcome.interrupted) this.say([outcome.message])
+
+      this.draw()
+    })
 
     const exit = await Promise.race([
       new Promise<AppExit>((resolve) => (this.finish = resolve)),

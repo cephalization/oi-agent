@@ -203,7 +203,29 @@ These work best on the session you are in, because the evidence is right there.
   The terminal hides the summarizer's text stream but counts its tokens and
   displays the root's completion notice. This first version replaces the
   whole preceding context; it does not retain a verbatim suffix, compact
-  automatically, or create a handoff session.
+  automatically.
+- **"What does /handoff do?"** The TUI submits a `handoff` operation with
+  your query unchanged. `runTurn` reuses the `context.compact` CHAIN/LLM
+  summarizer, then creates a destination session whose id is derived from
+  the source operation's trace id. Unlike `/compact`, this does not activate
+  the checkpoint in the source thread: `contextFor` returns its predecessor's
+  context. The source root records `handoff_target` for recovery.
+  A root `CHAIN` span named `handoff.seed` in the destination stores the exact
+  query in `input.value`, the brief in `output.value`, and source session and
+  checkpoint references in `metadata.oi_agent.handoff`. These are provenance,
+  not edges the fold follows. Only after this span ends does the terminal
+  switch sessions. `Engine.resumeHandoff` serializes pickup with the turn
+  queue, and submits the seed only if the destination has no agent turns.
+  The first turn has `previous: null` and `handoff_seed` pointing at the local
+  seed. Its first model request contains a labelled generated brief and a
+  separate user message with the exact query. Later requests follow the usual
+  fold. Restart and Phoenix restore work without source-session files. A
+  pending seed is listed in `/resume` even before it has an agent turn.
+  Pickup never automatically retries an interrupted first turn: its tools may
+  already have run. Source summarization bypasses turn judges and does not
+  consume source evaluator feedback; the actual destination turn runs normal
+  tools, approvals, system instructions and evaluators. Only the host can run
+  `/handoff`, and there is no natural-language trigger yet.
 - **"Can I resume from Phoenix?"** Yes, because the raw request and response
   bodies the fold replays reach Phoenix byte for byte. `oi resume <id or URL>`
   (`source/engine/src/remote/`) reads a session's spans and annotations back

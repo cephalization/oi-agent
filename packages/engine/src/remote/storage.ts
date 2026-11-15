@@ -13,7 +13,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Schema } from "effect"
-import { loadSession } from "../fold.ts"
+import { handoffSeedFor, loadSession } from "../fold.ts"
 import {
   type AnnotationFile,
   type EndedSpan,
@@ -49,12 +49,15 @@ const firstLine = (text: string): string => text.split("\n")[0]?.trim() ?? ""
 /** A summary of a session on disk. */
 export const summarizeSession = (store: Store, sessionId: string): SessionSummary => {
   const view = loadSession(store, sessionId)
+  const seed = view.turns.length === 0 ? handoffSeedFor(store, sessionId) : undefined
 
   return {
     id: sessionId,
     cwd: view.header?.cwd ?? "",
     turns: view.turns.length,
-    title: firstLine(view.turns[0]?.input ?? ""),
+    title: firstLine(
+      view.turns[0]?.input ?? (seed === undefined ? undefined : stringAttr(seed, OI.INPUT_VALUE)) ?? "",
+    ),
     active_at: view.turns.at(-1)?.root.start_time ?? view.header?.created_at ?? "",
   }
 }

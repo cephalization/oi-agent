@@ -36,6 +36,12 @@ export const COMMANDS: ReadonlyArray<Command> = [
     argument: { name: "focus", required: false },
     hostOnly: true,
   },
+  {
+    name: "/handoff",
+    summary: "open a new thread with a working brief and your query",
+    argument: { name: "query", required: true },
+    hostOnly: true,
+  },
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
   {
     name: "/model",

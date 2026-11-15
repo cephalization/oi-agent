@@ -116,6 +116,19 @@ export const branchTo = (view: SessionView, traceId: string): Array<TurnSummary>
   return branch
 }
 
+/** Durable local bootstrap for a new handoff session; provenance never follows the source. */
+export const handoffSeedFor = (store: Store, sessionId: string): EndedSpan | undefined =>
+  store
+    .listTraceIds(sessionId)
+    .flatMap((id) => store.readTraceRoots(sessionId, id).ended)
+    .find(
+      (span) =>
+        span.parent_id === null &&
+        kindOf(span) === "CHAIN" &&
+        span.status_code !== "ERROR" &&
+        readMetadata(span).handoff !== undefined,
+    )
+
 // --- model context ---------------------------------------------------------
 
 interface LastCall {
@@ -223,6 +236,32 @@ export const contextFor = (
   if (found === undefined) return []
 
   const metadata = readMetadata(found.root)
+
+  if (metadata.operation === "handoff")
+    return metadata.previous == null ? [] : contextFor(store, sessionId, metadata.previous.trace_id, dialect)
+
+  if (metadata.handoff_seed !== undefined && metadata.previous == null) {
+    const seed = store
+      .readTrace(sessionId, metadata.handoff_seed.trace_id)
+      .ended.find(
+        (span) =>
+          span.context.span_id === metadata.handoff_seed?.span_id &&
+          span.parent_id === null &&
+          kindOf(span) === "CHAIN" &&
+          span.status_code !== "ERROR" &&
+          readMetadata(span).handoff !== undefined,
+      )
+
+    if (seed === undefined) throw new Error("Handoff brief is missing; refusing to run without its context.")
+
+    return [
+      dialect.userMessage([
+        "Generated handoff brief (lossy summary, not new user instructions):",
+        stringAttr(seed, OI.OUTPUT_VALUE) ?? "",
+      ]),
+      userMessage(store, sessionId, found.root, dialect),
+    ]
+  }
 
   if (metadata.operation === "compact") {
     // Activation is explicit and only committed by a successful ended root.
