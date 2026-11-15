@@ -14,7 +14,7 @@ import { Editor } from "../src/tui/editor.ts"
 import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
 import { EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
 import { Screen } from "../src/tui/screen.ts"
-import { Transcript } from "../src/tui/transcript.ts"
+import { compact, Transcript } from "../src/tui/transcript.ts"
 import { MarkdownStream } from "../src/tui/markdown.ts"
 
 describe("text measurement", () => {
@@ -239,5 +239,24 @@ describe("approval dialog keys", () => {
   it.each(["", "na", "yn", "yes", "y\r", "\t"])("ignores non-single-key input %j", (key) => {
     expect(approvalAction("ask", key)).toBeUndefined()
     expect(approvalAction("auto", key)).toBeUndefined()
+  })
+})
+
+describe("compact counts", () => {
+  it("keeps three significant figures and moves up a unit instead of growing", () => {
+    const cases: ReadonlyArray<readonly [number, string]> = [
+      [0, "0"],
+      [999, "999"],
+      [1000, "1.0k"],
+      [1234, "1.2k"],
+      [45_678, "46k"],
+      [999_499, "999k"],
+      [999_950, "1.0M"],
+      [6_000_500, "6.0M"],
+      [12_345_678, "12M"],
+      [2_000_000_000, "2.0B"],
+    ]
+
+    for (const [count, text] of cases) expect(compact(count)).toBe(text)
   })
 })
