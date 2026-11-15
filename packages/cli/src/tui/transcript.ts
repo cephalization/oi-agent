@@ -39,7 +39,22 @@ const numberAttr = (span: SpanFile, key: string): number => {
   return Number.isFinite(value) ? value : 0
 }
 
-const compact = (count: number): string => (count >= 1000 ? `${(count / 1000).toFixed(1)}k` : String(count))
+const UNITS = ["", "k", "M", "B", "T"]
+
+/** A count in at most three significant figures: 999, 1.2k, 45k, 6.0M. */
+const compact = (count: number): string => {
+  if (Math.abs(count) < 1000) return String(Math.round(count))
+
+  const unit = Math.min(Math.floor(Math.log10(Math.abs(count)) / 3), UNITS.length - 1)
+  const scaled = count / 1000 ** unit
+  const text = scaled.toPrecision(Math.abs(scaled) < 10 ? 2 : 3)
+
+  // Rounding can carry into the next unit: 999_950 is 1.0M, not 1000k.
+  if (Math.abs(Number(text)) >= 1000 && unit < UNITS.length - 1)
+    return compact(Math.sign(count) * 1000 ** (unit + 1))
+
+  return `${Number(text).toFixed(Math.abs(Number(text)) < 10 ? 1 : 0)}${UNITS[unit] ?? ""}`
+}
 
 /** A tool call on one line: the name and the most telling part of its input. */
 const describeTool = (span: SpanFile, columns: number): string => {
