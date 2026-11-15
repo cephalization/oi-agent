@@ -1,5 +1,17 @@
 # oi-agent
 
+## 0.6.0
+
+### Minor Changes
+
+- [#30](https://github.com/cephalization/oi-agent/pull/30) [`c58479d`](https://github.com/cephalization/oi-agent/commit/c58479d280e4606b0b26b72acf4d51ecd504836f) Thanks [@cephalization](https://github.com/cephalization)! - Report working, approval-blocked, completed and failed states to terminals that support OSC 7501, including Rex. Interactive sessions acknowledge results on the next keypress and clear status on exit; `oi run` leaves its completion status visible. Status messages are secret-scrubbed, and redirected stdout is unchanged.
+
+### Patch Changes
+
+- [#37](https://github.com/cephalization/oi-agent/pull/37) [`efe5932`](https://github.com/cephalization/oi-agent/commit/efe5932e3f567ab07f950569abbd598113070961) Thanks [@cephalization](https://github.com/cephalization)! - Token counts in the status bar move up a unit instead of growing: a long session shows `6.0M tokens`, not `6000.5k tokens`.
+
+- [#36](https://github.com/cephalization/oi-agent/pull/36) [`162df25`](https://github.com/cephalization/oi-agent/commit/162df2547df8293157786f5bf88b179f3d110802) Thanks [@cephalization](https://github.com/cephalization)! - The approval mode you pick with Tab, `/auto` or `/yolo` is saved to the config file, so oi starts in it next time instead of going back to ask.
+
 ## 0.5.0
 
 ### Minor Changes
