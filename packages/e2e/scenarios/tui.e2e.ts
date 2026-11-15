@@ -3,6 +3,8 @@
  * approvals, slash commands and exit. Screens are checked for what a person
  * would see; spans for what actually happened.
  */
+import * as fs from "node:fs"
+import * as path from "node:path"
 import { describe, expect } from "vite-plus/test"
 import { scenario } from "../src/scenario.ts"
 import { awaitApproval, callBash } from "../src/steps.ts"
@@ -94,6 +96,43 @@ describe("interactive", () => {
     expect(denied?.output).not.toMatch(/^denied-run$/m)
     expect(denied?.span.attributes["metadata"]).toMatch(/"decision":"deny"/)
   })
+
+  scenario(
+    "the approval mode picked with Tab is the default the next time oi starts",
+    { needs: ["rex"] },
+    async (s) => {
+      const first = await s.tui()
+
+      await first.waitFor(PROMPT)
+      // No decision model in the sandbox, so Tab goes from ask straight to yolo.
+      await first.key("tab")
+      await first.waitFor(/⏵⏵ yolo/)
+      await first.line("/quit")
+      expect(await first.exited()).toBe(0)
+
+      const config = JSON.parse(fs.readFileSync(path.join(s.sandbox.configDir, "config.json"), "utf8"))
+
+      expect(config).toMatchObject({ approvals: "allow", model: expect.any(String) })
+
+      const second = await s.tui()
+
+      await second.waitFor(/⏵⏵ yolo/)
+      await second.line(callBash("echo remembered-yolo"))
+
+      // The first start left an empty session behind; this one has the turn.
+      const session = await s.spans.waitFor("the second session", () =>
+        s.spans.sessions().find((id) => s.spans.turns(id).length > 0),
+      )
+
+      // Fails at once if the call waits for an approval: in ask mode it would.
+      await s.spans.settledTurns(session, 1)
+
+      const bash = s.spans.tools(session).find((tool) => tool.input.includes("remembered-yolo"))
+
+      expect(bash?.output).toContain("remembered-yolo")
+      expect(bash?.span.attributes["metadata"]).toMatch(/"decision":"allow"/)
+    },
+  )
 
   scenario("/new starts a second session and /resume returns to the first", { needs: ["rex"] }, async (s) => {
     const term = await s.tui()

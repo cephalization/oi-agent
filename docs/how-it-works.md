@@ -190,6 +190,13 @@ These work best on the session you are in, because the evidence is right there.
   The TUI reports their usage separately at an estimated TypeSafe rate.
   This is not an OS sandbox: the model can be wrong, and hard rules are not
   a complete shell parser. `/auto` enables it, or use `approvals: "auto"`.
+- **"Why does oi start in the approval mode I last picked?"** Tab, `/auto`
+  and `/yolo` call `chooseApprovals` in `source/cli/src/tui/app.ts`, which
+  sets the engine's mode and writes it to the config file with
+  `saveApprovals` (`source/engine/src/config.ts`), touching only that key.
+  It is a preference, not session state, so it is not in the spans. Modes
+  oi sets itself are not saved: `--approvals`, the dialog's `a` ("yolo for
+  this session"), and the drop to ask for a session from another machine.
 - **"How does resuming work?"** There is nothing to load. `/resume` (or
   `oi -s <id>`) points the terminal at another session folder: the screen is
   rebuilt by reading its root spans, and the next model request comes from

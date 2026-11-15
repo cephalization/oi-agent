@@ -250,20 +250,24 @@ const decodeObject = Schema.decodeUnknownOption(JsonObject)
 const encodeProviders = Schema.encodeSync(Schema.Array(ProviderConfig))
 
 /**
- * Replace the `providers` list in the config file, leaving every other key
- * as written. (Saving a whole loaded config would also write environment
+ * Replace one top-level key in the config file, leaving every other key as
+ * written. (Saving a whole loaded config would also write environment
  * overrides into the file.)
  */
-export const saveProviders = (
-  providers: ReadonlyArray<ProviderConfig>,
-  env: NodeJS.ProcessEnv = process.env,
-): void => {
+const saveKey = (key: string, value: Schema.Json, env: NodeJS.ProcessEnv): void => {
   const file = configPath(env)
   const current = Option.getOrElse(decodeObject(readFile(file)), () => ({}))
 
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(
-    file,
-    `${JSON.stringify({ ...current, providers: encodeProviders(providers) }, null, 2)}\n`,
-  )
+  fs.writeFileSync(file, `${JSON.stringify({ ...current, [key]: value }, null, 2)}\n`)
 }
+
+/** Replace the `providers` list in the config file. */
+export const saveProviders = (
+  providers: ReadonlyArray<ProviderConfig>,
+  env: NodeJS.ProcessEnv = process.env,
+): void => saveKey("providers", encodeProviders(providers), env)
+
+/** Make an approval mode the default for the next start, as Tab, /auto and /yolo choose it. */
+export const saveApprovals = (mode: Approvals, env: NodeJS.ProcessEnv = process.env): void =>
+  saveKey("approvals", mode, env)
