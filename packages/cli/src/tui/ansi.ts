@@ -90,3 +90,46 @@ export const wrap = (text: string, columns: number): Array<string> => {
 
   return lines
 }
+
+export type ProgramState = "idle" | "working" | "done" | "blocked" | "error" | "clear"
+
+export interface ProgramReport {
+  readonly state: ProgramState
+  kind?: "permission" | "question" | "auth"
+  msg?: string
+  title?: string
+}
+
+/** Single-line UTF-8, capped at a byte boundary rather than splitting a code point. */
+const statusText = (text: string, limit: number): string => {
+  let result = ""
+  let bytes = 0
+
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+
+    if (code < 32 || (code >= 127 && code <= 159)) continue
+
+    const size = Buffer.byteLength(char)
+
+    if (bytes + size > limit) break
+
+    result += char
+    bytes += size
+  }
+
+  return Buffer.from(result).toString("base64")
+}
+
+/** Program Status Protocol (OSC 7501). Unknown OSCs are ignored by terminals. */
+export const programStatus = (report: ProgramReport): string => {
+  const pairs = [`state=${report.state}`, "app=oi"]
+
+  if (report.state === "blocked" && report.kind !== undefined) pairs.push(`kind=${report.kind}`)
+
+  if (report.msg !== undefined) pairs.push(`msg=${statusText(report.msg, 2048)}`)
+
+  if (report.title !== undefined) pairs.push(`title=${statusText(report.title, 192)}`)
+
+  return `\u001B]7501;${pairs.join(":")}\u001B\\`
+}

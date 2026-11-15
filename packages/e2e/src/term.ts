@@ -25,8 +25,23 @@ export interface Terminal {
   waitFor(pattern: RegExp, timeoutMs?: number): Promise<string>
   /** The program's exit status once it has exited, else `undefined` after `timeoutMs`. */
   exited(timeoutMs?: number): Promise<number | undefined>
+  programStatus(): Promise<ReadonlyArray<ProgramStatus>>
   close(): Promise<void>
 }
+
+const ProgramStatusSchema = Schema.Struct({
+  state: Schema.String,
+  app: Schema.optionalKey(Schema.String),
+  kind: Schema.optionalKey(Schema.String),
+  msg: Schema.optionalKey(Schema.String),
+  updated_at: Schema.String,
+})
+
+export type ProgramStatus = typeof ProgramStatusSchema.Type
+
+const decodeProgramStatus = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ records: Schema.Array(ProgramStatusSchema) })),
+)
 
 const REX_CANDIDATES = [
   process.env["OI_E2E_REX"],
@@ -151,6 +166,11 @@ export class RexTerminal implements Terminal {
     // Let the editor take the text before enter, as a person typing would.
     await sleep(150)
     await this.key("enter")
+  }
+
+  async programStatus(): Promise<ReadonlyArray<ProgramStatus>> {
+    return decodeProgramStatus(await exec(this.rex, ["block", "call", ...this.target(), "program_status"]))
+      .records
   }
 
   async screen(): Promise<string> {

@@ -35,6 +35,7 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
+import { ProgramStatus } from "../program-status.ts"
 import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
 import type { Providers, ServerForm } from "../providers.ts"
 import type { Sessions } from "../storage.ts"
@@ -141,6 +142,7 @@ class App {
   private readonly options: AppOptions
   private readonly screen = new Screen(process.stdout)
   private readonly editor = new Editor()
+  private readonly program: ProgramStatus
   private readonly transcript: Transcript
   private readonly approvals: Array<ApprovalRequest> = []
   private share: Share | undefined
@@ -171,6 +173,9 @@ class App {
 
   constructor(options: AppOptions) {
     this.options = options
+    this.program = new ProgramStatus((text) => {
+      if (process.stdout.isTTY) process.stdout.write(text)
+    }, options.engine?.redactor)
     this.from = options.from
     this.transcript = new Transcript(this.screen, options.user)
   }
@@ -1307,8 +1312,12 @@ class App {
       return
     }
 
+    this.program.report("working", text)
     void peer?.prompt(text).then((error) => {
-      if (error !== undefined) this.say([error])
+      if (error !== undefined) {
+        this.program.report("error", error)
+        this.say([error])
+      }
 
       this.draw()
     })
@@ -1330,9 +1339,19 @@ class App {
 
     this.approvals.shift()
     engine.resolveApproval(request.span_id, action === "deny" ? "deny" : "allow")
+    this.reportApproval()
+  }
+
+  private reportApproval(): void {
+    const request = this.approvals[0]
+
+    if (request === undefined) this.program.report("working")
+    else this.program.report("blocked", `${request.tool} ${JSON.stringify(request.input)}`, "permission")
   }
 
   private input(data: string): void {
+    this.program.acknowledge()
+
     if (this.question !== undefined) return this.answerQuestion(data)
 
     if (this.picker !== undefined) return this.pickerKey(data)
@@ -1410,6 +1429,7 @@ class App {
       if (event.session_id !== sessionId) return
 
       this.transcript.onEvent(event)
+      this.program.event(event)
       this.draw()
     })
 
@@ -1417,6 +1437,7 @@ class App {
 
     const stopApprovals = engine?.onApproval((request) => {
       this.approvals.push(request)
+      this.reportApproval()
       this.draw()
     })
 
@@ -1434,6 +1455,7 @@ class App {
     process.stdin.on("data", onData)
     process.stdout.on("resize", onResize)
     process.stdout.write(control.bracketedPasteOn)
+    this.program.report("idle")
     this.draw()
     this.options.onStart?.()
     void engine?.resumeHandoff(sessionId).then((outcome) => {
@@ -1460,6 +1482,7 @@ class App {
     process.stdin.pause()
     this.screen.clear()
     process.stdout.write(control.bracketedPasteOff)
+    this.program.clear()
     unsubscribe()
     stopApprovals?.()
     engine?.interrupt(sessionId)
