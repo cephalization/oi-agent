@@ -189,7 +189,11 @@ These work best on the session you are in, because the evidence is right there.
   `source/cli/src/tui/app.ts` keeps an 18-character session-id prefix ahead of
   optional model/usage details, so it survives status-line crowding. `/session`
   prints the full copyable ID and resume command for both hosts and joined
-  peers.
+  peers. On `/new`, `/resume`, or `/handoff`, the old app calls
+  `Screen.freshViewport` before the new app draws its banner and replays its
+  own spans. The method scrolls a full viewport of blank lines, then homes the
+  cursor; it does not erase scrollback or alter model context. Quit and reload
+  retain their existing terminal behavior.
 - **"What does /compact do?"** `runTurn` in `source/engine/src/agent.ts`
   records the command as an `AGENT` root with `metadata.oi_agent.operation =
   "compact"`. Its `context.compact` `CHAIN` child records the exact source

@@ -20,6 +20,7 @@ export const control = {
   up: (rows: number): string => (rows > 0 ? `${ESC}${rows}A` : ""),
   column: (column: number): string => `${ESC}${column}G`,
   clearDown: `${ESC}0J`,
+  home: `${ESC}H`,
   clearLine: `${ESC}2K`,
   hideCursor: `${ESC}?25l`,
   showCursor: `${ESC}?25h`,
