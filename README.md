@@ -220,7 +220,10 @@ mode when opened in the running CLI.
 Run handoff between turns, with a nonempty query and an existing conversation.
 If summarization fails, oi stays in the source thread. A destination created
 before a crash is recoverable through `/resume`; its query and brief are durable
-spans, not an in-memory pending prompt. An interrupted destination turn is not
+spans, not an in-memory pending prompt. Opening either thread repairs a missing
+destination seed from the source's durable handoff intent, including a crash
+between header creation and seed completion. Pending handoffs run before queued
+or peer prompts. An interrupted destination turn is not
 automatically retried, because its tools may already have run. Handoff currently
 requires the slash command; natural-language trigger phrases are not detected.
 

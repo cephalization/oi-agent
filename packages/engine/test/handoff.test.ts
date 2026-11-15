@@ -1,11 +1,12 @@
-import { describe, expect, it } from "vite-plus/test"
+import { describe, expect, it, vi } from "vite-plus/test"
 import { loadConfig } from "../src/config.ts"
 import { anthropicMessages } from "../src/dialects/index.ts"
 import { Engine } from "../src/engine.ts"
 import { contextFor, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
-import { summarizeSession } from "../src/remote/storage.ts"
+import { drainInbox } from "../src/peer/server.ts"
+import { keepInPhoenix, summarizeSession } from "../src/remote/storage.ts"
 import { tempStore } from "./helpers.ts"
 
 const response = (text: string, stop = "end_turn") => ({
@@ -98,6 +99,120 @@ describe("handoff", () => {
     ])
     expect(await s.engine().resumeHandoff(destination)).toBeUndefined()
     expect(s.store.listSessionIds()).toEqual([destination])
+  })
+
+  it("recovers a header-only destination from the source command after a crash", async () => {
+    const s = setup()
+    const engine = s.engine()
+    const source = engine.createSession(process.cwd()).id
+
+    await engine.submit(source, { text: "Remember walrus", userId: "tony" })
+
+    const result = await engine.submit(source, {
+      text: "Resume this exact query",
+      userId: "tony",
+      operation: "handoff",
+    })
+
+    if (!result.ok || result.result.destination === undefined) throw new Error("handoff failed")
+
+    const destination = result.result.destination
+    // Reconstruct a process death between destination header creation and seed completion.
+    s.store.removeSession(destination)
+    s.store.createSession(process.cwd(), destination)
+
+    const resumed = await s.engine().resumeHandoff(destination)
+
+    expect(resumed?.ok).toBe(true)
+    expect(loadSession(s.store, destination).turns[0]?.input).toBe("Resume this exact query")
+    expect(
+      JSON.stringify(contextFor(s.store, destination, loadSession(s.store, destination).head!.trace_id)),
+    ).toContain("Working brief")
+  })
+
+  it("repairs a seed-write failure when the source is reopened, without editing ended source spans", async () => {
+    const s = setup()
+    const engine = s.engine()
+    const source = engine.createSession(process.cwd()).id
+
+    await engine.submit(source, { text: "Remember walrus", userId: "tony" })
+    const endSpan = s.store.endSpan.bind(s.store)
+
+    const fault = vi.spyOn(s.store, "endSpan").mockImplementation((sessionId, span) => {
+      if (span.name === "handoff.seed") throw new Error("simulated process death before seed write")
+
+      endSpan(sessionId, span)
+    })
+
+    const result = await engine.submit(source, {
+      text: "Recovered query",
+      userId: "tony",
+      operation: "handoff",
+    })
+
+    fault.mockRestore()
+    expect(result.ok).toBe(false)
+    const command = loadSession(s.store, source).head!
+    const destination = readMetadata(command.root).handoff_target!
+    const before = s.store.readTrace(source, command.trace_id)
+
+    expect(s.store.readHeader(destination)).toBeDefined()
+    expect(s.store.listTraceIds(destination)).toEqual([])
+    expect(await s.engine().resumeHandoff(source)).toBeUndefined()
+    expect(s.store.readTrace(source, command.trace_id)).toEqual(before)
+    expect((await s.engine().resumeHandoff(destination))?.ok).toBe(true)
+    expect(loadSession(s.store, destination).head?.input).toBe("Recovered query")
+    expect(await s.engine().resumeHandoff(destination)).toBeUndefined()
+  })
+
+  it("does not recreate an intentionally Phoenix-only destination when the source is reopened", async () => {
+    const s = setup()
+    const engine = s.engine()
+    const source = engine.createSession(process.cwd()).id
+
+    await engine.submit(source, { text: "Remember walrus", userId: "tony" })
+    const result = await engine.submit(source, { text: "New query", userId: "tony", operation: "handoff" })
+
+    if (!result.ok || result.result.destination === undefined) throw new Error("handoff failed")
+
+    const destination = result.result.destination
+
+    keepInPhoenix(s.store, destination, { endpoint: "http://localhost:6006", project: "test" })
+    s.store.removeSession(destination)
+    await s.engine().resumeHandoff(source)
+    expect(s.store.readHeader(destination)).toBeUndefined()
+    expect(s.store.listSessionIds()).toEqual([source])
+  })
+
+  it("picks up the seed before an inbox prompt even when inbox draining runs first", async () => {
+    const s = setup()
+    const engine = s.engine()
+    const source = engine.createSession(process.cwd()).id
+
+    await engine.submit(source, { text: "Remember walrus", userId: "tony" })
+
+    const result = await engine.submit(source, {
+      text: "Original handoff query",
+      userId: "tony",
+      operation: "handoff",
+    })
+
+    if (!result.ok || result.result.destination === undefined) throw new Error("handoff failed")
+
+    const destination = result.result.destination
+    const fresh = s.engine()
+    const inbox = s.store.writeInbox(destination, { text: "Peer prompt", user_id: "peer" })
+
+    drainInbox(fresh, destination)
+    const pickup = fresh.resumeHandoff(destination)
+
+    await pickup
+    const turns = loadSession(s.store, destination).turns
+
+    expect(turns.map((turn) => turn.input)).toEqual(["Original handoff query", "Peer prompt"])
+    expect(readMetadata(turns[0]!.root).handoff_seed).toBeDefined()
+    expect(readMetadata(turns[1]!.root).inbox_id).toBe(inbox.id)
+    expect(JSON.stringify(contextFor(s.store, destination, turns[1]!.trace_id))).toContain("Working brief")
   })
 
   it("requires a nonempty query and prior conversation, without creating a destination", async () => {

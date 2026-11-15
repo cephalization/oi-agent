@@ -225,7 +225,7 @@ export const EngineMetadata = Schema.Struct({
   previous: Schema.optionalKey(Schema.NullOr(SpanRef)),
   /** A user-requested context transformation, not an ordinary model turn. */
   operation: Schema.optionalKey(Schema.Literals(["compact", "handoff"])),
-  /** The ended CHAIN checkpoint explicitly activated by this successful turn. */
+  /** The ended CHAIN checkpoint: activation for compact, durable intent for handoff. */
   checkpoint: Schema.optionalKey(SpanRef),
   /** Source command's destination, also recorded before creating it for crash recovery. */
   handoff_target: Schema.optionalKey(Schema.String),

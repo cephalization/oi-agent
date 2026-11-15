@@ -74,9 +74,12 @@ operation: input is the user's exact query, output is the generated brief.
 OpenInference has no context-transfer or durable-prompt-consumption semantics.
 The harness records these under `metadata.oi_agent`:
 
-- `operation = "handoff"` and `handoff_target` on the source command's `AGENT`
-  root. The destination id is derived from this trace id. No checkpoint is
-  activated in the source context.
+- `operation = "handoff"`, `handoff_target`, and `checkpoint` on the source
+  command's `AGENT` root, flushed before destination initialization. Together
+  with the exact query on the root and the ended summary child, this is a
+  durable intent to repair a missing destination seed after a crash. The
+  destination id is derived from this trace id. The checkpoint is not activated
+  in the source context.
 - `handoff = { source_session_id, checkpoint: { trace_id, span_id } }` on the
   destination seed, linking back to the real source summarization operation.
 - `handoff_seed = { trace_id, span_id }` on the first destination agent turn,
@@ -86,8 +89,9 @@ The harness records these under `metadata.oi_agent`:
 The seed is an ended span so it exports/imports through Phoenix even if no
 model call has started in the destination. Query and brief remain distinct in
 the first model request. The fold never fetches source-session files. A seed
-is picked up only while the destination has no agent turns; interrupted turns
-are not automatically rerun because tools may have had effects. This policy
+is picked up before ordinary queued or inbox prompts, only while the destination
+has no agent turns; interrupted turns are not automatically rerun because tools
+may have had effects. This policy
 is harness-specific, not a standard meaning of `CHAIN` or `session.id`.
 
 ## Round trip through Phoenix
