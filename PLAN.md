@@ -15,6 +15,7 @@ State is a fold over span files; nothing else is authoritative.
 | Spec gaps      | Fit the spec as-is. Anything it cannot express goes in the `metadata` attribute. Every gap is logged in `docs/spec-gaps.md`.       |
 | Phoenix        | Optional. Harness and local evals work offline.                                                                                    |
 | Sharing        | Multi-user driving from the first `/share` version.                                                                                |
+| Subagents      | A session of its own per subagent, linked to the tool call that delegated it. Not a nested span: it outlives the turn (issue #46). |
 | Eval feedback  | Fully automatic, including standing prompt changes. Every change is versioned and revertible.                                      |
 
 ## Layout
@@ -42,7 +43,8 @@ per-collector export cursors.
 | Model call                          | `LLM` span. Raw request and response bodies in `input.value` / `output.value` (JSON) for lossless replay; flattened `llm.*` attributes as the normalized view |
 | Tool call                           | `TOOL` span                                                                                                                                                   |
 | Compaction                          | `CHAIN` span; details in `metadata`                                                                                                                           |
-| Subagent                            | nested `AGENT` span                                                                                                                                           |
+| Subagent                            | its own session: `session.json` names the `TOOL` span that delegated it (`parent`) and the task; its result returns through the delegator's `inbox/`          |
+| Background work (a command, a task) | `metadata.job` or `metadata.task` on the `TOOL` span that started it; the turn that delivers its result names that span in `metadata.delivers`                |
 | Turn order, forks                   | previous turn's trace and span id in `metadata` on the root span. Two turns naming the same predecessor are a fork                                            |
 | Who sent the turn                   | `user.id` on the root span, derived from the peer's key                                                                                                       |
 | Evals, labels, names                | annotation files using the spec's span / trace / session scopes                                                                                               |
@@ -123,8 +125,9 @@ Built and verified against the live Anthropic API and a Phoenix 21 server:
   threads; restart pickup, branch isolation and Phoenix restore are verified.
   Automatic compaction is not built. Compaction replaces the whole preceding
   context; handoff submits the query separately from the generated brief.
-- Not built: forks in the UI (the format supports them),
-  subagents, the GPUI viewer, pulling human annotations back from Phoenix,
+- Built since: background commands and subagents (issues #49, #46): work
+  that outlives its tool call, delivered back through the inbox.
+- Not built: forks in the UI (the format supports them), the GPUI viewer, pulling human annotations back from Phoenix,
   experiments over past spans, a browser viewer.
 
 Spike answers:

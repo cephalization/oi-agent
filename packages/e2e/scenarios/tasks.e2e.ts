@@ -5,6 +5,10 @@
  *
  * The prompts dictate each tool call, so a scenario checks what oi does with
  * a delegation, not whether a model chooses to delegate.
+ *
+ * Live only, except the last: two sessions call the model at once, so their
+ * requests reach a recording in no fixed order, and the replies name task
+ * ids and paths made up per run.
  */
 import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
@@ -15,6 +19,7 @@ import {
   readMetadata,
   type SessionHeader,
   stringAttr,
+  type TurnSummary,
   OI,
 } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
@@ -71,10 +76,15 @@ const delegate = (title: string, isolation: "worktree" | "shared", brief: string
   `Call the delegate tool now with title "${title}", isolation "${isolation}" and exactly this prompt: "${brief}" ` +
   `Then call no more tools and reply with just: delegated.`
 
+/** Prints `total=42` once the file `go` exists in the working directory. */
+const GATED = "until [ -f go ]; do sleep 0.2; done; echo total=$((6 * 7))"
+
+const release = (s: Scenario): void => fs.writeFileSync(path.join(s.sandbox.cwd, "go"), "")
+
 describe("delegated tasks", () => {
   scenario(
     "a task works in its own session and worktree, and its result returns as a delivery",
-    {},
+    { liveOnly: true },
     async (s) => {
       const result = await s.run([
         "run",
@@ -111,6 +121,21 @@ describe("delegated tasks", () => {
       expect(readMetadata(first!.root).inbox_id).toBeDefined()
       expect(readMetadata(first!.root).workspace?.cwd).toBe(worktree?.path)
 
+      // Each side is told its part: one to delegate, the other how to work and report as a subagent.
+      const prompts = (session: string): string =>
+        s.spans
+          .ofKind(session, "LLM")
+          .map((span) => s.spans.systemPrompt(span))
+          .join("\n")
+
+      expect(prompts(parent)).toContain("Delegation: this conversation is where the user thinks")
+      expect(prompts(parent)).not.toContain("You are working as a subagent")
+      expect(prompts(child.id)).toContain(
+        'You are working as a subagent on a task another oi session delegated to you: "add farewell"',
+      )
+      expect(prompts(child.id)).toContain(`on branch ${worktree?.branch}`)
+      expect(prompts(child.id)).not.toContain("Delegation: this conversation")
+
       // The work is on the task's branch, in its checkout; the delegating checkout is untouched.
       expect(fs.readFileSync(path.join(worktree?.path ?? "", "farewell.txt"), "utf8").trim()).toBe("goodbye")
       expect(fs.existsSync(path.join(s.sandbox.cwd, "farewell.txt"))).toBe(false)
@@ -136,7 +161,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "a task outlives the process that delegated it, and a follow-up wakes it with what it knew",
-    {},
+    { liveOnly: true },
     async (s) => {
       expectOk(
         await s.run([
@@ -192,7 +217,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "two tasks in worktrees work side by side without touching each other or the checkout",
-    { timeoutMs: 300_000 },
+    { liveOnly: true, timeoutMs: 300_000 },
     async (s) => {
       const brief = (name: string): string =>
         `Create a file named ${name}.txt containing exactly the word ${name}, then commit it with the message 'add ${name}'. Report the file name.`
@@ -210,7 +235,7 @@ describe("delegated tasks", () => {
       const parent = parentOf(s)
       const tasks = delegations(s, parent)
 
-      expect(tasks.map((entry) => entry.child.task?.title).toSorted()).toEqual(["left", "right"])
+      expect(new Set(tasks.map((entry) => entry.child.task?.title))).toEqual(new Set(["left", "right"]))
 
       for (const { child } of tasks) {
         const name = child.task?.title ?? ""
@@ -239,7 +264,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "a task's tool call that needs a person is asked in the delegating terminal, and waits for the answer",
-    { needs: ["rex"], approvals: "ask" },
+    { liveOnly: true, needs: ["rex"], approvals: "ask" },
     async (s) => {
       const term = await s.tui()
 
@@ -281,6 +306,127 @@ describe("delegated tasks", () => {
       expect(stringAttr(turns[1]!.root, OI.USER_ID)).toBe("oi")
       expect(turns[1]?.output).toContain("hello-from-task")
       await term.waitFor(new RegExp(`result of background task ${task.id} delivered`))
+      await term.line("/quit")
+      expect(await term.exited()).toBe(0)
+    },
+  )
+  scenario(
+    "the terminal stays free while a task runs, lists it, attaches to it, and returns to its result",
+    { liveOnly: true, needs: ["rex"], approvals: "allow", timeoutMs: 300_000 },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(/Every step is an OpenInference span/)
+      await term.line(
+        `${delegate("wait for go", "shared", `Call the bash tool now with the command \`${GATED}\`. Then reply with just the number after total=.`)} ` +
+          `When the task's result is delivered, reply with just the number it gives.`,
+      )
+
+      const parent = await s.spans.waitFor("the delegating session", () => {
+        const [first] = s.spans.sessions()
+
+        return first !== undefined && s.spans.turns(first).some((turn) => turn.state !== "running")
+          ? first
+          : undefined
+      })
+
+      const { task, child } = delegation(s, parent)
+
+      // The task is shown above the status line while it runs, and the conversation is free.
+      await term.waitFor(new RegExp(`task ${task.id} wait for go · running for`))
+      await term.line("Reply with exactly the word: pong")
+
+      const during = await s.spans.settledTurns(parent, 2)
+
+      expect(during[1]?.output?.toLowerCase()).toContain("pong")
+      await term.line("/tasks")
+      await term.waitFor(new RegExp(`${task.id} "wait for go" · running for`))
+
+      // Attached, the terminal shows the task's own session: its brief, and the call it is waiting in.
+      await term.line(`/attach ${task.id}`)
+      await term.waitFor(new RegExp(`task ${task.id} · /detach to return`))
+      await term.waitFor(/Call the bash tool now with the command/)
+      release(s)
+
+      const [turn] = await s.spans.settledTurns(child.id, 1)
+
+      expect(turn?.output).toContain("42")
+      // Its answer arrives live, from the files its runner writes.
+      await term.waitFor(/^42\b/m)
+
+      const deliveries = (): Array<TurnSummary> =>
+        s.spans.turns(parent).filter((entry) => readMetadata(entry.root).delivers !== undefined)
+
+      // Its result is delivered to the delegating session, which is out of view but still attended.
+      await s.spans.waitFor("the first delivery", () =>
+        deliveries().some((entry) => entry.state !== "running") ? true : undefined,
+      )
+
+      // What is typed here goes to the task, and wakes a runner for it.
+      await term.line("Reply with exactly the word: heron")
+
+      const more = await s.spans.settledTurns(
+        await s.spans.waitFor("the task's second turn", () =>
+          s.spans.turns(child.id).length === 2 ? child.id : undefined,
+        ),
+        2,
+      )
+
+      expect(more[1]?.output?.toLowerCase()).toContain("heron")
+      await term.waitFor(/^heron\b/im)
+
+      // Back in the delegating session, both results were delivered while it was out of view.
+      await term.line("/detach")
+      await term.waitFor(new RegExp(`session ${parent.slice(0, 13)}`))
+
+      const delivered = await s.spans.waitFor("both deliveries", () => {
+        const turns = deliveries()
+
+        return turns.length === 2 && turns.every((entry) => entry.state !== "running") ? turns : undefined
+      })
+
+      expect(delivered[0]?.output).toContain("42")
+      await term.line("/quit")
+      expect(await term.exited()).toBe(0)
+    },
+  )
+
+  scenario(
+    "a result waits while a prompt is being typed, and is delivered after it",
+    { needs: ["rex"], approvals: "allow" },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(/Every step is an OpenInference span/)
+      await term.line(
+        `Call the bash tool now with the command \`${GATED}\` and background set to true. ` +
+          `Then call no more tools and reply with just: started. When its result is delivered to you later, reply with just the number after total=.`,
+      )
+
+      const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
+
+      await s.spans.settledTurns(session, 1)
+
+      // Half a prompt is in the editor when the job finishes.
+      await term.send("Reply with exactly")
+      release(s)
+      await term.waitFor(/1 result waiting/)
+      expect(s.spans.turns(session)).toHaveLength(1)
+
+      // Finishing the prompt runs it first; the result follows.
+      await term.send(" the word: pong")
+      await term.key("enter")
+
+      const turns = await s.spans.settledTurns(
+        await s.spans.waitFor("the delivery", () =>
+          s.spans.turns(session).length === 3 ? session : undefined,
+        ),
+        3,
+      )
+
+      expect(turns[1]?.input).toBe("Reply with exactly the word: pong")
+      expect(readMetadata(turns[2]!.root).delivers).toHaveLength(1)
+      expect(turns[2]?.output).toContain("42")
       await term.line("/quit")
       expect(await term.exited()).toBe(0)
     },
