@@ -24,7 +24,11 @@ total at the end.
 
 The harness sets `"delegation": "off"`, so the agent does the work a
 scenario asks for itself and never hands it to a subagent. Scenarios about
-delegation (`scenarios/tasks.e2e.ts`) turn it back on.
+delegation (`scenarios/tasks.e2e.ts`) turn it back on. For ordinary prompts
+that do not prescribe delegation, run
+`pnpm e2e:scored scenarios/delegation-quality.scored.ts`: three repetitions of
+four cases under auto and off, with completion/evidence/choice scores and
+workload tokens/latency. See [design and live evidence](../../docs/experiments/delegation-quality.md).
 
 ## What each scenario gets
 

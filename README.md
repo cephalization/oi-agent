@@ -230,7 +230,16 @@ compaction is not implemented yet.
 
 ### Delegated work: the conversation stays free
 
-oi hands most real work to subagents, so the conversation you are in stays
+**Want oi to do the work here instead?** Set `"delegation": "off"` in
+`~/.config/oi-agent/config.json`. This disables subagents; slow shell commands
+can still run in the background. Delegation is experimental: a fresh worktree
+does not include uncommitted changes, installed dependencies or build outputs.
+Do not assume splitting work makes a task faster or cheaper.
+
+[Delegation-quality experiment](docs/experiments/delegation-quality.md) measures
+ordinary requests, including when not to split work, against an off control.
+
+With delegation enabled, oi hands most real work to subagents, so the conversation you are in stays
 open for thinking, planning and deciding. Ask for something that takes more
 than a quick answer and the agent writes a brief and delegates it; you can
 keep talking while it runs.
