@@ -75,6 +75,8 @@ export class Transcript {
   private thinking = ""
   private wroteText = false
   private tokens = 0
+  private context = 0
+  private contextEnd = ""
   private decisionInput = 0
   private decisionOutput = 0
   private startedMs = 0
@@ -101,8 +103,17 @@ export class Transcript {
     return this.bytes
   }
 
+  /** Every model call in the session added up, evaluators and steering included: what was billed, not what is in context. */
   get totalTokens(): number {
     return this.tokens
+  }
+
+  /**
+   * How full the context is: the prompt and reply of the agent's latest model
+   * call, since the next request sends both. After a compaction, the brief.
+   */
+  get contextTokens(): number {
+    return this.context
   }
 
   /** Decision usage is separate: it is not billed like generated LLM tokens. */
@@ -285,11 +296,23 @@ export class Transcript {
 
     if (!this.turns.has(span.context.trace_id)) return
 
+    if (kind === "LLM") this.measureContext(span)
+
     if (kind === "LLM") this.flushText()
 
     if (kind === "TOOL") this.toolEnded(span)
 
     if (kind === "AGENT" && span.parent_id === null) this.turnEnded(span)
+  }
+
+  private measureContext(span: EndedSpan): void {
+    // Spans can arrive out of order when a session is loaded; the latest call wins.
+    if (span.end_time < this.contextEnd) return
+
+    this.contextEnd = span.end_time
+    this.context = this.compactions.has(span.context.trace_id)
+      ? numberAttr(span, OI.TOKENS_COMPLETION)
+      : numberAttr(span, OI.TOKENS_TOTAL)
   }
 
   private delta(event: Extract<StoreEvent, { type: "delta" }>): void {

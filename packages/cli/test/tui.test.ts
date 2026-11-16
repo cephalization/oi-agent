@@ -220,6 +220,75 @@ describe("decision usage", () => {
   })
 })
 
+describe("context usage", () => {
+  const span = (
+    trace: string,
+    kind: string,
+    end: string,
+    tokens: { prompt: number; completion: number },
+    extra: Readonly<Record<string, string>> = {},
+  ): EndedSpan => ({
+    name: kind.toLowerCase(),
+    context: { trace_id: trace, span_id: `${trace}-${end}` },
+    parent_id: kind === "AGENT" ? null : "root",
+    span_kind: "SPAN_KIND_INTERNAL",
+    start_time: end,
+    end_time: end,
+    status_code: "OK",
+    status_message: "",
+    events: [],
+    attributes: {
+      [OI.SPAN_KIND]: kind,
+      [OI.TOKENS_PROMPT]: tokens.prompt,
+      [OI.TOKENS_COMPLETION]: tokens.completion,
+      [OI.TOKENS_TOTAL]: tokens.prompt + tokens.completion,
+      ...extra,
+    },
+  })
+
+  const start = (transcript: Transcript, trace: string, metadata?: string): void => {
+    const root = span(trace, "AGENT", "2026-11-13T00:00:00.000Z", { prompt: 0, completion: 0 })
+
+    transcript.onEvent({
+      type: "span_open",
+      session_id: "session",
+      span:
+        metadata === undefined
+          ? root
+          : { ...root, attributes: { ...root.attributes, [OI.METADATA]: metadata } },
+    })
+  }
+
+  const end = (transcript: Transcript, file: EndedSpan): void =>
+    transcript.onEvent({ type: "span_end", session_id: "session", span: file })
+
+  it("shows the latest agent call as context, while the total adds every call up", () => {
+    const transcript = new Transcript(new Screen(process.stdout), "tony")
+
+    start(transcript, "turn")
+    end(transcript, span("turn", "LLM", "2026-11-13T00:00:01.000Z", { prompt: 1000, completion: 100 }))
+    end(transcript, span("turn", "LLM", "2026-11-13T00:00:02.000Z", { prompt: 1200, completion: 50 }))
+    // An evaluator's judge is a separate trace: billed, but not this conversation's context.
+    end(transcript, span("judge", "LLM", "2026-11-13T00:00:03.000Z", { prompt: 9000, completion: 10 }))
+
+    expect(transcript.contextTokens).toBe(1250)
+    expect(transcript.totalTokens).toBe(1100 + 1250 + 9010)
+
+    // Loading a session can deliver an older call last.
+    end(transcript, span("turn", "LLM", "2026-11-13T00:00:00.500Z", { prompt: 10, completion: 1 }))
+    expect(transcript.contextTokens).toBe(1250)
+  })
+
+  it("after a compaction, the context is the brief", () => {
+    const transcript = new Transcript(new Screen(process.stdout), "tony")
+
+    start(transcript, "compact", JSON.stringify({ oi_agent: { operation: "compact" } }))
+    end(transcript, span("compact", "LLM", "2026-11-13T00:00:05.000Z", { prompt: 50_000, completion: 800 }))
+
+    expect(transcript.contextTokens).toBe(800)
+  })
+})
+
 describe("approval dialog keys", () => {
   it("allows or denies one call in auto without a yolo action", () => {
     expect(approvalAction("auto", "y")).toBe("allow")
