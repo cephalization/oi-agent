@@ -27,7 +27,7 @@ sessions/<session-id>/
     <start-ns>-<span-id>.open.json    in-flight span (owner device only)
     <start-ns>-<span-id>.stream.jsonl streaming deltas for the open span
   annotations/<id>.json               eval results, labels, names, human feedback
-  inbox/<id>.json                     queued inputs from peers, consumed by a trace
+  inbox/<id>.json                     queued inputs (peer prompts, results of background work), consumed by a trace
 ```
 
 Not synced, rebuildable: a local index for session lists and search, and

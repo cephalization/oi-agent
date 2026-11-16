@@ -282,7 +282,7 @@ sessions/<session-id>/
   session.json
   traces/<trace-id>/<start-ns>-<span-id>.json   one file per span
   annotations/<id>.json                         evaluator results
-  inbox/<id>.json                               prompts from peers
+  inbox/<id>.json                               prompts from peers, results of background work
 ```
 
 Kill the process mid-turn and run `oi -c`: it continues from the files.

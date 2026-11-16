@@ -3,8 +3,6 @@ import * as http from "node:http"
 import type { AddressInfo } from "node:net"
 import { Option, Schema } from "effect"
 import type { Engine } from "../engine.ts"
-import { loadSession } from "../fold.ts"
-import { readMetadata } from "../format.ts"
 import type { StoreEvent } from "../store.ts"
 import type { Json } from "../wire.ts"
 import { type Manifest, PromptRequest, type Role, type SessionInfo } from "./protocol.ts"
@@ -41,25 +39,6 @@ const json = (response: http.ServerResponse, status: number, body: Json): void =
   response.writeHead(status, { "content-type": "application/json" })
   response.end(JSON.stringify(body))
 }
-
-/**
- * Run prompts that peers left in the inbox. An entry is pending until some
- * turn names it in its metadata, so this is safe to call again after a crash.
- */
-export const drainInbox = (engine: Engine, sessionId: string): void => {
-  const consumed = new Set(
-    loadSession(engine.store, sessionId).turns.map((turn) => readMetadata(turn.root).inbox_id),
-  )
-
-  for (const entry of engine.store.listInbox(sessionId)) {
-    if (consumed.has(entry.id) || queued.has(entry.id)) continue
-
-    queued.add(entry.id)
-    void engine.submit(sessionId, { text: entry.text, userId: entry.user_id, inboxId: entry.id })
-  }
-}
-
-const queued = new Set<string>()
 
 /** Serve one session to peers. Binds to loopback; a tunnel exposes it. */
 export const servePeers = async (engine: Engine, sessionId: string): Promise<PeerServer> => {
@@ -109,7 +88,7 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
 
     const entry = engine.store.writeInbox(sessionId, { user_id: name, text: body.text })
 
-    drainInbox(engine, sessionId)
+    engine.drainInbox(sessionId)
     json(response, 202, { inbox_id: entry.id })
   }
 
