@@ -248,8 +248,19 @@ These work best on the session you are in, because the evidence is right there.
   work. Direct provenance links provide bounded launch/result excerpts without
   loading child histories into the judge prompt. Delegating forbidden work can
   fail immediately; accurately reporting or acknowledging that earlier work is
-  not a fresh launch. Regex targets remain literal, and outcome-dependent
-  pending evaluations are not yet supported.
+  not a fresh launch. Regex targets remain literal. An LLM outcome check can
+  opt in with `wait_for_background: true`: applicable launch turns get a
+  `pending` annotation with no score, failure feedback or learned rule. The
+  obligation is recovered from spans and annotations, and judged once all
+  directly launched background results have durable delivery links on the
+  active branch. Partial deliveries remain pending; separate launch turns keep
+  independent obligations. Polling a finished job or cancelling a job/task also
+  persists completion on the observing TOOL span before claiming the result,
+  so pending checks resolve without a duplicate automatic delivery. A task
+  follow-up that starts a new runner creates its own launch obligation;
+  messages to an already-running task remain part of the existing runner's
+  work. Launch prohibitions should leave this option off (the default), so
+  forbidden work is checked immediately.
 - **"How many tokens are in context?"** The status line's `N context` is
   the latest agent `LLM` span's `llm.token_count.total` (prompt, cached
   tokens included, plus reply, which the next request also sends):
