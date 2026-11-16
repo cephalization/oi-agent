@@ -223,17 +223,20 @@ const buildEngine = (override?: ApprovalMode, served: boolean = false): Engine =
       .map(shellQuote)
       .join(" ")
 
+  // A subagent does not delegate further, and `"delegation": "off"` keeps all work in the conversation.
+  const delegates = !served && config.delegation === "auto"
+
   const engine: Engine = new Engine({
     store,
     config,
     approvals,
     redactor,
-    tools: served ? [...builtinTools, createEvalTool] : [...builtinTools, createEvalTool, ...taskTools],
+    tools: delegates ? [...builtinTools, createEvalTool, ...taskTools] : [...builtinTools, createEvalTool],
     selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
     model,
     modelFor: (settings) => providers.modelFor(settings),
     decider,
-    runner: served ? undefined : runner,
+    runner: delegates ? runner : undefined,
     served,
   })
 
