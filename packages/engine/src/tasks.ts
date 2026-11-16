@@ -341,14 +341,14 @@ export class Tasks {
   }
 
   /** Send a task a follow-up. It reads it after its current turn, or wakes up to. */
-  message(from: Delegator, task: Task, text: string): void {
+  message(from: Delegator, task: Task, text: string): boolean {
     this.store.writeInbox(task.header.id, {
       user_id: from.userId,
       text,
       origin: { session_id: from.sessionId, ...from.span },
     })
 
-    this.wake(task, from.span)
+    return this.wake(task, from.span)
   }
 
   /** A prompt typed to the task by a person looking at it, not sent by a tool call. */

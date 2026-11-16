@@ -112,7 +112,11 @@ export const pendingInbox = (store: Store, sessionId: string): Array<InboxFile> 
     loadSession(store, sessionId).turns.flatMap((turn) => {
       const metadata = readMetadata(turn.root)
 
-      return [metadata.inbox_id, ...(metadata.delivers ?? []).map((entry) => entry.inbox_id)]
+      return [
+        metadata.inbox_id,
+        ...(metadata.delivers ?? []).map((entry) => entry.inbox_id),
+        ...(metadata.observed_results ?? []),
+      ]
     }),
   )
 
