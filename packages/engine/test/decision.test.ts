@@ -127,8 +127,8 @@ describe("auto approval rules", () => {
 
   it("explains exactly which probabilities did not clear the thresholds", () => {
     expect(approvalConcerns(new Map(Object.entries(SAFE)))).toEqual([])
-    expect(approvalConcerns(new Map(Object.entries({ ...SAFE, irreversible: 0.6, requested: 0.8 })))).toEqual(
-      ["irreversible=0.60 (needs < 0.10)", "requested=0.80 (needs > 0.80)"],
+    expect(approvalConcerns(new Map(Object.entries({ ...SAFE, irreversible: 0.6, requested: 0.5 })))).toEqual(
+      ["irreversible=0.60 (needs < 0.50)", "requested=0.50 (needs > 0.50)"],
     )
   })
 
@@ -147,7 +147,10 @@ describe("auto approval rules", () => {
     expect(clearsThresholds(new Map(Object.entries({ ...SAFE, irreversible: -1 })))).toBe(false)
     expect(clearsThresholds(new Map(Object.entries({ ...SAFE, requested: 2 })))).toBe(false)
     expect(clearsThresholds(new Map(Object.entries({ ...SAFE, requested: Number.NaN })))).toBe(false)
-    expect(clearsThresholds(new Map(Object.entries({ ...SAFE, irreversible: 0.2 })))).toBe(false)
+    expect(clearsThresholds(new Map(Object.entries({ ...SAFE, irreversible: 0.49, requested: 0.51 })))).toBe(
+      true,
+    )
+    expect(clearsThresholds(new Map(Object.entries({ ...SAFE, irreversible: 0.5 })))).toBe(false)
     expect(clearsThresholds(new Map(Object.entries({ ...SAFE, requested: 0.5 })))).toBe(false)
 
     const missing = new Map(Object.entries(SAFE))

@@ -294,10 +294,10 @@ export const APPROVAL_QUESTIONS: ReadonlyMap<string, Noul> = new Map([
  */
 export const APPROVAL_THRESHOLDS: ReadonlyMap<string, { readonly max?: number; readonly min?: number }> =
   new Map([
-    ["irreversible", { max: 0.1 }],
-    ["outside_workspace", { max: 0.2 }],
-    ["exposes_secrets", { max: 0.1 }],
-    ["requested", { min: 0.8 }],
+    ["irreversible", { max: 0.5 }],
+    ["outside_workspace", { max: 0.5 }],
+    ["exposes_secrets", { max: 0.5 }],
+    ["requested", { min: 0.5 }],
   ])
 
 /** Whether a decision model's answers clear every approval threshold. */

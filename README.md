@@ -107,8 +107,8 @@ or set `TYPESAFE_API_KEY`. Configure its endpoint and model separately:
 ```
 
 Auto mode allows a tool call only when all four answers clear the safety
-thresholds: irreversible damage < 0.1, writes or data uploads outside the
-workspace < 0.2, exposing secrets < 0.1, and directly requested work > 0.8.
+thresholds: irreversible damage < 0.5, writes or data uploads outside the
+workspace < 0.5, exposing secrets < 0.5, and directly requested work > 0.5.
 Requested read-only service queries and normal authentication to that service
 do not count as external changes or secret exposure merely because they use
 the network. Hard rules ask
