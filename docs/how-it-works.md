@@ -153,6 +153,13 @@ These work best on the session you are in, because the evidence is right there.
   would skip, `runEvals` reruns it (an LLM judge sees the failing turn and
   the correction), so a turn that opens the missing PR without committing
   again can resolve it.
+- **"How many tokens are in context?"** The status line's `N context` is
+  the latest agent `LLM` span's `llm.token_count.total` (prompt, cached
+  tokens included, plus reply, which the next request also sends):
+  `contextTokens` in `source/cli/src/tui/transcript.ts`. Evaluator,
+  steering and decision calls are separate traces and do not count. `/session`
+  also prints the session's total across every model call, which is what was
+  billed, with cached history counted again on each call.
 - **"Where do eval results show up?"** `Transcript.annotation`
   (`source/cli/src/tui/transcript.ts`) prints a failed verdict, and a
   `steering` note that something was learned, in the transcript. A pass is
@@ -255,7 +262,8 @@ These work best on the session you are in, because the evidence is right there.
   The fold only treats direct `LLM` children of an agent root as continuation
   calls, so it cannot accidentally replay the summarizer's conversation.
   Compaction does not consume pending evaluator feedback or run turn judges.
-  The terminal hides the summarizer's text stream but counts its tokens and
+  The terminal hides the summarizer's text stream, counts its tokens, takes
+  the brief's size as the new context size, and
   displays the root's completion notice. This first version replaces the
   whole preceding context; it does not retain a verbatim suffix, compact
   automatically.
