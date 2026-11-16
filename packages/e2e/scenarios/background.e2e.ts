@@ -146,7 +146,7 @@ describe("background commands", () => {
   )
 
   scenario(
-    "the terminal takes a prompt while a job runs, counts it in the status line, and shows its result",
+    "the terminal takes a prompt while a job runs, lists it above the status line, and shows its result",
     { needs: ["rex"], approvals: "allow" },
     async (s) => {
       const term = await s.tui()
@@ -160,7 +160,7 @@ describe("background commands", () => {
       const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
 
       await s.spans.settledTurns(session, 1)
-      await term.waitFor(/1 job running/)
+      await term.waitFor(/job \w+ until .* · running for/)
 
       // The conversation is free while the job runs.
       await term.line("Reply with exactly the word: pong")
@@ -188,7 +188,7 @@ describe("background commands", () => {
 
       // Nobody typed the delivery: it shows as a notice, not as a prompt.
       expect(screen).not.toContain("<background-results>")
-      await term.waitFor(/^(?![\s\S]*job running)/)
+      await term.waitFor(/^(?![\s\S]*· running for)/)
 
       await term.line("/quit")
       expect(await term.exited()).toBe(0)

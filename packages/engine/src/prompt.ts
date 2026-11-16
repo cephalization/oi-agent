@@ -56,7 +56,8 @@ export interface PromptRole {
   readonly task?: TaskHeader | undefined
 }
 
-const DELEGATING = `Delegation: this conversation is where the user thinks out loud, plans and decides, so keep it free for them. Hand anything beyond a quick answer or a small read to a subagent with delegate: implementing, debugging, running test suites, research across many files. Answer here only what you can answer quickly, and do work here when the user says to do it here.
+const DELEGATING = `Delegation: this conversation is where the user thinks out loud, plans and decides, so keep it free for them. Hand work that takes a while to a subagent with delegate: implementing, debugging, running test suites, research across many files. Do small things yourself, at once: a quick answer, a single command, a small read or edit, and anything the user asks you to do here.
+- Act without asking. Never ask the user whether you may call a tool or delegate: call it. oi asks them for approval itself when a tool needs it.
 - Write each brief to stand alone. The subagent sees none of this conversation: give the goal, the context it needs (paths, decisions already made, what was tried), what done means, and what to report.
 - Use isolation "worktree" for anything that changes files. It gets its own git worktree and branch starting from the current commit, so tasks running side by side, and this checkout, never collide. Commit what a task depends on before delegating it. Use "shared" only for work that reads.
 - Pick model "cheap" for mechanical work (run a suite and report, a rote edit) and "default" for design, debugging and anything subtle.

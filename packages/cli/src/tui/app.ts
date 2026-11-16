@@ -14,6 +14,7 @@ import {
   getSecret,
   handoffSeedFor,
   readMetadata,
+  type BackgroundWork,
   type Engine,
   type ModelChoice,
   type ModelRef,
@@ -99,7 +100,17 @@ export interface AppOptions {
   readonly reload?: (() => Promise<string | undefined>) | undefined
   /** Called once the terminal is drawn: from then on, a crash is not a failed start. */
   readonly onStart?: (() => void) | undefined
+  /**
+   * Who answers tool approvals from this terminal, when not `engine`: a
+   * terminal attached to a task answers through the session that delegated it.
+   */
+  readonly approver?: Approver | undefined
+  /** Present when this terminal is attached to a delegated task: the session `/detach` returns to. */
+  readonly detachTo?: string | undefined
 }
+
+/** The part of an engine a terminal needs to answer tool approvals. */
+export type Approver = Pick<Engine, "approvals" | "onApproval" | "resolveApproval" | "setApprovalMode">
 
 /** How the app ended: with the session to open next, or asking to reload the code on this one. */
 export interface AppExit {
@@ -107,8 +118,14 @@ export interface AppExit {
   readonly reload: boolean
 }
 
-/** The status line recounts running jobs every this many 100 ms frames. */
-const JOBS_EVERY_FRAMES = 10
+/** Background work is looked at again every this many 100 ms frames: it asks the system about each job. */
+const BACKGROUND_EVERY_FRAMES = 10
+
+/** At most this many lines of running work are shown above the status line. */
+const BACKGROUND_ROWS = 5
+
+/** Results are held back until the person has typed nothing for this long. */
+const CALM_MS = 1500
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -157,8 +174,11 @@ class App {
   private share: Share | undefined
   private notice = ""
   private frame = 0
-  /** Background jobs of this session still running, as last counted. */
-  private jobsRunning = 0
+  /** This session's commands and tasks still running, as last looked at. */
+  private work: ReadonlyArray<BackgroundWork> = []
+  /** Results waiting to be delivered until the person stops typing. */
+  private held = 0
+  private lastKeyMs = 0
   /** Highlighted row of the completion menu. */
   private selected = 0
   /** Input the user closed the menu on; it stays closed until the input changes. */
@@ -297,6 +317,8 @@ class App {
 
   private argumentsFor(command: Command): ReadonlyArray<Suggestion> {
     if (command.name === "/resume") return this.sessionSuggestions()
+
+    if (command.name === "/attach") return this.taskSuggestions()
 
     if (command.name === "/model") return this.modelSuggestions()
 
@@ -460,8 +482,7 @@ class App {
 
     if (options.phoenix !== undefined) add(style.gray("→ phoenix"), true)
 
-    if (this.jobsRunning > 0)
-      add(style.cyan(`⚙ ${this.jobsRunning} job${this.jobsRunning === 1 ? "" : "s"} running`), false)
+    if (this.held > 0) add(style.yellow(`✉ ${this.held} result${this.held === 1 ? "" : "s"} waiting`), false)
 
     if (transcript.running) {
       const spinner = SPINNER[this.frame % SPINNER.length] ?? ""
@@ -484,6 +505,56 @@ class App {
     }
 
     return line()
+  }
+
+  /** One line per command or task still running, above the status line. */
+  private workLines(): Array<string> {
+    const columns = this.screen.columns
+
+    const lines = this.work.slice(0, BACKGROUND_ROWS).map((item) => {
+      const mark = item.waiting === true ? style.yellow("⏸") : style.cyan("⚙")
+      const head = `${item.kind} ${item.id} `
+      // The state is what changes: a long command gives up its width to keep it in view.
+      const status = clip(` · ${item.status}`, Math.max(columns - head.length - 20, 20))
+
+      const title = clip(
+        item.title.replaceAll(/\s+/g, " "),
+        Math.max(columns - head.length - status.length - 3, 8),
+      )
+
+      return `${mark} ${head}${title}${style.gray(status)}`
+    })
+
+    return this.work.length > BACKGROUND_ROWS
+      ? [...lines, style.gray(`  … ${this.work.length - BACKGROUND_ROWS} more (/tasks)`)]
+      : lines
+  }
+
+  /** Nothing is being typed, asked or chosen: a result can arrive without interrupting. */
+  private calm(): boolean {
+    return (
+      this.editor.text === "" &&
+      this.approvals.length === 0 &&
+      this.question === undefined &&
+      this.picker === undefined &&
+      Date.now() - this.lastKeyMs > CALM_MS
+    )
+  }
+
+  /** Look at background work again, and let waiting results through if the moment is calm. */
+  private watchBackground(): boolean {
+    const { engine, sessionId } = this.options
+
+    if (engine === undefined) return false
+
+    const before = `${this.held} ${this.work.map((item) => `${item.id} ${item.status}`).join("|")}`
+
+    this.work = engine.background(sessionId)
+    this.held = engine.waitingResults(sessionId).length
+
+    if (this.held > 0 && this.calm()) engine.drainInbox(sessionId)
+
+    return before !== `${this.held} ${this.work.map((item) => `${item.id} ${item.status}`).join("|")}`
   }
 
   private approvalLines(request: ApprovalRequest): Array<string> {
@@ -529,7 +600,7 @@ class App {
       return
     }
 
-    lines.push(this.status())
+    lines.push(...this.workLines(), this.status())
 
     if (this.notice !== "") lines.push(style.yellow(this.notice))
 
@@ -595,6 +666,67 @@ class App {
   }
 
   // --- commands -----------------------------------------------------------
+
+  private taskSuggestions(): Array<Suggestion> {
+    const { engine, sessionId } = this.options
+
+    return (engine?.tasks.list(sessionId) ?? []).toReversed().map((task) => ({
+      value: task.id,
+      label: `${task.id} ${task.task.title}`,
+      hint: engine?.tasks.describe(engine.tasks.status(task)) ?? "",
+    }))
+  }
+
+  /** Every task delegated from this session, newest last, with where it works. */
+  private taskLines(): Array<string> {
+    const { engine, sessionId } = this.options
+    const tasks = engine?.tasks.list(sessionId) ?? []
+
+    if (engine === undefined || tasks.length === 0) return ["No tasks have been delegated from this session."]
+
+    return tasks.flatMap((task) => {
+      const worktree = task.task.worktree
+
+      return [
+        `${task.id} "${task.task.title}" · ${engine.tasks.describe(engine.tasks.status(task))}`,
+        worktree === undefined
+          ? `  session ${task.header.id.slice(0, 13)} · shares this directory`
+          : `  session ${task.header.id.slice(0, 13)} · ${worktree.branch} in ${worktree.path}`,
+      ]
+    })
+  }
+
+  /** Deliver waiting results now, whatever is being typed, and say what is still running. */
+  private inbox(): void {
+    const { engine, sessionId } = this.options
+
+    if (engine === undefined) return
+
+    const waiting = engine.waitingResults(sessionId)
+    const running = engine.background(sessionId)
+
+    this.say([
+      waiting.length === 0
+        ? "No results are waiting."
+        : `Delivering ${waiting.length} result${waiting.length === 1 ? "" : "s"} to the agent.`,
+      ...running.map((item) => `still running: ${item.kind} ${item.id} ${item.title} · ${item.status}`),
+    ])
+    engine.drainInbox(sessionId, true)
+  }
+
+  /** Switch this terminal to a delegated task's session. */
+  private attach(id: string): void {
+    const { engine, sessionId } = this.options
+    const tasks = engine?.tasks.list(sessionId) ?? []
+
+    const task =
+      tasks.find((entry) => entry.id === id) ?? (id === "" && tasks.length === 1 ? tasks[0] : undefined)
+
+    if (task === undefined)
+      return this.say([id === "" ? "Usage: /attach <task> (see /tasks)" : `No task ${id} here. See /tasks.`])
+
+    this.done(task.header.id)
+  }
 
   /** Every annotation on the latest turn that has any, read from disk, with all its fields. */
   private verdicts(): Array<string> {
@@ -1332,6 +1464,18 @@ class App {
 
     if (name === "/new") return this.startNew()
 
+    if (name === "/inbox") return this.inbox()
+
+    if (name === "/tasks") return this.say(this.taskLines())
+
+    if (name === "/attach") return this.attach(argument)
+
+    if (name === "/detach") {
+      const parent = this.options.detachTo
+
+      return parent === undefined ? this.say(["This is not a task you attached to."]) : this.done(parent)
+    }
+
     if (name === "/reload") return this.reload()
 
     if (name === "/share") return this.startShare(argument === "local")
@@ -1429,7 +1573,7 @@ class App {
 
   private answer(key: string): void {
     const request = this.approvals[0]
-    const engine = this.options.engine
+    const engine = this.options.approver ?? this.options.engine
 
     if (request === undefined || engine === undefined) return
 
@@ -1453,6 +1597,7 @@ class App {
 
   private input(data: string): void {
     this.program.acknowledge()
+    this.lastKeyMs = Date.now()
 
     if (this.question !== undefined) return this.answerQuestion(data)
 
@@ -1537,7 +1682,12 @@ class App {
 
     const stopExport = phoenix?.watch()
 
-    const stopApprovals = engine?.onApproval((request) => {
+    // Results for this session wait while its person is typing; other sessions are not this terminal's to hold.
+    const calm = engine?.calm
+
+    if (engine !== undefined) engine.calm = (id) => id !== sessionId || this.calm()
+
+    const stopApprovals = (this.options.approver ?? engine)?.onApproval((request) => {
       this.approvals.push(request)
       this.reportApproval()
       this.draw()
@@ -1546,15 +1696,7 @@ class App {
     const ticker = setInterval(() => {
       this.frame += 1
 
-      // Counting jobs asks the system about each one: often enough to notice, not on every frame.
-      const jobs =
-        engine === undefined || this.frame % JOBS_EVERY_FRAMES !== 0
-          ? this.jobsRunning
-          : engine.jobs.running(sessionId).length
-
-      const changed = jobs !== this.jobsRunning
-
-      this.jobsRunning = jobs
+      const changed = this.frame % BACKGROUND_EVERY_FRAMES === 0 && this.watchBackground()
 
       if (this.transcript.running || this.share !== undefined || changed) this.draw()
     }, 100)
@@ -1597,6 +1739,9 @@ class App {
     this.program.clear()
     unsubscribe()
     stopApprovals?.()
+
+    if (engine !== undefined && calm !== undefined) engine.calm = calm
+
     engine?.interrupt(sessionId)
     this.share?.tunnel.stop()
     await this.share?.server.close()

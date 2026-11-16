@@ -6,7 +6,7 @@
  * opentelemetry-proto `trace/v1/trace.proto` and `common/v1/common.proto`.
  */
 import { Schema } from "effect"
-import { AttrPrimitive, type Attributes, type EndedSpan } from "../format.ts"
+import { AttrPrimitive, type Attributes, type EndedSpan, readMetadata } from "../format.ts"
 import { isoToNs } from "../ids.ts"
 
 const VARINT = 0
@@ -116,6 +116,42 @@ const STATUS = { UNSET: 0n, OK: 1n, ERROR: 2n }
 
 const SPAN_KIND_INTERNAL = 1n
 
+/** A span this span follows from without being its child, and why. */
+export interface SpanLink {
+  readonly trace_id: string
+  readonly span_id: string
+  /** `previous`, `delivers`, `result` or `origin`: the metadata field the link restates. */
+  readonly relation: string
+}
+
+/**
+ * The OTel span links a span's metadata implies. Span files keep these
+ * relations in `metadata` (docs/spec-gaps.md); on export they are also
+ * stated the way OpenTelemetry states "caused by, but not a child of":
+ * the turn a turn continues, the tool call whose background work a turn
+ * delivers and the subagent turn that produced it, and the tool call in
+ * another session that sent a turn's prompt.
+ */
+export const linksOf = (span: EndedSpan): Array<SpanLink> => {
+  const metadata = readMetadata(span)
+  const links: Array<SpanLink> = []
+
+  if (metadata.previous !== undefined && metadata.previous !== null)
+    links.push({ ...metadata.previous, relation: "previous" })
+
+  for (const delivery of metadata.delivers ?? []) {
+    links.push({ trace_id: delivery.trace_id, span_id: delivery.span_id, relation: "delivers" })
+
+    if (delivery.result !== undefined)
+      links.push({ trace_id: delivery.result.trace_id, span_id: delivery.result.span_id, relation: "result" })
+  }
+
+  if (metadata.origin !== undefined)
+    links.push({ trace_id: metadata.origin.trace_id, span_id: metadata.origin.span_id, relation: "origin" })
+
+  return links
+}
+
 const encodeSpan = (span: EndedSpan): Writer => {
   const writer = new Writer()
     .bytes(1, Buffer.from(span.context.trace_id, "hex"))
@@ -136,6 +172,15 @@ const encodeSpan = (span: EndedSpan): Writer => {
     attributes(encoded, 3, event.attributes)
     writer.message(11, encoded)
   }
+
+  for (const link of linksOf(span))
+    writer.message(
+      13,
+      new Writer()
+        .bytes(1, Buffer.from(link.trace_id, "hex"))
+        .bytes(2, Buffer.from(link.span_id, "hex"))
+        .message(4, keyValue("oi_agent.relation", link.relation)),
+    )
 
   return writer.message(15, new Writer().string(2, span.status_message).int(3, STATUS[span.status_code]))
 }

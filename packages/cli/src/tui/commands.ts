@@ -45,6 +45,19 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
   {
+    name: "/inbox",
+    summary: "deliver the results that are waiting, and list what is still running",
+    hostOnly: true,
+  },
+  { name: "/tasks", summary: "list the tasks delegated from this session", hostOnly: true },
+  {
+    name: "/attach",
+    summary: "open a delegated task: watch it work and type to it (/detach to come back)",
+    argument: { name: "task", required: true },
+    hostOnly: true,
+  },
+  { name: "/detach", summary: "leave a task you attached to and return to its session", hostOnly: false },
+  {
     name: "/model",
     summary:
       "switch model or provider from the next turn on, and make it the default (--temp: just this process)",
