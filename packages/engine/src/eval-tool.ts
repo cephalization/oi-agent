@@ -32,6 +32,11 @@ export const createEvalTool: ToolSpec = defineTool({
         additionalProperties: false,
       },
       kind: { type: "string", enum: ["llm", "code", "threshold"] },
+      wait_for_background: {
+        type: "boolean",
+        description:
+          "LLM outcome checks only: stay pending until results of this turn's directly launched jobs/tasks are delivered. Defaults to false. Never enable for launch prohibitions or obligations that must be checked immediately.",
+      },
       metric: {
         type: "string",
         enum: ["session_bytes", "tool_calls"],

@@ -377,6 +377,15 @@ describe("evaluator verdicts", () => {
     transcript.annotation(verdict("t1", "uses_pnpm", false))
     transcript.annotation(verdict("t1", "ran_tests", false))
     transcript.annotation(verdict("t1", "no_secrets", true))
+    const waiting = verdict("t1", "outcome", false)
+    transcript.annotation({
+      ...waiting,
+      annotation: {
+        ...waiting.annotation,
+        label: "pending",
+        metadata: { pending: true, failed: false, feedback: false },
+      },
+    })
 
     expect(transcript.passedEvals).toBe(2)
     expect(screen.committed).toEqual(["◆ no_secrets: fail — no_secrets explanation"])
@@ -384,5 +393,11 @@ describe("evaluator verdicts", () => {
     // The next turn's verdicts replace the count rather than adding to it.
     transcript.annotation(verdict("t2", "uses_pnpm", false))
     expect(transcript.passedEvals).toBe(1)
+    transcript.annotation({
+      ...waiting,
+      target: { ...waiting.target, trace_id: "t3" },
+      annotation: { ...waiting.annotation, label: "pending" },
+    })
+    expect(transcript.passedEvals).toBe(0)
   })
 })
