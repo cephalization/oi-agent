@@ -190,8 +190,10 @@ through the levels the current model accepts. The others are `/share`,
 `/yolo`, `/auto`, `/compact`, `/handoff`, `/session`, `/tour`, `/help` and `/quit`.
 
 The status bar keeps a session-id prefix visible, including after switching or
-handing off threads. Run `/session` to print the full copyable ID and an
-`oi -s <id>` resume command. Unique prefixes work with `/resume` and `oi -s`.
+handing off threads. Run `/session` to print the full copyable ID, an
+`oi -s <id>` resume command, the context size, and the tokens used across every
+model call. The status bar shows the context size: the tokens in the latest
+model request and its reply. Unique prefixes work with `/resume` and `oi -s`.
 Switching sessions with `/new`, `/resume`, or `/handoff` starts a fresh viewport
 with the destination banner and status bar. Earlier output stays in terminal
 scrollback; scroll up to see it.
