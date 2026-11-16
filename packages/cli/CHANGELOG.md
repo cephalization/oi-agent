@@ -1,5 +1,17 @@
 # oi-agent
 
+## 0.8.0
+
+### Minor Changes
+
+- [#44](https://github.com/cephalization/oi-agent/pull/44) [`ab3a6ca`](https://github.com/cephalization/oi-agent/commit/ab3a6cad76b05290b569d99ceeae99ab7551cc69) Thanks [@cephalization](https://github.com/cephalization)! - Evaluators now say when they apply. `create_eval` and checks learned from your corrections record a trigger (file changes, a Git commit, a particular tool, or every turn), shown when the check is saved. A turn the check does not apply to is recorded as `skipped`, without a judge call and without feedback or a learned rule. Commits and file changes are detected from what Git and the files actually did, so a commit made from bash counts and a failed one does not. When the evidence is unclear the check runs. A failed check is rechecked on the next turn even if that turn makes no new commit, so opening the missing PR resolves it. Existing checks keep running on every turn.
+
+### Patch Changes
+
+- [#43](https://github.com/cephalization/oi-agent/pull/43) [`8a6853f`](https://github.com/cephalization/oi-agent/commit/8a6853f5da61d5c1d19b85b36e2245d108e16443) Thanks [@cephalization](https://github.com/cephalization)! - Auto approval asks less often: every decision-model threshold is now 0.5 (each risk must be below 0.5, and the call must be requested with probability above 0.5). Hard rules for destructive deletes, force pushes, sudo, discarded work and writes outside the workspace still always ask.
+
+- [#45](https://github.com/cephalization/oi-agent/pull/45) [`5d8e729`](https://github.com/cephalization/oi-agent/commit/5d8e729fd8887ca8de66c2ce4acb872be53441a9) Thanks [@cephalization](https://github.com/cephalization)! - The status bar now shows how full the context is (the latest model request and its reply, for example `140k context`) instead of every model call added up, which counted cached history again on each call and included evaluators. `/session` still reports the running total.
+
 ## 0.7.0
 
 ### Minor Changes
