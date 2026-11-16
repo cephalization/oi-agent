@@ -27,6 +27,7 @@ import {
   type Workspace,
 } from "../format.ts"
 import type { PhoenixExporter, PhoenixTarget } from "../export/phoenix.ts"
+import { jobsOf } from "../jobs.ts"
 import type { Store } from "../store.ts"
 import { annotationFromRemote, type PhoenixClient } from "./phoenix.ts"
 
@@ -298,6 +299,31 @@ const blocker = (store: Store, sessionId: string): string | undefined => {
 
   if (pendingInbox(store, sessionId).length > 0) return "it has a queued prompt that has not run"
 
+  // Jobs live outside the session tree, including the runners of delegated
+  // tasks. Their results still need this session even between turns.
+  const jobs = jobsOf(store)
+
+  const outstanding = jobs
+    .list(sessionId)
+    .some((job) => jobs.state(job).state === "running" || !jobs.isReported(job))
+
+  if (outstanding) return "it has outstanding background work"
+
+  // A task's own runner is a job of its delegator, not of the task session.
+  const parentId = store.readHeader(sessionId)?.parent?.session_id
+
+  if (
+    parentId !== undefined &&
+    jobs
+      .list(parentId)
+      .some(
+        (job) =>
+          job.task?.session_id === sessionId &&
+          (jobs.state(job).state === "running" || !jobs.isReported(job)),
+      )
+  )
+    return "its task runner has outstanding background work"
+
   return undefined
 }
 
@@ -373,6 +399,13 @@ export const moveToPhoenix = async (
   }
 
   if (absent.length > 0) return { ok: false, reason: `Phoenix does not have ${absent.join(" and ")} yet` }
+
+  // Export and verification yield: a runner may have finished and written a
+  // result (already marked reported), or new work may have started meanwhile.
+  // Do not yield between this final check and deleting the local files.
+  const blockedNow = blocker(store, sessionId)
+
+  if (blockedNow !== undefined) return { ok: false, reason: blockedNow }
 
   const bytes = store.sessionBytes(sessionId)
 
