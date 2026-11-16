@@ -27,6 +27,11 @@ export const Steering = Schema.Literals(["auto", "off"])
 
 export type Steering = typeof Steering.Type
 
+/** Whether the agent may hand work to subagents. */
+export const Delegation = Schema.Literals(["auto", "off"])
+
+export type Delegation = typeof Delegation.Type
+
 export const Config = Schema.Struct({
   /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
   provider: Schema.String,
@@ -61,6 +66,8 @@ export const Config = Schema.Struct({
   cheap_model: Schema.String,
   /** How many subagents one session may have running at once. */
   max_tasks: Schema.Int,
+  /** `auto`: the agent hands work to subagents. `off`: it has no delegate tools and does everything itself. */
+  delegation: Delegation,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -93,6 +100,7 @@ const PartialConfig = Schema.fromJsonString(
     ),
     cheap_model: Schema.optionalKey(Schema.String),
     max_tasks: Schema.optionalKey(Schema.Int),
+    delegation: Schema.optionalKey(Delegation),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -107,6 +115,7 @@ const decodePartial = Schema.decodeUnknownOption(PartialConfig)
 const decodeApprovals = Schema.decodeUnknownOption(Approvals)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
 const decodeSteering = Schema.decodeUnknownOption(Steering)
+const decodeDelegation = Schema.decodeUnknownOption(Delegation)
 const encodeConfig = Schema.encodeSync(Config)
 
 /** An effort level from text, such as a command-line flag; undefined when it is not one. */
@@ -239,6 +248,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     },
     cheap_model: env["OI_AGENT_CHEAP_MODEL"] ?? file?.cheap_model ?? "",
     max_tasks: file?.max_tasks ?? 4,
+    delegation:
+      Option.getOrUndefined(decodeDelegation(env["OI_AGENT_DELEGATION"])) ?? file?.delegation ?? "auto",
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

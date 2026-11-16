@@ -22,6 +22,10 @@ rebuild or run the repo's `packages/cli/dist` are `exclusive: "bundle"`, and
 take turns across files. The runner prints each scenario's duration, and the
 total at the end.
 
+The harness sets `"delegation": "off"`, so the agent does the work a
+scenario asks for itself and never hands it to a subagent. Scenarios about
+delegation (`scenarios/tasks.e2e.ts`) turn it back on.
+
 ## What each scenario gets
 
 `scenario(name, options, body)` in `src/scenario.ts` wraps a Vitest test:

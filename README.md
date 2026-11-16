@@ -263,6 +263,8 @@ killed, and its result is delivered when it ends.
 Config: `"cheap_model": "provider/model"` is what the agent uses for
 mechanical tasks (running a suite, a rote edit); without it every task runs
 on the session's model. `"max_tasks"` (default 4) limits how many run at once.
+`"delegation": "off"` turns subagents off: the agent then does everything in
+the conversation, as before.
 `oi run` waits for the work it started unless given `--no-wait`.
 
 ### Hand off work into a new thread
