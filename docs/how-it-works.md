@@ -183,7 +183,12 @@ These work best on the session you are in, because the evidence is right there.
   writer: `Store.follow` polls the session's files and emits the events a
   writer in this process would, and what you type goes to the task's inbox
   (`Tasks.say`). The delegating session stays attended, so results and
-  approval requests still arrive.
+  approval requests still arrive. Opening a task directly with
+  `oi -s <task-session>` also attends its delegating session for results and
+  approvals; the terminal does not run the task's turns locally. Switching
+  between the parent and its tasks retains that attendance, while switching
+  to unrelated work releases it. Unanswered task approvals remain available
+  when the terminal is reopened.
 - **"Why did my result not interrupt me?"** Results are held while you are
   in the middle of something. The terminal sets `Engine.calm`, which
   `drainInbox` asks before queueing a delivery turn: an empty prompt, no
