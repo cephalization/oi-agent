@@ -14,6 +14,7 @@ import { jobsOf } from "../src/jobs.ts"
 import { scriptedModel } from "../src/model.ts"
 import { Redactor } from "../src/redact.ts"
 import { Store } from "../src/store.ts"
+import { Tasks } from "../src/tasks.ts"
 import { defineTool, ok } from "../src/tools.ts"
 import { Schema } from "effect"
 
@@ -31,12 +32,16 @@ const filler = defineTool({
   run: () => Effect.succeed(ok("x".repeat(outputBytes))),
 })
 
+const jobs = jobsOf(store)
+
 const env = {
   store,
   sessionId: session.id,
   cwd: os.tmpdir(),
   tools: [filler],
-  jobs: jobsOf(store),
+  jobs,
+  tasks: new Tasks(store, jobs, {}),
+  models: () => ({ default: "scripted/scripted", cheap: "" }),
   redactor: new Redactor(),
 }
 

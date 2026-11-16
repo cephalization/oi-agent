@@ -51,6 +51,7 @@ import {
   type StoreEvent,
   stringAttr,
   tailcatForward,
+  taskTools,
 } from "@oi-agent/engine"
 
 const HELP = `oi — an agent whose state is OpenInference spans on disk
@@ -61,6 +62,8 @@ Usage:
                              trace URL continues from that turn
   oi join <share-link>       Join a session someone shared with /share
   oi run <prompt>            Run one prompt and print the answer
+  oi serve <session>         Run what waits in a session's inbox, with nobody
+                             at the terminal (how a delegated task is run)
   oi sessions                List sessions
   oi show <session>          Print a session's turns
   oi export [session]        Send sessions to the configured Phoenix server
@@ -157,7 +160,15 @@ const approvalChoice = (): Config["approvals"] | undefined => {
   return mode
 }
 
-const buildEngine = (override?: ApprovalMode): Engine => {
+/** One argument of a shell command line, quoted. */
+const shellQuote = (text: string): string => `'${text.replaceAll("'", String.raw`'\''`)}'`
+
+/**
+ * `served`: the engine runs a subagent's session for another session. It
+ * cannot delegate further, and a tool call that needs a person waits for
+ * the delegating session to answer.
+ */
+const buildEngine = (override?: ApprovalMode, served: boolean = false): Engine => {
   const base = loadConfig()
   const approvals = override ?? approvalChoice() ?? base.approvals
 
@@ -192,16 +203,36 @@ const buildEngine = (override?: ApprovalMode): Engine => {
     return fail(`${error instanceof Error ? error.message : String(error)} (or \`oi auth login\`)`)
   }
 
-  const engine = new Engine({
+  // A subagent runs this same program, on the model picked for it and the approval mode in effect when it starts.
+  const runner = (sessionId: string, model: string): string =>
+    [
+      process.execPath,
+      fileURLToPath(import.meta.url),
+      "serve",
+      sessionId,
+      "--model",
+      model,
+      "--effort",
+      engine.config.effort,
+      ...(engine.approvals === "allow"
+        ? ["--yolo"]
+        : ["--approvals", engine.approvals === "auto" ? "auto" : "ask"]),
+    ]
+      .map(shellQuote)
+      .join(" ")
+
+  const engine: Engine = new Engine({
     store,
     config,
     approvals,
     redactor,
-    tools: [...builtinTools, createEvalTool],
+    tools: served ? [...builtinTools, createEvalTool] : [...builtinTools, createEvalTool, ...taskTools],
     selfDir: existsSync(SELF_DIR) ? SELF_DIR : undefined,
     model,
     modelFor: (settings) => providers.modelFor(settings),
     decider,
+    runner: served ? undefined : runner,
+    served,
   })
 
   // LLM evaluators judge with an Anthropic model; code evaluators and steering need no key of their own.
@@ -587,6 +618,29 @@ const run = async (prompt: string): Promise<void> => {
   if (!outcome.ok) fail(`Turn failed: ${outcome.message}`)
 }
 
+/**
+ * Serve a session with nobody at the terminal: run what is in its inbox, and
+ * leave when there is nothing left to do. What it prints is the runner
+ * job's log in the session that delegated it.
+ */
+const serve = async (sessionId: string): Promise<void> => {
+  if (store.readHeader(sessionId) === undefined) fail(`No such session: ${sessionId}`)
+
+  const engine = buildEngine(values.yolo ? "allow" : (approvalChoice() ?? "ask"), true)
+  const remote = connectPhoenix()
+  const unsubscribe = store.subscribe(printEvents(sessionId))
+  const stopExport = remote?.exporter.watch()
+
+  engine.attend(sessionId)
+  await engine.settled(sessionId)
+  process.stdout.write("\n")
+  unsubscribe()
+  stopExport?.()
+  await remote?.exporter.flush()
+  engine.close()
+  store.close()
+}
+
 const sessions = (): void => {
   for (const session of summarizeSessions(store).toReversed()) {
     const title = session.title === "" ? "(empty)" : session.title.slice(0, 60)
@@ -821,6 +875,8 @@ if (values.help) {
   await join(rest[0] ?? fail("Usage: oi join <share-link>"))
 } else if (command === "run") {
   await run(rest.join(" ") || fail("Usage: oi run <prompt>"))
+} else if (command === "serve") {
+  await serve(rest[0] ?? fail("Usage: oi serve <session>"))
 } else if (command === "sessions") {
   sessions()
 } else if (command === "show") {

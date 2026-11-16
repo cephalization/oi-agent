@@ -36,6 +36,7 @@ import {
   stringAttr,
 } from "./format.ts"
 import { type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
+import { Tasks } from "./tasks.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
 import { readRules } from "./rules.ts"
@@ -64,7 +65,11 @@ export interface Prompt {
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
   readonly delivers?: EngineMetadata["delivers"]
+  readonly origin?: EngineMetadata["origin"]
 }
+
+/** How often an attended session looks for approval requests from its tasks. */
+const APPROVALS_EVERY_MS = 500
 
 /** `user.id` of a turn oi started itself, to deliver results; nobody typed its text. */
 export const SYSTEM_USER = "oi"
@@ -78,7 +83,9 @@ const deliveryText = (results: ReadonlyArray<InboxFile>): string =>
     results.map((entry) => entry.text).join("\n\n"),
     "</background-results>",
     "",
-    "Carry on with the work these results were for. If nothing is left to do, tell the user the outcome in a sentence or two.",
+    results.length === 1
+      ? "Carry on with the work this result was for. If nothing is left to do, tell the user the outcome in a sentence or two."
+      : "Carry on with the work these results were for, and give the user one short digest of them: what needs their decision first, then what failed, then what is done.",
   ].join("\n")
 
 export type TurnOutcome =
@@ -98,6 +105,13 @@ export interface EngineOptions {
   readonly selfDir?: string | undefined
   /** The decision model for `auto` approvals; without one, auto mode asks a human every time. */
   readonly decider?: Decider | undefined
+  /** How to start a subagent's runner (see `TaskOptions.runner`). Absent: this engine cannot delegate. */
+  readonly runner?: ((sessionId: string, model: string) => string) | undefined
+  /**
+   * This engine serves a subagent's session with nobody at it: a tool call
+   * that needs a person waits for the delegating session to answer.
+   */
+  readonly served?: boolean | undefined
 }
 
 /** Hooks that run around a turn: evals and feedback plug in here. */
@@ -127,6 +141,7 @@ export class Engine {
   readonly selfDir: string | undefined
   readonly decider: Decider | undefined
   readonly jobs: Jobs
+  readonly tasks: Tasks
   hooks: TurnHooks = NO_HOOKS
   private settings: Config
   private model: Layer.Layer<Model>
@@ -142,6 +157,9 @@ export class Engine {
   private readonly queuedPrompts = new Set<string>()
   /** Sessions with a delivery turn already in the queue. */
   private readonly queuedDeliveries = new Set<string>()
+  private readonly served: boolean
+  /** Per attended session: the check for its tasks' approval requests. */
+  private readonly watches = new Map<string, ReturnType<typeof setInterval>>()
 
   constructor(options: EngineOptions) {
     this.store = options.store
@@ -153,12 +171,16 @@ export class Engine {
     this.redactor = options.redactor ?? new Redactor()
     this.selfDir = options.selfDir
     this.decider = options.decider
+    this.served = options.served === true
     this.jobs = jobsOf(this.store)
+    this.tasks = new Tasks(this.store, this.jobs, { runner: options.runner })
     this.jobs.onEnd((job) => this.jobEnded(job))
   }
 
-  /** Stop watching background jobs. The jobs keep running, and report when a session is next opened. */
+  /** Stop watching background work. It keeps running, and reports when a session is next opened. */
   close(): void {
+    for (const sessionId of this.watches.keys()) this.leave(sessionId)
+
     this.jobs.close()
   }
 
@@ -227,8 +249,19 @@ export class Engine {
     return true
   }
 
-  /** Wait for a human to answer. */
-  private askHuman(request: ApprovalRequest): Effect.Effect<ApprovalDecision> {
+  /** Wait for a human to answer: here, or at the session that delegated this one. */
+  private askHuman(sessionId: string, request: ApprovalRequest): Effect.Effect<ApprovalDecision> {
+    if (this.served)
+      return Effect.callback<ApprovalDecision>((resume) => {
+        const abort = new AbortController()
+
+        void this.tasks.approvals
+          .ask(sessionId, request, abort.signal)
+          .then((decision) => resume(Effect.succeed(decision)))
+
+        return Effect.sync(() => abort.abort())
+      })
+
     return Effect.callback<ApprovalDecision>((resume) => {
       this.pending.set(request.span_id, (decision) => resume(Effect.succeed(decision)))
 
@@ -248,7 +281,7 @@ export class Engine {
    */
   private autoApprove(sessionId: string, request: ApprovalRequest): Effect.Effect<Approval> {
     const human = (asked_because: string, answers?: Record<string, number>) =>
-      Effect.map(this.askHuman({ ...request, reason: asked_because }), (decision): Approval => ({
+      Effect.map(this.askHuman(sessionId, { ...request, reason: asked_because }), (decision): Approval => ({
         decision,
         asked_because,
         answers,
@@ -305,7 +338,7 @@ export class Engine {
 
         if (mode === "auto") return this.autoApprove(sessionId, request)
 
-        return Effect.map(this.askHuman(request), (decision): Approval => ({ decision }))
+        return Effect.map(this.askHuman(sessionId, request), (decision): Approval => ({ decision }))
       },
     })
   }
@@ -395,10 +428,40 @@ export class Engine {
     this.attended.add(sessionId)
     this.jobs.adopt(sessionId)
     this.drainInbox(sessionId)
+
+    if (this.watches.has(sessionId)) return
+
+    this.watches.set(
+      sessionId,
+      setInterval(() => this.relayApprovals(sessionId), APPROVALS_EVERY_MS),
+    )
   }
 
   leave(sessionId: string): void {
     this.attended.delete(sessionId)
+    clearInterval(this.watches.get(sessionId))
+    this.watches.delete(sessionId)
+  }
+
+  /**
+   * Put the tool calls that a session's tasks need a person for in front of
+   * whoever answers this session's own: same listeners, same `resolveApproval`.
+   */
+  private relayApprovals(sessionId: string): void {
+    for (const task of this.tasks.list(sessionId)) {
+      for (const request of this.tasks.approvals.waiting(task.header.id)) {
+        if (this.pending.has(request.span_id)) continue
+
+        const label = `task ${task.id} "${task.task.title}"`
+        const reason = request.reason === undefined ? label : `${label}: ${request.reason}`
+
+        this.pending.set(request.span_id, (decision) =>
+          this.tasks.approvals.answer(task.header.id, request.span_id, decision),
+        )
+
+        for (const listener of this.approvalListeners) listener({ ...request, reason })
+      }
+    }
   }
 
   /**
@@ -416,7 +479,12 @@ export class Engine {
       if (this.queuedPrompts.has(entry.id)) continue
 
       this.queuedPrompts.add(entry.id)
-      void this.submit(sessionId, { text: entry.text, userId: entry.user_id, inboxId: entry.id })
+      void this.submit(sessionId, {
+        text: entry.text,
+        userId: entry.user_id,
+        inboxId: entry.id,
+        origin: entry.origin,
+      })
     }
   }
 
@@ -450,19 +518,40 @@ export class Engine {
     )
   }
 
+  /** What a finished job has to tell the session that started it: a command's output, or a task's report. */
+  private resultOf(job: Job): Pick<InboxFile, "text" | "delivers"> {
+    const task = this.tasks.of(job)
+
+    if (task === undefined)
+      return {
+        text: jobReport(this.jobs, job, this.jobs.state(job)),
+        delivers: { kind: "job", id: job.id, ...job.tool },
+      }
+
+    const status = this.tasks.status(task)
+
+    return { text: this.tasks.report(task, status), delivers: this.tasks.delivery(task, status) }
+  }
+
   /** A background job ended and no tool call was watching: its result goes to the session's inbox. */
   private jobEnded(job: Job): void {
     const id = `job-${job.id}`
+    const task = this.tasks.of(job)
+
+    // A prompt reached the task as its runner was leaving: it is not finished, it needs a new runner.
+    if (task !== undefined && this.jobs.state(job).state === "exited" && this.tasks.wake(task)) {
+      this.jobs.claim(job)
+
+      return
+    }
 
     // The entry is written before the claim: a crash between the two repeats neither.
     if (!this.store.listInbox(job.session_id).some((entry) => entry.id === id)) {
+      const result = this.resultOf(job)
+
       this.store.writeInbox(
         job.session_id,
-        {
-          user_id: SYSTEM_USER,
-          text: this.redactor.scrub(jobReport(this.jobs, job, this.jobs.state(job))),
-          delivers: { kind: "job", id: job.id, ...job.tool },
-        },
+        { user_id: SYSTEM_USER, text: this.redactor.scrub(result.text), delivers: result.delivers },
         id,
       )
     }
@@ -554,6 +643,12 @@ export class Engine {
       cwd: header.cwd,
       tools: this.tools,
       jobs: this.jobs,
+      tasks: this.tasks,
+      models: () => ({
+        default: `${this.settings.provider}/${this.settings.model}`,
+        cheap: this.settings.cheap_model,
+      }),
+      task: header.task,
       redactor: this.redactor,
       selfDir: this.selfDir,
     }
@@ -565,6 +660,7 @@ export class Engine {
       injected: prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
       delivers: prompt.delivers,
+      origin: prompt.origin,
       operation: prompt.operation,
       handoffSeed: prompt.handoffSeed,
     }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver(sessionId))))

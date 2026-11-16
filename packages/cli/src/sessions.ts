@@ -55,6 +55,8 @@ export const summarizeSessions = (store: Store): Array<SessionSummary> =>
   mergeSessions(
     store
       .listSessionIds()
+      // A subagent's session is reached from the session that delegated it, not listed beside it.
+      .filter((id) => store.readHeader(id)?.task === undefined)
       .map((id) =>
         fromSummary(summarizeSession(store, id), readMarker(store, id) === undefined ? "local" : "phoenix"),
       ),

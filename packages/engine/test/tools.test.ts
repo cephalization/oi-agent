@@ -12,7 +12,8 @@ import {
   type ToolOutcome,
 } from "../src/index.ts"
 import type { Json } from "../src/wire.ts"
-import { tempStore } from "./helpers.ts"
+import { Tasks } from "../src/tasks.ts"
+import { MODELS, tempStore } from "./helpers.ts"
 
 const SESSION = "session"
 
@@ -29,6 +30,9 @@ const setup = () => {
     sessionId: SESSION,
     span: { trace_id: "trace", span_id: "span" },
     jobs,
+    tasks: new Tasks(store, jobs, {}),
+    userId: "tester",
+    models: MODELS,
   }
 
   const call = (name: string, input: Json): Effect.Effect<ToolOutcome> => {
