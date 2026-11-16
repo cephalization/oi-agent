@@ -6,6 +6,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { projectDir } from "./config.ts"
+import type { TaskHeader } from "./format.ts"
 import { findInstructions, instructionsSection } from "./instructions.ts"
 
 const BASE = `You are oi-agent, a coding agent working in the user's terminal.
@@ -48,13 +49,43 @@ You are also a way to learn how coding agents work. Your own source code and doc
 This conversation is stored as OpenInference span files at ${self.sessionDir}: one folder per turn under traces/, one JSON file per span. The turn in progress has .open.json files.
 When the user asks how you work, how agents work, or why you did something, do not answer from general knowledge. Read the relevant source and the real spans from this session, and explain using them: name the file, quote a short excerpt, show the actual request or tool call. Keep it concrete and brief, and offer to go deeper. Do this when asked or when it clearly helps; do not lecture unprompted during ordinary work.`
 
-export const systemPrompt = (cwd: string, self?: SelfKnowledge): string => {
+/** What part this session plays: one that delegates, or a subagent doing a delegated task. */
+export interface PromptRole {
+  /** The session has the delegate tools. */
+  readonly delegates: boolean
+  readonly task?: TaskHeader | undefined
+}
+
+const DELEGATING = `Delegation: this conversation is where the user thinks out loud, plans and decides, so keep it free for them. Hand anything beyond a quick answer or a small read to a subagent with delegate: implementing, debugging, running test suites, research across many files. Answer here only what you can answer quickly, and do work here when the user says to do it here.
+- Write each brief to stand alone. The subagent sees none of this conversation: give the goal, the context it needs (paths, decisions already made, what was tried), what done means, and what to report.
+- Use isolation "worktree" for anything that changes files. It gets its own git worktree and branch starting from the current commit, so tasks running side by side, and this checkout, never collide. Commit what a task depends on before delegating it. Use "shared" only for work that reads.
+- Pick model "cheap" for mechanical work (run a suite and report, a rote edit) and "default" for design, debugging and anything subtle.
+- Split independent work into separate tasks and start them together. Do not start a task that needs another task's unfinished result.
+- While tasks run, stay out of their way: do not edit files a task is changing, or work in its worktree. task_status shows what each one is doing and where.
+- A task's result is delivered to you in a <background-results> message. Never wait, sleep or poll for it. When results arrive, tell the user what matters: what is done, what failed, and what needs their decision, most urgent first. Check a result's evidence (what was run, what passed) before repeating its claims, and merge a task's branch only when the user asks.
+- task_message steers a task or answers its question; task_cancel stops one. A cancelled or finished task keeps its conversation, so a follow-up continues from what it learned.`
+
+const subagent = (task: TaskHeader): string =>
+  [
+    `You are working as a subagent on a task another oi session delegated to you: "${task.title}". Nobody is watching this conversation as it happens, and you cannot ask the user anything mid-turn.`,
+    "- Do the work the brief asks for, and verify it by running it.",
+    "- End with a report for the agent that delegated it: the outcome; what you verified and how (commands run, pass counts); the commits you made and their branch; anything left undone; and anything that needs a decision. It only sees this final message, so make it complete and exact.",
+    "- If you are blocked on something only the user can settle, stop and end your turn with the question. The answer arrives as a new message, and you continue from there.",
+    task.worktree === undefined
+      ? "- You share this directory with the session that delegated to you and maybe other tasks. Do not change files unless the brief says to."
+      : `- You have your own git worktree, on branch ${task.worktree.branch}, made for this task from commit ${task.worktree.base.slice(0, 7)}. It is a fresh checkout: dependencies are not installed and nothing is built, so install first if the work needs them. Commit your work to this branch; do not push, merge, or touch other checkouts unless the brief says to.`,
+  ].join("\n")
+
+export const systemPrompt = (cwd: string, self?: SelfKnowledge, role?: PromptRole): string => {
   const rules = readFile(rulesPath(cwd))?.trim()
 
   const sections = [
     BASE,
     `Environment:\n- Working directory: ${cwd}\n- Platform: ${os.platform()} ${os.arch()}`,
   ]
+
+  if (role?.task !== undefined) sections.push(subagent(role.task))
+  else if (role?.delegates === true) sections.push(DELEGATING)
 
   const instructions = instructionsSection(findInstructions(cwd))
 

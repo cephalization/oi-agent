@@ -5,9 +5,7 @@ import { anthropicMessages, openaiChat } from "../src/dialects/index.ts"
 import { contextFor, lastModelOf, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
-import { jobsOf } from "../src/jobs.ts"
-import { Redactor } from "../src/redact.ts"
-import { tempStore } from "./helpers.ts"
+import { tempEnv, tempStore } from "./helpers.ts"
 
 const response = (text: string, stop = "end_turn") => ({
   model: "scripted",
@@ -16,17 +14,8 @@ const response = (text: string, stop = "end_turn") => ({
 })
 
 const setup = () => {
-  const store = tempStore()
-  const sessionId = store.createSession(process.cwd()).id
-
-  const env = {
-    store,
-    sessionId,
-    cwd: process.cwd(),
-    tools: [],
-    jobs: jobsOf(store),
-    redactor: new Redactor(),
-  }
+  const env = tempEnv([], process.cwd())
+  const { store, sessionId } = env
 
   const run = (input: TurnInput, text: string, stop = "end_turn") =>
     Effect.runPromiseExit(

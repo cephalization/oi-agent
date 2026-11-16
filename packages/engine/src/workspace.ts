@@ -6,12 +6,17 @@
 import { execFileSync } from "node:child_process"
 import type { Workspace } from "./format.ts"
 
-const git = (cwd: string, args: ReadonlyArray<string>): string | undefined => {
+/** Run git in a directory; its trimmed output, or `undefined` when it fails or takes too long. */
+export const git = (
+  cwd: string,
+  args: ReadonlyArray<string>,
+  timeoutMs: number = 2000,
+): string | undefined => {
   try {
     return execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 2000,
+      timeout: timeoutMs,
     }).trim()
   } catch {
     return undefined

@@ -1,6 +1,3 @@
-import * as fs from "node:fs"
-import * as os from "node:os"
-import * as path from "node:path"
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { approveAll, runTurn, type TurnEnv } from "../src/agent.ts"
@@ -8,25 +5,8 @@ import type { Dialect } from "../src/dialect.ts"
 import { anthropicMessages, openaiChat, openaiResponses } from "../src/dialects/index.ts"
 import { lastModelOf } from "../src/fold.ts"
 import { Model } from "../src/model.ts"
-import { jobsOf } from "../src/jobs.ts"
-import { Redactor } from "../src/redact.ts"
-import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
-import { tempStore } from "./helpers.ts"
-
-const setup = (): TurnEnv => {
-  const store = tempStore()
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-agent-cwd-"))
-
-  return {
-    store,
-    sessionId: store.createSession(cwd).id,
-    cwd,
-    tools: builtinTools,
-    jobs: jobsOf(store),
-    redactor: new Redactor(),
-  }
-}
+import { tempEnv } from "./helpers.ts"
 
 /** A model that records `request` as what it sent and answers with `response`. */
 const servedBy = (provider: string, dialect: Dialect, request: Json, response: Json): Layer.Layer<Model> =>
@@ -68,13 +48,13 @@ const responses = servedBy(
 
 describe("a session's last model", () => {
   it("is undefined before any model has served the session", () => {
-    const env = setup()
+    const env = tempEnv()
 
     expect(lastModelOf(env.store, env.sessionId)).toBeUndefined()
   })
 
   it("is the configured provider, model and effort of the newest turn's call", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     await turn(env, "one", anthropic)
     expect(lastModelOf(env.store, env.sessionId)).toEqual({

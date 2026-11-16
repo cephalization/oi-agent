@@ -54,6 +54,11 @@ export const Config = Schema.Struct({
   steering_model: Schema.String,
   /** The decision model used by `approvals: "auto"` and by `steering_model: "decision:…"`. */
   decision: DecisionSettings,
+  /**
+   * `provider/model` for subagents doing mechanical work, which the agent
+   * picks with `model: "cheap"` when it delegates. Empty: the session's model.
+   */
+  cheap_model: Schema.String,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -84,6 +89,7 @@ const PartialConfig = Schema.fromJsonString(
         model: Schema.optionalKey(Schema.String),
       }),
     ),
+    cheap_model: Schema.optionalKey(Schema.String),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -228,6 +234,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
       base_url: file?.decision?.base_url ?? DEFAULT_DECISION.base_url,
       model: file?.decision?.model ?? DEFAULT_DECISION.model,
     },
+    cheap_model: env["OI_AGENT_CHEAP_MODEL"] ?? file?.cheap_model ?? "",
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

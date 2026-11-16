@@ -1,5 +1,4 @@
 import * as fs from "node:fs"
-import * as os from "node:os"
 import * as path from "node:path"
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vite-plus/test"
@@ -7,11 +6,8 @@ import { approveAll, Approver, runTurn, type TurnEnv, type TurnInput } from "../
 import { contextFor, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { type ModelCall, scriptedModel } from "../src/model.ts"
-import { jobsOf } from "../src/jobs.ts"
-import { Redactor } from "../src/redact.ts"
-import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
-import { tempStore } from "./helpers.ts"
+import { tempEnv } from "./helpers.ts"
 
 const text = (value: string): Json => ({
   model: "scripted",
@@ -30,21 +26,6 @@ const bash = (id: string, command: string): Json => ({
   usage: { input_tokens: 10, output_tokens: 5 },
 })
 
-const setup = (): TurnEnv => {
-  const store = tempStore()
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-agent-cwd-"))
-  const session = store.createSession(cwd)
-
-  return {
-    store,
-    sessionId: session.id,
-    cwd,
-    tools: builtinTools,
-    jobs: jobsOf(store),
-    redactor: new Redactor(),
-  }
-}
-
 const run = (env: TurnEnv, input: TurnInput, respond: (call: ModelCall, step: number) => Json) =>
   Effect.runPromiseExit(
     runTurn(env, input).pipe(Effect.provide(Layer.mergeAll(scriptedModel(respond), approveAll))),
@@ -54,7 +35,7 @@ const first = (textValue: string): TurnInput => ({ text: textValue, userId: "ton
 
 describe("agent loop", () => {
   it("records a turn as an AGENT span with LLM and TOOL children", async () => {
-    const env = setup()
+    const env = tempEnv()
     const seen: Array<ReadonlyArray<Json>> = []
 
     await run(env, first("say hi"), (call, step) => {
@@ -100,7 +81,7 @@ describe("agent loop", () => {
   })
 
   it("continues a conversation across turns from span files alone", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     await run(env, first("my name is Tony"), () => text("Hello Tony."))
 
@@ -134,7 +115,7 @@ describe("agent loop", () => {
   })
 
   it("recovers a turn that died after its tool ran", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     await run(env, first("run it"), (_call, step) => {
       if (step === 0) return bash("toolu_9", "echo survived")
@@ -156,7 +137,7 @@ describe("agent loop", () => {
   })
 
   it("reports an interrupted tool call instead of losing it", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     await run(env, first("run it"), (_call, step) => {
       if (step === 0) return twoCalls("toolu_a", "toolu_b")
@@ -196,7 +177,7 @@ describe("agent loop", () => {
   })
 
   it("scrubs secrets from tool output before it reaches a span", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     fs.writeFileSync(
       path.join(env.cwd, ".env"),
@@ -214,7 +195,7 @@ describe("agent loop", () => {
   })
 
   it("marks a tool call as awaiting approval on disk while the decision is pending", async () => {
-    const env = setup()
+    const env = tempEnv()
     const seen: Array<boolean | undefined> = []
 
     // An approver that looks at the in-flight span file before deciding.

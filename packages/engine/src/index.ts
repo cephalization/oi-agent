@@ -46,6 +46,10 @@ export * from "./rules.ts"
 
 export * from "./steering.ts"
 
+export * from "./tasks.ts"
+
+export * from "./task-tools.ts"
+
 export * from "./decision.ts"
 
 export * from "./detectors.ts"
