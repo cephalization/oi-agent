@@ -10,7 +10,8 @@
     "test": "vp test run",
     "dev": "node scripts/dev.ts",
     "build": "pnpm --filter oi-agent build",
-    "e2e": "vp test run --root packages/e2e"
+    "e2e": "vp test run --root packages/e2e",
+    "e2e:scored": "OI_E2E_SCORED=1 vp test run --root packages/e2e"
   },
   "devDependencies": {
     "@changesets/changelog-github": "1.0.1",

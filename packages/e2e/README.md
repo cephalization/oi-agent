@@ -7,11 +7,20 @@ served a turn, which tools ran and what was approved, not what a model
 happened to say.
 
 ```sh
-pnpm e2e                                  # every scenario that can run here
+pnpm e2e                                  # every scenario that can run here (2 to 3 minutes live)
 pnpm e2e scenarios/tui.e2e.ts             # one file
+pnpm e2e:scored                           # the scored experiments (see "Scored live samples")
 OI_E2E_PENDING=12 pnpm e2e                # also the scenarios written for issue #12
 OI_E2E_MODELS=replay pnpm e2e             # from recordings: no keys, no model calls
 ```
+
+Scenario files run side by side, four at a time (`OI_E2E_WORKERS`), and the
+scenarios in a file run in order. Each has its own sandbox, model proxy and
+Rex sessions, so they share nothing by default. One that does touch
+something outside its sandbox says so with `exclusive`: the scenarios that
+rebuild or run the repo's `packages/cli/dist` are `exclusive: "bundle"`, and
+take turns across files. The runner prints each scenario's duration, and the
+total at the end.
 
 ## What each scenario gets
 
@@ -121,12 +130,18 @@ so installing a real key does not change that test's meaning.
 
 ## Scored live samples
 
+A scored experiment judges a rate over many live samples and takes minutes,
+so it is not part of `pnpm e2e`. It lives in a `scenarios/*.scored.ts` file
+and runs with `pnpm e2e:scored` (`OI_E2E_SCORED=1`). Run it when a change
+touches what it scores: `steering.scored.ts` covers steering detection,
+learning from corrections and the evaluators they become. Its cases and the
+single-case scenarios in `steering.e2e.ts` share `src/steering.ts`.
+
 Declare `liveOnly: true, samples: true`, then call `s.samples(jobs, body)`.
 Each job **and retry** receives its own fixture checkout, config, session home,
 `Spans` and headless `run()`. Child sandboxes inherit the scenario's settings
 and environment and are closed/disposed with it (`OI_E2E_KEEP=1` retains them
-on failure). No Rex or recording proxy is allowed in this mode; ordinary
-scenarios remain sequential.
+on failure). No Rex or recording proxy is allowed in this mode.
 
 `OI_E2E_CONCURRENCY` defaults to 4; set it to 1 for an isolated serial control.
 `OI_E2E_SAMPLES` controls repetitions in the steering experiment (default 3).

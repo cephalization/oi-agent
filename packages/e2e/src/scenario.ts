@@ -11,6 +11,7 @@ import * as path from "node:path"
 import { getSecret, nowNs } from "@oi-agent/engine"
 import type { Schema } from "effect"
 import { it } from "vite-plus/test"
+import { withLock } from "./lock.ts"
 import { PHOENIX_ENDPOINT, PHOENIX_PROJECT, phoenixUp, reportScenario } from "./phoenix.ts"
 import { ModelProxy, modelsMode } from "./proxy.ts"
 import { canConfine, type RunResult, Sandbox, type SandboxConfig, type SandboxOptions } from "./sandbox.ts"
@@ -60,6 +61,12 @@ export interface ScenarioOptions {
   readonly liveOnly?: boolean
   /** Opt in to isolated headless samples. Requires liveOnly and no Rex. */
   readonly samples?: boolean
+  /**
+   * Something outside the sandbox that this scenario changes or depends on
+   * (`bundle`: the repo's `packages/cli/dist`). Scenarios naming the same
+   * thing never overlap, in whichever files they are.
+   */
+  readonly exclusive?: string
   readonly timeoutMs?: number
 }
 
@@ -313,7 +320,7 @@ export const scenario = (
       }
 
       try {
-        await body(s)
+        await (options.exclusive === undefined ? body(s) : withLock(options.exclusive, () => body(s)))
 
         const misses = proxy?.misses.filter((miss) => !miss.startsWith("GET")) ?? []
 

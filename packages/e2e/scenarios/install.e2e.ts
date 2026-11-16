@@ -64,7 +64,7 @@ const reloadOnto = async (s: Scenario, oi: string, upgrade: () => void, banner: 
 describe("installed builds", () => {
   scenario(
     "a pnpm dev install reloads onto the build a later pnpm dev linked",
-    { needs: ["rex"], timeoutMs: 420_000 },
+    { needs: ["rex"], exclusive: "bundle", timeoutMs: 420_000 },
     async (s) => {
       const bin = path.join(s.sandbox.root, "bin")
       const builds = path.join(s.sandbox.root, "builds")
@@ -96,7 +96,7 @@ describe("installed builds", () => {
 
   scenario(
     "an npm install reloads onto files an upgrade replaced in place",
-    { needs: ["rex"], timeoutMs: 420_000 },
+    { needs: ["rex"], exclusive: "bundle", timeoutMs: 420_000 },
     async (s) => {
       const packs = path.join(s.sandbox.root, "packs")
       const prefix = path.join(s.sandbox.root, "prefix")

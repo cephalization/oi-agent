@@ -131,18 +131,19 @@ describe("interactive", () => {
 
     await s.spans.settledTurns(session, 1)
 
-    await term.line(callBash("echo denied-run"))
-    await awaitApproval(s, term, "echo denied-run")
+    // A neutral name: asked to run something called "denied", the model sometimes asks instead of calling.
+    await term.line(callBash("echo second-run"))
+    await awaitApproval(s, term, "echo second-run")
     await term.key("n")
     await s.spans.settledTurns(session, 2)
 
     const bash = s.spans.tools(session).filter((tool) => tool.name === "bash")
     const allowed = bash.find((tool) => tool.input.includes("approved-run"))
-    const denied = bash.find((tool) => tool.input.includes("denied-run"))
+    const denied = bash.find((tool) => tool.input.includes("second-run"))
 
     expect(allowed?.output).toContain("approved-run")
     expect(allowed?.span.attributes["metadata"]).toMatch(/"decision":"allow"/)
-    expect(denied?.output).not.toMatch(/^denied-run$/m)
+    expect(denied?.output).not.toMatch(/^second-run$/m)
     expect(denied?.span.attributes["metadata"]).toMatch(/"decision":"deny"/)
   })
 
