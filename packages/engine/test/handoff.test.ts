@@ -5,7 +5,6 @@ import { Engine } from "../src/engine.ts"
 import { contextFor, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
-import { drainInbox } from "../src/peer/server.ts"
 import { keepInPhoenix, summarizeSession } from "../src/remote/storage.ts"
 import { tempStore } from "./helpers.ts"
 
@@ -203,7 +202,7 @@ describe("handoff", () => {
     const fresh = s.engine()
     const inbox = s.store.writeInbox(destination, { text: "Peer prompt", user_id: "peer" })
 
-    drainInbox(fresh, destination)
+    fresh.drainInbox(destination)
     const pickup = fresh.resumeHandoff(destination)
 
     await pickup

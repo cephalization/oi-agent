@@ -26,8 +26,16 @@ import {
   mustAsk,
 } from "./decision.ts"
 import { completeHandoff, recoverHandoff } from "./handoff.ts"
-import { handoffSeedFor, loadSession } from "./fold.ts"
-import { type AnnotationFile, type EngineMetadata, OI, type SessionHeader, stringAttr } from "./format.ts"
+import { handoffSeedFor, loadSession, pendingInbox } from "./fold.ts"
+import {
+  type AnnotationFile,
+  type EngineMetadata,
+  type InboxFile,
+  OI,
+  type SessionHeader,
+  stringAttr,
+} from "./format.ts"
+import { type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
 import { readRules } from "./rules.ts"
@@ -55,7 +63,23 @@ export interface Prompt {
   readonly operation?: "compact" | "handoff" | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
+  readonly delivers?: EngineMetadata["delivers"]
 }
+
+/** `user.id` of a turn oi started itself, to deliver results; nobody typed its text. */
+export const SYSTEM_USER = "oi"
+
+/** The text of a turn that hands the model the results of its background work. */
+const deliveryText = (results: ReadonlyArray<InboxFile>): string =>
+  [
+    "<background-results>",
+    "oi is delivering the results of background work you started. This is not a message from the user.",
+    "",
+    results.map((entry) => entry.text).join("\n\n"),
+    "</background-results>",
+    "",
+    "Carry on with the work these results were for. If nothing is left to do, tell the user the outcome in a sentence or two.",
+  ].join("\n")
 
 export type TurnOutcome =
   | { readonly ok: true; readonly result: TurnResult }
@@ -102,6 +126,7 @@ export class Engine {
   readonly tools: ReadonlyArray<ToolSpec>
   readonly selfDir: string | undefined
   readonly decider: Decider | undefined
+  readonly jobs: Jobs
   hooks: TurnHooks = NO_HOOKS
   private settings: Config
   private model: Layer.Layer<Model>
@@ -111,6 +136,12 @@ export class Engine {
   private readonly running = new Map<string, Running>()
   private readonly pending = new Map<string, (decision: ApprovalDecision) => void>()
   private readonly approvalListeners = new Set<(request: ApprovalRequest) => void>()
+  /** Sessions someone is here for: their inbox runs as it fills. */
+  private readonly attended = new Set<string>()
+  /** Inbox prompts already in a session's queue. */
+  private readonly queuedPrompts = new Set<string>()
+  /** Sessions with a delivery turn already in the queue. */
+  private readonly queuedDeliveries = new Set<string>()
 
   constructor(options: EngineOptions) {
     this.store = options.store
@@ -122,6 +153,13 @@ export class Engine {
     this.redactor = options.redactor ?? new Redactor()
     this.selfDir = options.selfDir
     this.decider = options.decider
+    this.jobs = jobsOf(this.store)
+    this.jobs.onEnd((job) => this.jobEnded(job))
+  }
+
+  /** Stop watching background jobs. The jobs keep running, and report when a session is next opened. */
+  close(): void {
+    this.jobs.close()
   }
 
   // --- sessions -----------------------------------------------------------
@@ -286,52 +324,183 @@ export class Engine {
   }
 
   /**
-   * Run a prompt as a turn. Turns in one session run one after another, in
-   * the order they were submitted: a session has a single writer.
+   * Run `task` after everything already queued for the session, and `after`
+   * before anything queued later. A session has a single writer.
    */
-  submit(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
-    const previous = this.queues.get(sessionId) ?? Promise.resolve()
+  private enqueue<A>(
+    sessionId: string,
+    task: () => Promise<A>,
+    after: (result: A) => Promise<void>,
+  ): Promise<A> {
+    const result = (this.queues.get(sessionId) ?? Promise.resolve()).then(task)
 
-    const outcome = previous.then(async () => {
-      // Seed pickup belongs to the engine queue, not to a UI's startup order.
-      const handoff = await this.pickupHandoff(sessionId)
-
-      if (handoff !== undefined && !handoff.ok) return handoff
-
-      return this.execute(sessionId, prompt)
-    })
-
-    // Evaluators run after the answer is delivered but before the next turn starts.
-    const settled = outcome.then((result) =>
-      result.ok && prompt.operation === undefined
-        ? this.hooks.afterTurn(sessionId, result.result.traceId).catch(() => undefined)
-        : undefined,
+    this.queues.set(
+      sessionId,
+      result.then(after).catch(() => undefined),
     )
 
-    this.queues.set(sessionId, settled)
+    return result
+  }
 
-    return outcome
+  /** Evaluators run after the answer is delivered but before the next turn starts. */
+  private afterTurn(sessionId: string, outcome: TurnOutcome | undefined): Promise<void> {
+    return outcome?.ok === true
+      ? this.hooks.afterTurn(sessionId, outcome.result.traceId).catch(() => undefined)
+      : Promise.resolve()
+  }
+
+  /**
+   * Run a prompt as a turn. Turns in one session run one after another, in
+   * the order they were submitted.
+   */
+  submit(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
+    return this.enqueue(
+      sessionId,
+      async () => {
+        // Seed pickup belongs to the engine queue, not to a UI's startup order.
+        const handoff = await this.pickupHandoff(sessionId)
+
+        if (handoff !== undefined && !handoff.ok) return handoff
+
+        return this.execute(sessionId, prompt)
+      },
+      (outcome) => (prompt.operation === undefined ? this.afterTurn(sessionId, outcome) : Promise.resolve()),
+    )
   }
 
   /** Consume a durable destination seed once, serialized with all other turns.
    * An interrupted first turn is not retried automatically: tools may have run.
    */
   resumeHandoff(sessionId: string): Promise<TurnOutcome | undefined> {
-    const previous = this.queues.get(sessionId) ?? Promise.resolve()
-
-    const outcome = previous.then(() => {
-      for (const turn of loadSession(this.store, sessionId).turns)
-        completeHandoff(this.store, sessionId, turn.root)
-
-      return this.pickupHandoff(sessionId)
-    })
-
-    this.queues.set(
+    return this.enqueue(
       sessionId,
-      outcome.then(() => undefined),
-    )
+      () => {
+        for (const turn of loadSession(this.store, sessionId).turns)
+          completeHandoff(this.store, sessionId, turn.root)
 
-    return outcome
+        return this.pickupHandoff(sessionId)
+      },
+      () => Promise.resolve(),
+    )
+  }
+
+  // --- inbox and background work ------------------------------------------
+
+  /**
+   * Start serving a session: follow the background jobs it left running, and
+   * run what is waiting in its inbox. Results of work that ends while nobody
+   * attends a session wait in its inbox until someone does.
+   */
+  attend(sessionId: string): void {
+    this.attended.add(sessionId)
+    this.jobs.adopt(sessionId)
+    this.drainInbox(sessionId)
+  }
+
+  leave(sessionId: string): void {
+    this.attended.delete(sessionId)
+  }
+
+  /**
+   * Queue what is waiting in a session's inbox: each prompt from a peer as a
+   * turn of its own, and every result of background work together in one.
+   * Safe to call at any time, and again after a crash.
+   */
+  drainInbox(sessionId: string): void {
+    for (const entry of pendingInbox(this.store, sessionId)) {
+      if (entry.delivers !== undefined) {
+        this.queueDelivery(sessionId)
+        continue
+      }
+
+      if (this.queuedPrompts.has(entry.id)) continue
+
+      this.queuedPrompts.add(entry.id)
+      void this.submit(sessionId, { text: entry.text, userId: entry.user_id, inboxId: entry.id })
+    }
+  }
+
+  /**
+   * One turn for all the results waiting when its place in the queue comes,
+   * so work that finished during a long turn arrives as a single message.
+   */
+  private queueDelivery(sessionId: string): void {
+    if (this.queuedDeliveries.has(sessionId)) return
+
+    this.queuedDeliveries.add(sessionId)
+
+    void this.enqueue(
+      sessionId,
+      async () => {
+        this.queuedDeliveries.delete(sessionId)
+
+        const results = pendingInbox(this.store, sessionId).filter((entry) => entry.delivers !== undefined)
+
+        if (results.length === 0) return undefined
+
+        return this.execute(sessionId, {
+          text: deliveryText(results),
+          userId: SYSTEM_USER,
+          delivers: results.flatMap((entry) =>
+            entry.delivers === undefined ? [] : { ...entry.delivers, inbox_id: entry.id },
+          ),
+        })
+      },
+      (outcome) => this.afterTurn(sessionId, outcome),
+    )
+  }
+
+  /** A background job ended and no tool call was watching: its result goes to the session's inbox. */
+  private jobEnded(job: Job): void {
+    const id = `job-${job.id}`
+
+    // The entry is written before the claim: a crash between the two repeats neither.
+    if (!this.store.listInbox(job.session_id).some((entry) => entry.id === id)) {
+      this.store.writeInbox(
+        job.session_id,
+        {
+          user_id: SYSTEM_USER,
+          text: this.redactor.scrub(jobReport(this.jobs, job, this.jobs.state(job))),
+          delivers: { kind: "job", id: job.id, ...job.tool },
+        },
+        id,
+      )
+    }
+
+    this.jobs.claim(job)
+
+    if (this.attended.has(job.session_id)) this.drainInbox(job.session_id)
+  }
+
+  /**
+   * Resolves when a session has nothing left to do: no turn or evaluator
+   * running, no background job, and no result waiting to be delivered.
+   */
+  async settled(sessionId: string): Promise<void> {
+    // A job does not keep the process that started it alive; waiting for one has to.
+    const awake = setInterval(() => undefined, 1000)
+
+    try {
+      for (;;) {
+        const queue = this.queues.get(sessionId)
+
+        await queue
+
+        const running = this.jobs.running(sessionId)
+
+        if (running.length > 0) {
+          await Promise.race(running.map((job) => this.jobs.ended(job)))
+          continue
+        }
+
+        // A result may have been recorded by another process that was watching the same job.
+        this.drainInbox(sessionId)
+
+        if (this.queues.get(sessionId) === queue) return
+      }
+    } finally {
+      clearInterval(awake)
+    }
   }
 
   private async pickupHandoff(sessionId: string): Promise<TurnOutcome | undefined> {
@@ -384,6 +553,7 @@ export class Engine {
       sessionId,
       cwd: header.cwd,
       tools: this.tools,
+      jobs: this.jobs,
       redactor: this.redactor,
       selfDir: this.selfDir,
     }
@@ -394,6 +564,7 @@ export class Engine {
       previous: this.resolvePrevious(sessionId, prompt),
       injected: prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
+      delivers: prompt.delivers,
       operation: prompt.operation,
       handoffSeed: prompt.handoffSeed,
     }).pipe(Effect.provide(Layer.mergeAll(this.model, this.approver(sessionId))))

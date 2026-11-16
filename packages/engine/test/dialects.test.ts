@@ -11,6 +11,7 @@ import { contextFor, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { Model, type ModelCall, scriptedModel } from "../src/model.ts"
 import { openaiModel, type OpenAISettings } from "../src/openai.ts"
+import { jobsOf } from "../src/jobs.ts"
 import { Redactor } from "../src/redact.ts"
 import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
@@ -21,7 +22,14 @@ const setup = (): TurnEnv => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-agent-cwd-"))
   const session = store.createSession(cwd)
 
-  return { store, sessionId: session.id, cwd, tools: builtinTools, redactor: new Redactor() }
+  return {
+    store,
+    sessionId: session.id,
+    cwd,
+    tools: builtinTools,
+    jobs: jobsOf(store),
+    redactor: new Redactor(),
+  }
 }
 
 const run = (

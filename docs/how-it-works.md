@@ -24,8 +24,11 @@ So "what is the agent's state?" has a literal answer: a folder.
     <start-ns>-<span-id>.open.json             a span still running
     <start-ns>-<span-id>.stream.jsonl          text streaming into a running span
   annotations/<id>.json                        evaluator verdicts
-  inbox/<id>.json                              prompts sent by people sharing the session
+  inbox/<id>.json                              prompts from people sharing the session, and results of background work
 ```
+
+Beside the sessions, and never synced, are the logs of shell commands that
+were left running in the background: `<home>/jobs/<session-id>/<job-id>/`.
 
 ## A turn, step by step
 
@@ -58,9 +61,11 @@ Follow along in `source/engine/src/agent.ts`.
    machine wait for approval first, with `metadata.oi_agent.awaiting_approval`
    set on the in-flight span until the decision is recorded beside it.
    Output is scrubbed of secrets
-   (`source/engine/src/redact.ts`) before it is written. `bash` kills a
-   command after two minutes unless the model asks for longer, and says
-   so in the result; the commands it runs see `OI_AGENT=1`.
+   (`source/engine/src/redact.ts`) before it is written. The commands
+   `bash` runs see `OI_AGENT=1`. A command still running after two minutes
+   (or the `timeout_ms` the model asked for) is not killed: the call ends
+   with its output so far, and the command carries on as a background job
+   (see "What happens to a slow command?" below).
 5. **Back to step 2.** The loop keeps no variables holding the conversation.
    Each pass re-derives it from disk, which is why killing the process
    mid-turn loses nothing: restarting takes the same path.
@@ -87,6 +92,7 @@ creation and crash recovery.
 | Wire formats, and translating between them       | `source/engine/src/dialect.ts`, `source/engine/src/dialects/`        |
 | Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
 | The tools the model can call                     | `source/engine/src/tools.ts`                                         |
+| Commands that outlive their tool call            | `source/engine/src/jobs.ts`, `jobEnded` in `engine.ts`               |
 | The system prompt                                | `source/engine/src/prompt.ts`                                        |
 | Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
@@ -105,6 +111,30 @@ creation and crash recovery.
 
 These work best on the session you are in, because the evidence is right there.
 
+- **"What happens to a slow command?"** Every `bash` call is a job
+  (`source/engine/src/jobs.ts`): its output goes to a log file and a small
+  wrapper writes its exit code beside it, in `<home>/jobs/<session>/<job>/`,
+  so the command needs nothing from the oi process once started. A call that
+  finishes in time reads the log back and deletes the job. One that reaches
+  its time limit, or was started with `background: true`, is left running:
+  the `TOOL` span ends with the output so far and
+  `metadata.oi_agent.job = { id, log, reason }`. The model can look with
+  `job_status` or stop it with `job_kill`, but does not have to wait.
+  When the job ends, `jobEnded` in `source/engine/src/engine.ts` writes its
+  result (state, command, end of the log, scrubbed) to the session's
+  `inbox/` as `job-<id>.json`, with `delivers` naming the job and the `TOOL`
+  span that started it. The engine then runs one turn for every result
+  waiting, after whatever turn is running: its root span has `user.id`
+  `oi`, the results as `input.value`, and `metadata.oi_agent.delivers`
+  listing each job, its inbox entry and its `TOOL` span. That is how you get
+  from a result back to the call that started the work, in the files alone.
+  The terminal shows such a turn as a notice, not as a prompt, and counts
+  running jobs in the status line. Jobs survive `/reload` and quitting:
+  the next process to open the session follows them again (`attend`), and
+  results that arrived while nobody was there are delivered then. `oi run`
+  waits for the jobs it started unless given `--no-wait`. The log lives
+  outside the session tree because it is raw output that grows; the session
+  tree holds only scrubbed, immutable files.
 - **"How does the terminal know you need attention?"** On a TTY,
   `source/cli/src/program-status.ts` projects root AGENT open/end events into
   OSC 7501 working, done, error or idle reports; the TUI's approval callbacks

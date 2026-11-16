@@ -107,6 +107,9 @@ export interface AppExit {
   readonly reload: boolean
 }
 
+/** The status line recounts running jobs every this many 100 ms frames. */
+const JOBS_EVERY_FRAMES = 10
+
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 /** Rows the completion menu shows at once. */
@@ -154,6 +157,8 @@ class App {
   private share: Share | undefined
   private notice = ""
   private frame = 0
+  /** Background jobs of this session still running, as last counted. */
+  private jobsRunning = 0
   /** Highlighted row of the completion menu. */
   private selected = 0
   /** Input the user closed the menu on; it stays closed until the input changes. */
@@ -454,6 +459,9 @@ class App {
     if (transcript.sessionBytes > 0) add(style.gray(formatBytes(transcript.sessionBytes)), true)
 
     if (options.phoenix !== undefined) add(style.gray("→ phoenix"), true)
+
+    if (this.jobsRunning > 0)
+      add(style.cyan(`⚙ ${this.jobsRunning} job${this.jobsRunning === 1 ? "" : "s"} running`), false)
 
     if (transcript.running) {
       const spinner = SPINNER[this.frame % SPINNER.length] ?? ""
@@ -1538,7 +1546,17 @@ class App {
     const ticker = setInterval(() => {
       this.frame += 1
 
-      if (this.transcript.running || this.share !== undefined) this.draw()
+      // Counting jobs asks the system about each one: often enough to notice, not on every frame.
+      const jobs =
+        engine === undefined || this.frame % JOBS_EVERY_FRAMES !== 0
+          ? this.jobsRunning
+          : engine.jobs.running(sessionId).length
+
+      const changed = jobs !== this.jobsRunning
+
+      this.jobsRunning = jobs
+
+      if (this.transcript.running || this.share !== undefined || changed) this.draw()
     }, 100)
 
     const onData = (data: Buffer): void => this.input(data.toString("utf8"))

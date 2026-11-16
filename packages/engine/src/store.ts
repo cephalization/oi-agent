@@ -470,8 +470,13 @@ export class Store {
 
   // --- inbox --------------------------------------------------------------
 
-  writeInbox(sessionId: string, entry: Omit<InboxFile, "id" | "created_at">): InboxFile {
-    const full: InboxFile = { id: newId(), created_at: nsToIso(nowNs()), ...entry }
+  /** `id` is for an entry that must exist only once however often it is written (a job's result). */
+  writeInbox(
+    sessionId: string,
+    entry: Omit<InboxFile, "id" | "created_at">,
+    id: string = newId(),
+  ): InboxFile {
+    const full: InboxFile = { id, created_at: nsToIso(nowNs()), ...entry }
 
     writeAtomic(path.join(this.sessionDir(sessionId), "inbox", `${full.id}.json`), printInbox(full), true)
     this.emit({ type: "inbox", session_id: sessionId, entry: full })

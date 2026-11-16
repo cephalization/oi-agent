@@ -117,7 +117,20 @@ export type AnnotationFile = typeof AnnotationFile.Type
 
 // --- inbox -----------------------------------------------------------------
 
-/** A prompt submitted by a peer that the host has not started as a trace yet. */
+/** Background work whose result is being delivered, and the `TOOL` span that started it. */
+export const Delivery = Schema.Struct({
+  kind: Schema.Literal("job"),
+  id: Schema.String,
+  trace_id: Schema.String,
+  span_id: Schema.String,
+})
+
+export type Delivery = typeof Delivery.Type
+
+/**
+ * Input that the host has not started as a trace yet: a prompt submitted by
+ * a peer, or the result of background work (`delivers`).
+ */
 export const InboxFile = Schema.Struct({
   id: Schema.String,
   created_at: Schema.String,
@@ -125,6 +138,8 @@ export const InboxFile = Schema.Struct({
   text: Schema.String,
   /** Trace to continue from; omitted means the session head at pickup time. */
   previous_trace_id: Schema.optionalKey(Schema.String),
+  /** Set when this is a result, not a prompt: what finished. */
+  delivers: Schema.optionalKey(Delivery),
 })
 
 export type InboxFile = typeof InboxFile.Type
@@ -199,7 +214,7 @@ export const stringAttr = (span: SpanFile, key: string): string | undefined =>
 
 // --- metadata: where everything the spec cannot express lives --------------
 
-const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })
+export const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })
 
 /** The wire format of a model call's stored request and response bodies (see `dialect.ts`). */
 export const Api = Schema.Literals(["anthropic-messages", "openai-chat", "openai-responses"])
@@ -254,6 +269,21 @@ export const EngineMetadata = Schema.Struct({
   pid: Schema.optionalKey(Schema.Int),
   /** Inbox entry this turn consumed. */
   inbox_id: Schema.optionalKey(Schema.String),
+  /**
+   * On a turn's root span: the results of background work this turn delivers
+   * to the model, each with the inbox entry it consumed and the `TOOL` span
+   * that started the work.
+   */
+  delivers: Schema.optionalKey(Schema.Array(Schema.Struct({ ...Delivery.fields, inbox_id: Schema.String }))),
+  /** On a `TOOL` span: the job its command became when it outlived the call. */
+  job: Schema.optionalKey(
+    Schema.Struct({
+      id: Schema.String,
+      /** The job's full output, outside the session tree. */
+      log: Schema.String,
+      reason: Schema.Literals(["requested", "timeout"]),
+    }),
+  ),
   /** Eval feedback injected into this turn's input. */
   injected: Schema.optionalKey(
     Schema.Array(Schema.Struct({ annotation_id: Schema.String, name: Schema.String })),

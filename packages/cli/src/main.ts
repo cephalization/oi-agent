@@ -23,7 +23,6 @@ import {
   decisionDetector,
   deleteSecret,
   type Detector,
-  drainInbox,
   Engine,
   getSecret,
   hasConfig,
@@ -81,6 +80,8 @@ Options:
       --effort <level>       Reasoning effort: low, medium, high, xhigh or max
       --approvals <mode>    Tool approvals: ask, auto or allow (overrides config)
       --yolo                 Run tools that change the machine without asking
+      --no-wait              With \`oi run\`: exit after the answer, without waiting
+                             for background jobs it started
       --check                Load every module and exit (what /reload checks first)
   -h, --help                 Show this help
 `
@@ -95,6 +96,7 @@ const { values, positionals } = parseArgs({
     approvals: { type: "string" },
     yolo: { type: "boolean", default: false },
     check: { type: "boolean", default: false },
+    "no-wait": { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 })
@@ -548,6 +550,8 @@ const run = async (prompt: string): Promise<void> => {
   const phoenix = remote?.exporter
   const stopExport = phoenix?.watch()
 
+  engine.attend(sessionId)
+
   const outcome = await engine.submit(sessionId, {
     text: prompt,
     userId: engine.config.user,
@@ -555,7 +559,10 @@ const run = async (prompt: string): Promise<void> => {
   })
 
   process.stdout.write("\n")
-  await engine.idle(sessionId)
+
+  // The run is not over while work it started is: wait for background jobs, and the turns their results start.
+  await (values["no-wait"] ? engine.idle(sessionId) : engine.settled(sessionId))
+  engine.close()
 
   for (const annotation of store.listAnnotations(sessionId)) {
     if (!outcome.ok || annotation.target.trace_id !== outcome.result.traceId || !shownInTerminal(annotation))
@@ -650,7 +657,7 @@ const interactive = async (): Promise<void> => {
   while (target !== undefined) {
     const sessionId = opened.sessionId
 
-    drainInbox(engine, sessionId)
+    engine.attend(sessionId)
 
     const notes = [...problems, ...modelNotes(engine, sessionId, first), ...guard(engine, opened, true)]
 
@@ -672,6 +679,7 @@ const interactive = async (): Promise<void> => {
     })
 
     problems = []
+    engine.leave(sessionId)
 
     // A reload keeps the session where it is: the next process opens it again.
     if (exit.reload) {
@@ -706,6 +714,7 @@ const interactive = async (): Promise<void> => {
 
   if (reloading !== undefined) await engine.idle(reloading)
 
+  engine.close()
   store.close()
 
   if (reloading !== undefined) reloadInto(engine, reloading)
