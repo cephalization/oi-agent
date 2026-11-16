@@ -351,6 +351,31 @@ export class Transcript {
     const branch = view.head === undefined ? [] : branchTo(view, view.head.trace_id)
     const annotations = store.listAnnotations(sessionId)
 
+    // History is rendered from turn summaries, not live span events. Restore
+    // usage separately without replaying tool output or counting turns as active.
+    for (const turn of branch) {
+      this.turns.add(turn.trace_id)
+
+      if (readMetadata(turn.root).operation !== undefined) this.compactions.add(turn.trace_id)
+    }
+
+    for (const traceId of store.listTraceIds(sessionId)) {
+      for (const span of store.readTrace(sessionId, traceId).ended) {
+        const kind = kindOf(span)
+
+        if (kind === "LLM") {
+          this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
+
+          if (this.turns.has(traceId)) this.measureContext(span)
+        }
+
+        if (kind === "DECISION") {
+          this.decisionInput += numberAttr(span, DECISION_ATTR.TOKENS_INPUT)
+          this.decisionOutput += numberAttr(span, DECISION_ATTR.TOKENS_OUTPUT)
+        }
+      }
+    }
+
     for (const turn of branch) {
       this.turns.add(turn.trace_id)
       this.bytes = readMetadata(turn.root).session_bytes ?? this.bytes
