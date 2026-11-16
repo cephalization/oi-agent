@@ -34,3 +34,17 @@ export const fitEffort = (current: Effort, levels: ReadonlyArray<Effort>): Effor
 
   return levels.findLast((level) => EFFORTS.indexOf(level) < rank) ?? levels[0]
 }
+
+/** `/model`'s argument: the model, and whether `--temp` asked to leave the saved default alone. */
+export interface ModelArgument {
+  readonly argument: string
+  readonly temporary: boolean
+}
+
+/** Split `--temp` (before or after the model) from the rest of `/model`'s argument. */
+export const parseModelArgument = (input: string): ModelArgument => {
+  const words = input.split(/\s+/).filter((word) => word !== "")
+  const rest = words.filter((word) => word !== "--temp")
+
+  return { argument: rest.join(" "), temporary: rest.length !== words.length }
+}

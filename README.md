@@ -177,7 +177,9 @@ With Phoenix connected, the list also has the sessions in your Phoenix
 project, and Tab on a session moves it between this disk and Phoenix-only
 storage. `/model` switches model, or provider, from the next turn on, picked
 from every provider's models (`anthropic/claude-opus-5-5`,
-`openai/gpt-5.1`, `ollama/qwen3`, …). `/provider` opens a menu of
+`openai/gpt-5.1`, `ollama/qwen3`, …), and saves it to the config as the
+default for new sessions; `/model --temp <model>` switches only for the
+running process. `/provider` opens a menu of
 Anthropic, OpenAI and OpenAI-compatible servers. Under each are its options:
 an API key (hidden as you type, kept in the keychain), signing in with a
 ChatGPT plan in the browser, or adding a server by name, base URL, optional

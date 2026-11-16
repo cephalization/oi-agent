@@ -254,13 +254,16 @@ const encodeProviders = Schema.encodeSync(Schema.Array(ProviderConfig))
  * written. (Saving a whole loaded config would also write environment
  * overrides into the file.)
  */
-const saveKey = (key: string, value: Schema.Json, env: NodeJS.ProcessEnv): void => {
+const saveKeys = (values: ReadonlyMap<string, Schema.Json>, env: NodeJS.ProcessEnv): void => {
   const file = configPath(env)
   const current = Option.getOrElse(decodeObject(readFile(file)), () => ({}))
 
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, `${JSON.stringify({ ...current, [key]: value }, null, 2)}\n`)
+  fs.writeFileSync(file, `${JSON.stringify({ ...current, ...Object.fromEntries(values) }, null, 2)}\n`)
 }
+
+const saveKey = (key: string, value: Schema.Json, env: NodeJS.ProcessEnv): void =>
+  saveKeys(new Map([[key, value]]), env)
 
 /** Replace the `providers` list in the config file. */
 export const saveProviders = (
@@ -271,3 +274,28 @@ export const saveProviders = (
 /** Make an approval mode the default for the next start, as Tab, /auto and /yolo choose it. */
 export const saveApprovals = (mode: Approvals, env: NodeJS.ProcessEnv = process.env): void =>
   saveKey("approvals", mode, env)
+
+/** What `/model` makes the default for the next start. */
+export interface ModelDefault {
+  readonly provider: string
+  readonly model: string
+  /** Saved only when the switch changed it, so an effort the user never picked is not pinned. */
+  readonly effort?: Effort
+}
+
+/**
+ * Make a model the default for the next start, as `/model` chooses it.
+ * The model is written as `provider/model`, which `loadConfig` splits at
+ * the first slash, so a model id with its own slash (`openai/gpt-oss` at
+ * a router) still reads back at the right provider.
+ */
+export const saveModel = (choice: ModelDefault, env: NodeJS.ProcessEnv = process.env): void => {
+  const values = new Map<string, Schema.Json>([
+    ["provider", choice.provider],
+    ["model", `${choice.provider}/${choice.model}`],
+  ])
+
+  if (choice.effort !== undefined) values.set("effort", choice.effort)
+
+  saveKeys(values, env)
+}

@@ -46,7 +46,8 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/new", summary: "start a fresh session in this directory", hostOnly: true },
   {
     name: "/model",
-    summary: "switch model or provider from the next turn on",
+    summary:
+      "switch model or provider from the next turn on, and make it the default (--temp: just this process)",
     argument: { name: "model", required: true },
     hostOnly: true,
   },

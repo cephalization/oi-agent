@@ -311,7 +311,11 @@ These work best on the session you are in, because the evidence is right there.
   never reads Phoenix directly: a session is always run from local files.
 - **"What happens when I switch model or effort mid-session?"** `/model` and
   Shift+Tab call `Engine.configure` (`source/engine/src/engine.ts`), which
-  builds a new model for the next turn; nothing stored changes. Each `LLM`
+  builds a new model for the next turn; no span changes. `/model` also
+  calls `saveModel` (`source/engine/src/config.ts`), which writes the
+  `provider` and `model` keys (and `effort`, if the switch had to change
+  it) into the config file, so new sessions start on it; `/model --temp`
+  skips that, and Shift+Tab never saves. Each `LLM`
   span records the model in `llm.model_name` and the effort in
   `llm.invocation_parameters`, so the switch is visible span by span. The
   history is replayed verbatim to the new model, and the API drops thinking
