@@ -7,6 +7,7 @@
  * exactly what is on disk.
  */
 import { Context, Effect, Layer, Schema } from "effect"
+import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
 import { sessionIdForTrace } from "./ids.ts"
 import { contextFor } from "./fold.ts"
@@ -266,9 +267,18 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) =
         return yield* new ToolFailed({ message: "The user declined to run this tool call." })
     }
 
+    // Only tools that can change the machine are observed; a read-only tool is declared to change nothing.
+    const before = tool.mutates ? observeWorkspace(env.cwd) : undefined
+
     const outcome = yield* tool.run(use.input, {
       cwd: env.cwd,
       emit: (chunk) => span.delta({ k: "stdout", i: 0, d: env.redactor.scrub(chunk) }),
+    })
+
+    span.patchMetadata({
+      evidence: tool.mutates
+        ? compareWorkspace(before, observeWorkspace(env.cwd))
+        : { writes: "no", commit: "no" },
     })
 
     const output = env.redactor.scrub(outcome.output)

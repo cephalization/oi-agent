@@ -10,6 +10,13 @@ import { Option, Schema } from "effect"
 
 export const FORMAT_VERSION = "oi-agent/1"
 
+/** What a tool call was observed to do to the workspace: `unknown` when it could not be determined. */
+export const Activity = Schema.Literals(["yes", "no", "unknown"])
+
+export const ToolEvidence = Schema.Struct({ writes: Activity, commit: Activity })
+
+export type ToolEvidence = typeof ToolEvidence.Type
+
 // --- spans -----------------------------------------------------------------
 
 export const AttrPrimitive = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean])
@@ -251,6 +258,8 @@ export const EngineMetadata = Schema.Struct({
   injected: Schema.optionalKey(
     Schema.Array(Schema.Struct({ annotation_id: Schema.String, name: Schema.String })),
   ),
+  /** Observed workspace effects, independent of shell text or exit status. */
+  evidence: Schema.optionalKey(ToolEvidence),
   /** A tool call whose result is an error. */
   is_error: Schema.optionalKey(Schema.Boolean),
   /** A tool call that is waiting for the host to allow or deny it. */
