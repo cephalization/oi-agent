@@ -81,10 +81,13 @@ const GATED = "until [ -f go ]; do sleep 0.2; done; echo total=$((6 * 7))"
 
 const release = (s: Scenario): void => fs.writeFileSync(path.join(s.sandbox.cwd, "go"), "")
 
+/** The harness turns delegation off for every other scenario. */
+const DELEGATING = new Map([["delegation", "auto"]])
+
 describe("delegated tasks", () => {
   scenario(
     "a task works in its own session and worktree, and its result returns as a delivery",
-    { liveOnly: true },
+    { liveOnly: true, config: DELEGATING },
     async (s) => {
       const result = await s.run([
         "run",
@@ -161,7 +164,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "a task outlives the process that delegated it, and a follow-up wakes it with what it knew",
-    { liveOnly: true },
+    { liveOnly: true, config: DELEGATING },
     async (s) => {
       expectOk(
         await s.run([
@@ -175,8 +178,15 @@ describe("delegated tasks", () => {
       const parent = parentOf(s)
       const { task, child } = delegation(s, parent)
 
-      // Nobody is running the delegating session. The task finishes on its own.
+      // Nobody is running the delegating session. The task finishes on its own, and its runner leaves.
       const [first] = await s.spans.settledTurns(child.id, 1)
+      const runners = path.join(s.sandbox.home, "jobs", parent)
+
+      await s.spans.waitFor("the task's runner to exit", () =>
+        fs.readdirSync(runners).every((job) => fs.existsSync(path.join(runners, job, "exit")))
+          ? true
+          : undefined,
+      )
 
       expect(first?.output?.toLowerCase()).toContain("heron")
       expect(child.cwd).toBe(fs.realpathSync(s.sandbox.cwd))
@@ -217,7 +227,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "two tasks in worktrees work side by side without touching each other or the checkout",
-    { liveOnly: true, timeoutMs: 300_000 },
+    { liveOnly: true, config: DELEGATING, timeoutMs: 300_000 },
     async (s) => {
       const brief = (name: string): string =>
         `Create a file named ${name}.txt containing exactly the word ${name}, then commit it with the message 'add ${name}'. Report the file name.`
@@ -264,7 +274,7 @@ describe("delegated tasks", () => {
 
   scenario(
     "a task's tool call that needs a person is asked in the delegating terminal, and waits for the answer",
-    { liveOnly: true, needs: ["rex"], approvals: "ask" },
+    { liveOnly: true, config: DELEGATING, needs: ["rex"], approvals: "ask" },
     async (s) => {
       const term = await s.tui()
 
@@ -312,7 +322,7 @@ describe("delegated tasks", () => {
   )
   scenario(
     "the terminal stays free while a task runs, lists it, attaches to it, and returns to its result",
-    { liveOnly: true, needs: ["rex"], approvals: "allow", timeoutMs: 300_000 },
+    { liveOnly: true, config: DELEGATING, needs: ["rex"], approvals: "allow", timeoutMs: 300_000 },
     async (s) => {
       const term = await s.tui()
 
