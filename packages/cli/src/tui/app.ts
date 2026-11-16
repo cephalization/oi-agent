@@ -26,6 +26,7 @@ import {
   listRuleVersions,
   loadSession,
   loadEvals,
+  type ModelDefault,
   type PeerConnection,
   type PeerServer,
   type PhoenixExporter,
@@ -33,6 +34,7 @@ import {
   readRules,
   revertRules,
   saveApprovals,
+  saveModel,
   servePeers,
   type Store,
   tailcatServe,
@@ -57,7 +59,7 @@ import {
 } from "./commands.ts"
 import { approvalAction } from "./approvals.ts"
 import { Editor } from "./editor.ts"
-import { effortsFor, fitEffort, nextEffort } from "./modes.ts"
+import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
 
@@ -769,10 +771,12 @@ class App {
     this.notice = this.configure({ effort: next }) ?? ""
   }
 
-  private async switchModel(argument: string): Promise<void> {
+  private async switchModel(input: string): Promise<void> {
     const engine = this.options.engine
 
     if (engine === undefined) return
+
+    const { argument, temporary } = parseModelArgument(input)
 
     if (argument === "") {
       this.dismissed = undefined
@@ -806,16 +810,31 @@ class App {
     if (failed !== undefined) return this.say([`Could not switch to ${name}: ${failed}`])
 
     const crossing = ref.provider !== before
+    const saved = temporary ? undefined : this.saveModelDefault(changed ? { ...ref, effort } : ref)
 
     this.say(
       [
         `Model is now ${name}${changed ? `, at effort ${effort} (it does not accept ${previous})` : ""}.`,
+        temporary
+          ? "Only for this process: new sessions still start on the saved default."
+          : (saved ?? "It is also the default for new sessions; add --temp to switch only for now."),
         crossing
           ? `The conversation carries over to ${ref.provider} as text, tool calls and results; reasoning from ${before} does not.`
           : "",
         this.transcript.running ? "The running turn keeps the old model; the next one uses this." : "",
       ].filter((line) => line !== ""),
     )
+  }
+
+  /** Make a model the default for the next start. Returns why it could not, if it could not. */
+  private saveModelDefault(choice: ModelDefault): string | undefined {
+    try {
+      saveModel(choice)
+
+      return undefined
+    } catch (error) {
+      return `Could not save it as the default: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
 
   /** Change model settings. Resolves to why it could not, if it could not. */

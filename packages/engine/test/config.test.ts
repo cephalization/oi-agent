@@ -2,7 +2,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { describe, expect, it } from "vite-plus/test"
-import { configProblems, loadConfig, saveApprovals } from "../src/config.ts"
+import { configProblems, loadConfig, saveApprovals, saveModel } from "../src/config.ts"
 
 /** An environment whose config directory holds `text` as config.json. */
 const withFile = (text: string): NodeJS.ProcessEnv => {
@@ -27,6 +27,35 @@ describe("config file", () => {
       approvals: "allow",
       unknown_key: 1,
     })
+  })
+
+  it("saves a /model choice as provider/model, which reads back at that provider", () => {
+    const env = withFile(JSON.stringify({ model: "claude-opus-5-5", effort: "high", unknown_key: 1 }))
+
+    saveModel({ provider: "chatgpt", model: "gpt-5.6-luna" }, env)
+
+    expect(loadConfig(env)).toMatchObject({ provider: "chatgpt", model: "gpt-5.6-luna", effort: "high" })
+    expect(
+      JSON.parse(fs.readFileSync(path.join(env["OI_AGENT_CONFIG_DIR"] ?? "", "config.json"), "utf8")),
+    ).toEqual({ provider: "chatgpt", model: "chatgpt/gpt-5.6-luna", effort: "high", unknown_key: 1 })
+
+    saveModel({ provider: "anthropic", model: "claude-haiku-5-5", effort: "low" }, env)
+
+    expect(loadConfig(env)).toMatchObject({ provider: "anthropic", model: "claude-haiku-5-5", effort: "low" })
+  })
+
+  it("reads back a saved model whose id has its own slash at the right provider", () => {
+    const env = withFile(
+      JSON.stringify({
+        providers: [
+          { id: "router", name: "Router", kind: "openai-compatible", base_url: "http://localhost:9/v1" },
+        ],
+      }),
+    )
+
+    saveModel({ provider: "router", model: "openai/gpt-oss" }, env)
+
+    expect(loadConfig(env)).toMatchObject({ provider: "router", model: "openai/gpt-oss" })
   })
 
   it("reads every setting from a valid file and reports nothing", () => {

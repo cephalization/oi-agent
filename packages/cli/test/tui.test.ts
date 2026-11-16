@@ -11,7 +11,7 @@ import {
 } from "../src/tui/commands.ts"
 import { approvalAction } from "../src/tui/approvals.ts"
 import { Editor } from "../src/tui/editor.ts"
-import { effortsFor, fitEffort, nextEffort } from "../src/tui/modes.ts"
+import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "../src/tui/modes.ts"
 import { type AnnotationFile, EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
 import { Screen } from "../src/tui/screen.ts"
 import { compact, Transcript } from "../src/tui/transcript.ts"
@@ -189,6 +189,22 @@ describe("effort cycling", () => {
     expect(fitEffort("high", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
     expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "mid" }))).toBe("high")
     expect(fitEffort("max", effortsFor(catalog, { provider: "anthropic", model: "old" }))).toBeUndefined()
+  })
+
+  it("reads --temp before or after the model in /model's argument", () => {
+    expect(parseModelArgument("chatgpt/gpt-5.6-luna")).toEqual({
+      argument: "chatgpt/gpt-5.6-luna",
+      temporary: false,
+    })
+    expect(parseModelArgument("--temp chatgpt/gpt-5.6-luna")).toEqual({
+      argument: "chatgpt/gpt-5.6-luna",
+      temporary: true,
+    })
+    expect(parseModelArgument("chatgpt/gpt-5.6-luna  --temp ")).toEqual({
+      argument: "chatgpt/gpt-5.6-luna",
+      temporary: true,
+    })
+    expect(parseModelArgument("--temp")).toEqual({ argument: "", temporary: true })
   })
 })
 

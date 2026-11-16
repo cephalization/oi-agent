@@ -1,6 +1,7 @@
 /**
- * Models and providers: `/model` across dialects, and a session continuing
- * on the model and effort it last used when switched to or resumed (#11).
+ * Models and providers: `/model` across dialects, `/model` saving the
+ * default for new sessions (and `--temp` not), and a session continuing on
+ * the model and effort it last used when switched to or resumed (#11).
  */
 import { describe, expect } from "vite-plus/test"
 import { MODELS, type Scenario, scenario } from "../src/scenario.ts"
@@ -43,6 +44,52 @@ describe("models", () => {
 
       expect(modelOf(s, session())).toBe(MODELS.second)
       expect(turns[1]?.output?.toLowerCase()).toContain("walrus")
+    },
+  )
+
+  scenario(
+    "/model makes the model the default for new sessions, and /model --temp does not",
+    { needs: ["rex", "second-model"] },
+    async (s) => {
+      const newSession = (known: ReadonlyArray<string>) =>
+        s.spans.waitFor("a new session", () => s.spans.sessions().find((id) => !known.includes(id)))
+
+      // A temporary switch is forgotten when the process ends.
+      const temp = await s.tui()
+
+      await temp.waitFor(PROMPT)
+      await temp.line(`/model --temp ${MODELS.second}`)
+      await temp.waitFor(/Only for this process/)
+      await temp.line("/quit")
+      await temp.exited()
+
+      const beforeFirst = s.spans.sessions()
+      const first = await s.tui()
+
+      await first.waitFor(PROMPT)
+      await first.line("Reply with just: one")
+
+      const one = await newSession(beforeFirst)
+
+      await s.spans.settledTurns(one, 1)
+      expect(modelOf(s, one)).toBe(MODELS.main)
+
+      // A plain switch is saved, so the next process starts a new session on it.
+      await first.line(`/model ${MODELS.second}`)
+      await first.waitFor(/default for new sessions/)
+      await first.line("/quit")
+      await first.exited()
+
+      const beforeSecond = s.spans.sessions()
+      const second = await s.tui()
+
+      await second.waitFor(PROMPT)
+      await second.line("Reply with just: two")
+
+      const two = await newSession(beforeSecond)
+
+      await s.spans.settledTurns(two, 1)
+      expect(modelOf(s, two)).toBe(MODELS.second)
     },
   )
 
