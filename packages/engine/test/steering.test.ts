@@ -71,6 +71,36 @@ const setup = (verdict: SteeringVerdict | undefined | Error) => {
 }
 
 describe("learning from steering", () => {
+  it("saves the trigger a steering-created evaluator should run on, and shows it", async () => {
+    const evaluator = {
+      name: "pr_after_commit",
+      description: "Committed work gets a pull request.",
+      kind: "llm" as const,
+      instructions: "Pass if committed changes have a PR or the agent says PR creation is blocked.",
+      applicability: { any: ["commit"] },
+    }
+
+    const { store, cwd, sessionId, turn } = setup({ ...PNPM, evaluator })
+
+    await turn("you committed but never opened a PR. always open one after committing.")
+
+    expect(loadEvals(cwd)[0]?.applicability).toEqual({ any: ["commit"] })
+
+    const note = store.listAnnotations(sessionId).find((file) => file.annotation.name === "steering")
+
+    expect(note?.annotation.explanation).toContain('Trigger: {"any":["commit"]}')
+  })
+
+  it("rejects a steering evaluator with an unknown trigger", async () => {
+    const { cwd, turn } = setup({
+      ...PNPM,
+      evaluator: { ...PNPM.evaluator!, applicability: { any: ["pushes"] } },
+    })
+
+    await turn("ugh, npm again? we use pnpm here.")
+    expect(loadEvals(cwd)).toEqual([])
+  })
+
   it("saves a durable correction as an evaluator that links back to the prompt", async () => {
     const { store, cwd, sessionId, turn } = setup(PNPM)
     const traceId = await turn("ugh, npm again? we use pnpm here.")

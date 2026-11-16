@@ -233,6 +233,8 @@ export class Transcript {
       this.passes = 0
     }
 
+    if (file.annotation.label === "skipped") return
+
     if (file.annotation.name !== "steering" && !failedVerdict(file)) {
       this.passes += 1
 

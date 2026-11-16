@@ -68,7 +68,7 @@ export const phoenixJudge =
 
     const result = await evaluator.evaluate({
       instructions: definition.instructions,
-      transcript: record.transcript,
+      transcript: record.judged ?? record.transcript,
       facts: record.facts,
     })
 
@@ -139,12 +139,13 @@ If an existing evaluator already checks the same thing, set covered_by to its na
 
 If the message is durable, propose an evaluator that reviews each later turn and fails when the agent goes against the correction:
 - kind "code", with a JavaScript regular expression "pattern" that matches a violation, and a "target": "tool_input" for commands the agent runs and edits it makes, "output" for its replies. Use it only when the pattern cannot match work that follows the correction.
-- otherwise kind "llm", with "instructions": the criterion a judge applies to one turn, phrased so that meeting it passes. Say that turns where it does not apply pass.
+- otherwise kind "llm", with "instructions": the criterion a judge applies to one turn, phrased so that meeting it passes. Set applicability separately; irrelevant turns are skipped, not passes.
+Set evaluator.applicability to {"any": [predicates], "all": [predicates]}: OR within any, AND within all; empty means always. Available predicates: writes (observed content change in tracked/non-ignored workspace files), commit (observed Git commit), tool:<name> (invocation), always. Infer the trigger from the actual obligation: a PR-after-commit check uses commit, code-change checks use writes, command checks can use tool:bash. Split obligations with different triggers instead of requiring both writes AND commit. Unknown evidence runs the check.
 Give it a short snake_case "name" and a one-sentence "description".
 Only propose checks of the coding agent's own work. Product defects belong in product regression tests, not standing evaluators that punish the agent for application behavior it did not choose. Preserve safety and permission checks.
 
 Reply with JSON only, no prose:
-{"durable": true or false, "confidence": a number from 0 to 1, "statement": "the preference as one imperative sentence", "covered_by": a name or null, "evaluator": {"name": "...", "description": "...", "kind": "code" or "llm", "pattern": "...", "target": "...", "instructions": "..."} or null}`
+{"durable": true or false, "confidence": a number from 0 to 1, "statement": "the preference as one imperative sentence", "covered_by": a name or null, "evaluator": {"name": "...", "description": "...", "kind": "code" or "llm", "pattern": "...", "target": "...", "instructions": "...", "applicability": {"any": ["..."], "all": []}} or null}`
 
 /**
  * Fill `{{key}}` placeholders in one pass, with a function: text from the
