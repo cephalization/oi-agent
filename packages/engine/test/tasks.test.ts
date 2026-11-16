@@ -303,10 +303,12 @@ describe("following a session another process writes", () => {
         : event.type,
     )
 
-    expect(
-      kinds.filter((kind) => kind.startsWith("span")),
-      kinds.join(" "),
-    ).toEqual(["span_open:AGENT", "span_open:LLM", "span_end:LLM", "span_end:AGENT"])
+    expect(kinds.filter((kind) => kind.startsWith("span"))).toEqual([
+      "span_open:AGENT",
+      "span_open:LLM",
+      "span_end:LLM",
+      "span_end:AGENT",
+    ])
     expect(seen.every((event) => event.session_id === session.id)).toBe(true)
     engine.close()
   })
