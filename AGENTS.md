@@ -35,10 +35,14 @@ Before opening a PR:
    `pnpm e2e scenarios/<file>.e2e.ts`.
 3. **Run everything:** `pnpm check && pnpm test && pnpm e2e`. All of it runs
    live on the cheap default models (`chatgpt/gpt-5.6-luna`, and
-   `claude-haiku-5-5` where Anthropic is needed); the whole suite takes one
-   to four minutes. Do not switch scenarios to expensive models. From
-   oi's bash tool, pass `timeout_ms: 600000`: the default two minutes
-   kills the suite partway through.
+   `claude-haiku-5-5` where Anthropic is needed); scenario files run four at
+   a time and the whole suite takes two to three minutes. Do not switch
+   scenarios to expensive models. From oi's bash tool, pass
+   `timeout_ms: 600000`: the default two minutes kills the suite partway
+   through.
+   If the change touches steering detection, learning from corrections or
+   evaluators, also run `pnpm e2e:scored` (about three more minutes) and
+   report its scores: the scored experiments are not part of `pnpm e2e`.
 4. **Check it is stable.** Run a new or changed scenario at least three
    times. If a model sometimes does something else, fix the prompt (ask for
    something checkable; tell it to call tools rather than ask whether it

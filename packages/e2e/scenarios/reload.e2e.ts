@@ -189,7 +189,7 @@ describe("reload", () => {
 
   scenario(
     "a patch that dies on start falls back to the bundled build, and a fixed one reloads again",
-    { needs: ["rex"] },
+    { needs: ["rex"], exclusive: "bundle", timeoutMs: 420_000 },
     async (s) => {
       buildBundle()
 
@@ -231,7 +231,7 @@ describe("reload", () => {
 
   scenario(
     "a patch that crashes mid-session falls back to the bundled build on the same session",
-    { needs: ["rex"] },
+    { needs: ["rex"], exclusive: "bundle", timeoutMs: 420_000 },
     async (s) => {
       buildBundle()
 
