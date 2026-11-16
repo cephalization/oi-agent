@@ -8,6 +8,7 @@ import type { Dialect } from "../src/dialect.ts"
 import { anthropicMessages, openaiChat, openaiResponses } from "../src/dialects/index.ts"
 import { lastModelOf } from "../src/fold.ts"
 import { Model } from "../src/model.ts"
+import { jobsOf } from "../src/jobs.ts"
 import { Redactor } from "../src/redact.ts"
 import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
@@ -22,6 +23,7 @@ const setup = (): TurnEnv => {
     sessionId: store.createSession(cwd).id,
     cwd,
     tools: builtinTools,
+    jobs: jobsOf(store),
     redactor: new Redactor(),
   }
 }

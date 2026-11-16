@@ -18,6 +18,8 @@ Working style:
 - Report what you did and what you found plainly. If something failed or could not be verified, say so.
 - Keep answers short. The user reads them in a terminal.
 
+Long-running commands: bash does not kill a command that outlives its timeout. It keeps running as a background job, and you can start one that way with background: true. A background job outlives your turn, and its result is delivered to you as a <background-results> message when it finishes, so never sleep, poll or rerun to wait for one: carry on with other work, or end your turn saying what is still running. Start full test suites, builds and servers in the background. Do not pipe a long command through tail or head (they show nothing until it ends), and run independent long commands as separate jobs, not one chained command.
+
 Standing checks: when the user asks for something you should always or never do, or asks for an eval, check or guardrail on your work, create an evaluator with create_eval. Choose applicability predicates separately from violation criteria: commit for PR-after-commit, writes for workspace changes, tool:<name> for tool-specific checks, otherwise always. Split obligations with different triggers. Inapplicable checks skip without a judge call; unknown evidence runs them. Prefer kind "code" when a regular expression over the turn can detect a violation, kind "llm" when it takes judgment, and kind "threshold" for a limit on something the harness measures (the session's size on disk, tool calls per turn).
 
 Every step of this session is recorded as OpenInference spans. Automated evaluators may review your turns; when their feedback appears in an <eval-feedback> block, treat it as a correction to apply from then on.`

@@ -16,6 +16,7 @@ import { Model, ModelError } from "./model.ts"
 import { systemPrompt } from "./prompt.ts"
 import type { Redactor } from "./redact.ts"
 import { rulesVersion } from "./rules.ts"
+import type { Jobs } from "./jobs.ts"
 import type { Store } from "./store.ts"
 import type { ToolSpec } from "./tools.ts"
 import { DiskSpan, diskTracer } from "./tracer.ts"
@@ -83,6 +84,7 @@ export interface TurnEnv {
   readonly sessionId: string
   readonly cwd: string
   readonly tools: ReadonlyArray<ToolSpec>
+  readonly jobs: Jobs
   readonly redactor: Redactor
   /** The agent's shipped source and docs, if available, so it can explain itself. */
   readonly selfDir?: string | undefined
@@ -96,6 +98,8 @@ export interface TurnInput {
   readonly operation?: "compact" | "handoff" | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
+  /** Results of background work that this turn's text delivers to the model. */
+  readonly delivers?: EngineMetadata["delivers"]
   /** Eval feedback to put in front of the user's text. */
   readonly injected?: ReadonlyArray<AnnotationFile>
 }
@@ -273,7 +277,12 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) =
     const outcome = yield* tool.run(use.input, {
       cwd: env.cwd,
       emit: (chunk) => span.delta({ k: "stdout", i: 0, d: env.redactor.scrub(chunk) }),
+      sessionId: env.sessionId,
+      span: { trace_id: span.traceId, span_id: span.spanId },
+      jobs: env.jobs,
     })
+
+    if (outcome.job !== undefined) span.patchMetadata({ job: outcome.job })
 
     span.patchMetadata({
       evidence: tool.mutates
@@ -416,6 +425,8 @@ export const runTurn = (
   if (input.handoffSeed !== undefined) metadata.handoff_seed = input.handoffSeed
 
   if (input.inboxId !== undefined) metadata.inbox_id = input.inboxId
+
+  if (input.delivers !== undefined) metadata.delivers = input.delivers
 
   if (injected.length > 0) metadata.injected = injected
 

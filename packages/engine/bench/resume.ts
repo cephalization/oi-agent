@@ -10,6 +10,7 @@ import * as path from "node:path"
 import { Effect, Layer } from "effect"
 import { approveAll, runTurn } from "../src/agent.ts"
 import { contextFor, loadSession } from "../src/fold.ts"
+import { jobsOf } from "../src/jobs.ts"
 import { scriptedModel } from "../src/model.ts"
 import { Redactor } from "../src/redact.ts"
 import { Store } from "../src/store.ts"
@@ -30,7 +31,14 @@ const filler = defineTool({
   run: () => Effect.succeed(ok("x".repeat(outputBytes))),
 })
 
-const env = { store, sessionId: session.id, cwd: os.tmpdir(), tools: [filler], redactor: new Redactor() }
+const env = {
+  store,
+  sessionId: session.id,
+  cwd: os.tmpdir(),
+  tools: [filler],
+  jobs: jobsOf(store),
+  redactor: new Redactor(),
+}
 
 const model = scriptedModel((_call, step) =>
   step % 2 === 0

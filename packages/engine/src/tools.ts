@@ -2,21 +2,29 @@
  * The built-in tools. Each tool pairs the JSON schema the model sees with a
  * schema that validates what the model actually sent before anything runs.
  */
-import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Effect, Option, Schema } from "effect"
+import type { EngineMetadata } from "./format.ts"
+import { describeState, type Job, jobReport, LogReader } from "./jobs.ts"
+import type { Jobs } from "./jobs.ts"
 import type { Json } from "./wire.ts"
 
 export interface ToolContext {
   readonly cwd: string
   /** Live output for viewers of the in-flight span. */
   readonly emit: (chunk: string) => void
+  readonly sessionId: string
+  /** The `TOOL` span this call runs under. */
+  readonly span: Job["tool"]
+  readonly jobs: Jobs
 }
 
 export interface ToolOutcome {
   readonly output: string
   readonly isError: boolean
+  /** The background job the call left running, for the `TOOL` span's metadata. */
+  readonly job?: NonNullable<EngineMetadata["job"]>
 }
 
 export interface ToolSpec {
@@ -191,94 +199,217 @@ const editFile = defineTool({
 
 const DEFAULT_TIMEOUT_MS = 120_000
 
+/** How often a running command's log is read for live output. */
+const PUMP_MS = 50
+
+/** A command started in the background is watched this long first, so one that fails at once says so. */
+const BACKGROUND_GRACE_MS = 1000
+
+const MAX_WAIT_MS = 600_000
+
+const withStatus = (output: string, status: string): string =>
+  `${output}${output.endsWith("\n") || output === "" ? "" : "\n"}${status}`
+
 /**
- * A timeout reads to a model like a failure of the command itself; say that it
- * was the time limit, and how to lift it.
+ * Told to a model whose command is still running: what happens next, and
+ * that waiting for it is not its job.
  */
-export const timedOutStatus = (timeoutMs: number): string =>
-  `[timed out after ${timeoutMs} ms: the command was killed, not failed. If it needs longer, run it again with a larger timeout_ms]`
+export const backgroundStatus = (job: Job, log: string, timeoutMs: number | undefined): string =>
+  [
+    timeoutMs === undefined
+      ? `[running in the background as job ${job.id}.`
+      : `[still running after ${timeoutMs} ms, so it continues in the background as job ${job.id}; it was not killed.`,
+    "Its result will be delivered to you when it finishes: do not sleep, poll or run it again.",
+    `job_status shows progress, job_kill stops it. Full output: ${log}]`,
+  ].join(" ")
 
 const bash = defineTool({
   name: "bash",
   description:
-    "Run a shell command in the working directory and return its combined stdout and stderr with the exit code. Use it for searching (rg), listing files, running tests and builds, and git. Commands are killed after two minutes unless you pass a larger timeout_ms: do that up front for slow commands such as full test suites.",
+    "Run a shell command in the working directory and return its combined stdout and stderr with the exit code. Use it for searching (rg), listing files, running tests and builds, and git. A command still running after timeout_ms (two minutes by default) is not killed: it continues as a background job, you get its output so far, and its result is delivered to you when it finishes. Start slow commands (full test suites, builds, servers) with background: true instead of waiting for them.",
   parameters: {
     type: "object",
     properties: {
       command: { type: "string", description: "The command to run with bash -c." },
       timeout_ms: {
         type: "integer",
-        description: "Kill the command after this many milliseconds. Defaults to 120000 (two minutes).",
+        description:
+          "How long to wait for the command, in milliseconds, before it continues in the background. Defaults to 120000 (two minutes).",
+      },
+      background: {
+        type: "boolean",
+        description:
+          "Start the command as a background job and return at once. Its result is delivered to you when it finishes.",
       },
     },
     required: ["command"],
     additionalProperties: false,
   },
   mutates: true,
-  input: Schema.Struct({ command: Schema.String, timeout_ms: Schema.optionalKey(Schema.Int) }),
+  input: Schema.Struct({
+    command: Schema.String,
+    timeout_ms: Schema.optionalKey(Schema.Int),
+    background: Schema.optionalKey(Schema.Boolean),
+  }),
   run: (input, context) =>
     Effect.callback<ToolOutcome>((resume) => {
-      const chunks: Array<string> = []
-      const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS
+      const { jobs } = context
 
-      const child = spawn("bash", ["-c", input.command], {
+      const job = jobs.start({
+        sessionId: context.sessionId,
+        command: input.command,
         cwd: context.cwd,
-        // OI_AGENT tells scripts they run under oi (`pnpm dev` refuses to relink oi from inside it).
-        env: { ...process.env, OI_AGENT: "1" },
-        stdio: ["ignore", "pipe", "pipe"],
-        // A process group, so a timeout or interrupt also stops grandchildren.
-        detached: true,
+        tool: context.span,
       })
 
-      let timedOut = false
+      const reader = new LogReader(jobs.logPath(job))
+      const chunks: Array<string> = []
+      const background = input.background === true
+      const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS
+      let settled = false
 
-      const kill = (): void => {
-        if (child.pid === undefined) return
+      const pump = (): void => {
+        const chunk = reader.read()
 
-        try {
-          process.kill(-child.pid, "SIGKILL")
-        } catch {
-          // The process group already exited.
-        }
-      }
-
-      const timer = setTimeout(() => {
-        timedOut = true
-        kill()
-      }, timeoutMs)
-
-      const onData = (data: Buffer): void => {
-        const chunk = data.toString("utf8")
+        if (chunk === "") return
 
         chunks.push(chunk)
         context.emit(chunk)
       }
 
-      child.stdout.on("data", onData)
-      child.stderr.on("data", onData)
-      child.on("error", (error) => {
-        clearTimeout(timer)
-        resume(Effect.succeed(failed(`Failed to start command: ${error.message}`)))
-      })
-      child.on("close", (code) => {
-        clearTimeout(timer)
+      const pumping = setInterval(pump, PUMP_MS)
 
-        const output = truncate(chunks.join(""))
-        const status = timedOut ? timedOutStatus(timeoutMs) : `[exit code ${code ?? "unknown"}]`
+      const settle = (outcome: () => ToolOutcome): void => {
+        if (settled) return
 
-        resume(
-          Effect.succeed({
-            output: `${output}${output.endsWith("\n") || output === "" ? "" : "\n"}${status}`,
-            isError: timedOut || code !== 0,
+        settled = true
+        clearInterval(pumping)
+        clearTimeout(timer)
+        pump()
+        resume(Effect.succeed(outcome()))
+      }
+
+      const timer = setTimeout(
+        () =>
+          settle(() => {
+            const reason = background ? "requested" : "timeout"
+            const log = jobs.logPath(job)
+
+            jobs.toBackground(job, reason)
+
+            return {
+              output: withStatus(
+                truncate(chunks.join("")),
+                backgroundStatus(job, log, background ? undefined : timeoutMs),
+              ),
+              isError: false,
+              job: { id: job.id, log, reason },
+            }
           }),
-        )
-      })
+        background ? BACKGROUND_GRACE_MS : timeoutMs,
+      )
 
+      void jobs.ended(job).then((state) =>
+        settle(() => {
+          jobs.discard(job)
+
+          return {
+            output: withStatus(
+              truncate(chunks.join("")),
+              state.state === "exited" ? `[exit code ${state.code}]` : "[killed]",
+            ),
+            isError: state.state !== "exited" || state.code !== 0,
+          }
+        }),
+      )
+
+      // The turn was interrupted while the command ran in the foreground: stop it.
       return Effect.sync(() => {
+        if (settled) return
+
+        settled = true
+        clearInterval(pumping)
         clearTimeout(timer)
-        kill()
+        jobs.kill(job)
+        jobs.discard(job)
       })
     }),
 })
 
-export const builtinTools: ReadonlyArray<ToolSpec> = [readFile, writeFile, editFile, bash]
+// --- jobs ------------------------------------------------------------------
+
+const unknownJob = (id: string): ToolOutcome =>
+  failed(`No background job ${id} in this session. Call job_status without an id to list them.`)
+
+const jobStatus = defineTool({
+  name: "job_status",
+  description:
+    "Check on background jobs: the state, command and latest output of one job, or a list of this session's jobs when no id is given. A finished job's result is delivered to you without asking, so call this only to look at progress. With wait_ms, wait up to that long for the job to finish first.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "The job id. Omit to list every background job." },
+      wait_ms: {
+        type: "integer",
+        description: `Wait up to this many milliseconds for the job to finish (at most ${MAX_WAIT_MS}).`,
+      },
+    },
+    additionalProperties: false,
+  },
+  mutates: false,
+  input: Schema.Struct({ id: Schema.optionalKey(Schema.String), wait_ms: Schema.optionalKey(Schema.Int) }),
+  run: (input, context) =>
+    Effect.promise(async () => {
+      const { jobs } = context
+
+      if (input.id === undefined) {
+        const lines = jobs
+          .list(context.sessionId)
+          .map((job) => `${job.id}  ${describeState(job, jobs.state(job))}  ${job.command}`)
+
+        return ok(lines.length === 0 ? "No background jobs in this session." : lines.join("\n"))
+      }
+
+      const job = jobs.read(context.sessionId, input.id)
+
+      if (job === undefined || !jobs.isBackground(job)) return unknownJob(input.id)
+
+      const state =
+        input.wait_ms === undefined
+          ? jobs.state(job)
+          : await jobs.wait(job, Math.min(Math.max(input.wait_ms, 0), MAX_WAIT_MS))
+
+      // Seen here, so it is not delivered a second time as a result.
+      if (state.state !== "running") jobs.claim(job)
+
+      return ok(jobReport(jobs, job, state))
+    }),
+})
+
+const jobKill = defineTool({
+  name: "job_kill",
+  description: "Stop a background job this session started, and everything it started.",
+  parameters: {
+    type: "object",
+    properties: { id: { type: "string", description: "The job id." } },
+    required: ["id"],
+    additionalProperties: false,
+  },
+  // It can only stop a command that an approved bash call started.
+  mutates: false,
+  input: Schema.Struct({ id: Schema.String }),
+  run: (input, context) =>
+    Effect.sync(() => {
+      const { jobs } = context
+      const job = jobs.read(context.sessionId, input.id)
+
+      if (job === undefined || !jobs.isBackground(job)) return unknownJob(input.id)
+
+      jobs.kill(job)
+      jobs.claim(job)
+
+      return ok(jobReport(jobs, job, jobs.state(job)))
+    }),
+})
+
+export const builtinTools: ReadonlyArray<ToolSpec> = [readFile, writeFile, editFile, bash, jobStatus, jobKill]

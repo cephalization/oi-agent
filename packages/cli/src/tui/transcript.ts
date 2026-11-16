@@ -152,6 +152,19 @@ export class Transcript {
   }
 
   private prompt(span: SpanFile): void {
+    const delivers = readMetadata(span).delivers
+
+    // Nobody typed this turn: oi is handing the model results, which the model's answer will describe.
+    if (delivers !== undefined) {
+      this.screen.commit([
+        "",
+        ...delivers.map((entry) => style.gray(`⏵ result of background ${entry.kind} ${entry.id} delivered`)),
+        "",
+      ])
+
+      return
+    }
+
     const user = stringAttr(span, OI.USER_ID) ?? ""
     const who = user === this.self || user === "" ? "" : style.yellow(`${user} `)
     const [first = "", ...rest] = (stringAttr(span, OI.INPUT_VALUE) ?? "").split("\n")
@@ -340,7 +353,11 @@ export class Transcript {
 
     if (event.type === "annotation") this.annotation(event.annotation)
 
-    if (event.type === "inbox" && event.entry.user_id !== this.self) {
+    if (event.type === "inbox" && event.entry.delivers !== undefined) {
+      const { kind, id } = event.entry.delivers
+
+      this.screen.commit([style.gray(`  background ${kind} ${id} finished`)])
+    } else if (event.type === "inbox" && event.entry.user_id !== this.self) {
       this.screen.commit([style.gray(`  prompt queued from ${event.entry.user_id}`)])
     }
   }
@@ -394,7 +411,8 @@ export class Transcript {
       }
     }
 
-    return branch.map((turn) => turn.input)
+    // Input history is what people typed, not the results oi delivered.
+    return branch.filter((turn) => readMetadata(turn.root).delivers === undefined).map((turn) => turn.input)
   }
 }
 

@@ -13,7 +13,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Schema } from "effect"
-import { handoffSeedFor, loadSession } from "../fold.ts"
+import { handoffSeedFor, loadSession, pendingInbox } from "../fold.ts"
 import {
   type AnnotationFile,
   type EndedSpan,
@@ -296,12 +296,7 @@ const blocker = (store: Store, sessionId: string): string | undefined => {
   // Phoenix only receives ended spans: an unfinished turn would be lost.
   if (traces.some((trace) => trace.open.length > 0)) return "it has a turn that has not finished"
 
-  const consumed = new Set(
-    loadSession(store, sessionId).turns.map((turn) => readMetadata(turn.root).inbox_id),
-  )
-
-  if (store.listInbox(sessionId).some((entry) => !consumed.has(entry.id)))
-    return "it has a queued prompt that has not run"
+  if (pendingInbox(store, sessionId).length > 0) return "it has a queued prompt that has not run"
 
   return undefined
 }

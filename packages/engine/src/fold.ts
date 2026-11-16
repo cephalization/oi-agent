@@ -11,6 +11,7 @@ import { dialectFor, translate } from "./dialects/index.ts"
 import {
   type AnnotationFile,
   type EndedSpan,
+  type InboxFile,
   kindOf,
   OI,
   readMetadata,
@@ -100,6 +101,22 @@ export const loadSession = (store: Store, sessionId: string, nowMs: number = Dat
   const leaves = turns.filter((turn) => !continued.has(turn.trace_id))
 
   return { header: store.readHeader(sessionId), turns, head: leaves.at(-1), leaves }
+}
+
+/**
+ * Inbox entries no turn has consumed yet, oldest first. An entry is pending
+ * until some turn names it in its metadata, so this is right after a crash too.
+ */
+export const pendingInbox = (store: Store, sessionId: string): Array<InboxFile> => {
+  const consumed = new Set(
+    loadSession(store, sessionId).turns.flatMap((turn) => {
+      const metadata = readMetadata(turn.root)
+
+      return [metadata.inbox_id, ...(metadata.delivers ?? []).map((entry) => entry.inbox_id)]
+    }),
+  )
+
+  return store.listInbox(sessionId).filter((entry) => !consumed.has(entry.id))
 }
 
 /** The turns from the first one down to `traceId`, following `previous`. */
