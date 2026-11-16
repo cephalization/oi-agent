@@ -19,6 +19,17 @@ export const createEvalTool: ToolSpec = defineTool({
     properties: {
       name: { type: "string", description: "Short snake_case name, for example ran_tests." },
       description: { type: "string", description: "One sentence saying what the evaluator checks." },
+      applicability: {
+        type: "object",
+        description:
+          "When this check applies: any is OR, all is AND. Predicates: writes (observed workspace content change), commit (observed Git commit), tool:<name> (tool invoked), always. Unknown evidence runs the check. Omit/empty for every turn. Split obligations with different triggers into separate checks.",
+        properties: {
+          any: { type: "array", items: { type: "string" } },
+          all: { type: "array", items: { type: "string" } },
+        },
+        required: ["any"],
+        additionalProperties: false,
+      },
       kind: { type: "string", enum: ["llm", "code", "threshold"] },
       metric: {
         type: "string",
@@ -62,7 +73,7 @@ export const createEvalTool: ToolSpec = defineTool({
       if (isMessage(definition)) return failed(definition)
 
       return ok(
-        `Created evaluator "${definition.name}" at ${saveEval(context.cwd, definition)}. It runs after every turn from now on.`,
+        `Created evaluator "${definition.name}" at ${saveEval(context.cwd, definition)}. Trigger: ${JSON.stringify(definition.applicability ?? "always (legacy)")}.`,
       )
     }),
 })

@@ -31,9 +31,27 @@ import { truncate } from "./tools.ts"
 import { diskTracer } from "./tracer.ts"
 import type { Detector } from "./steering.ts"
 
+/**
+ * When an evaluator applies. A turn qualifies when any predicate in `any`
+ * holds (or `any` is empty) and every predicate in `all` holds. Predicates:
+ * `writes`, `commit`, `tool:<name>`, `always`. Absent means every turn.
+ */
+export const Trigger = Schema.String
+
+export const isTrigger = (trigger: string): boolean =>
+  ["writes", "commit", "always"].includes(trigger) || /^tool:[A-Za-z0-9_-]+$/.test(trigger)
+
+export const Applicability = Schema.Struct({
+  any: Schema.Array(Trigger),
+  all: Schema.optionalKey(Schema.Array(Trigger)),
+})
+
+export type Applicability = typeof Applicability.Type
+
 // --- definitions -----------------------------------------------------------
 
 const common = {
+  applicability: Schema.optionalKey(Applicability),
   name: Schema.String,
   description: Schema.String,
   /** Labels that count as a failure. */
@@ -128,6 +146,7 @@ export const saveEval = (cwd: string, definition: EvalDefinition): string => {
 
 /** An evaluator as `create_eval` and the steering detector describe one. */
 export const EvalInput = Schema.Struct({
+  applicability: Schema.optionalKey(Applicability),
   name: Schema.String,
   description: Schema.String,
   kind: Schema.Literals(["llm", "code", "threshold"]),
@@ -149,17 +168,27 @@ export const definitionFrom = (input: typeof EvalInput.Type): EvalDefinition | s
     learn: input.learn ?? true,
   }
 
+  const applicability = input.applicability ?? { any: [] }
+
+  const unknown = [...applicability.any, ...(applicability.all ?? [])].filter(
+    (trigger) => !isTrigger(trigger),
+  )
+
+  if (unknown.length > 0)
+    return `Unknown applicability predicate ${unknown.join(", ")}: use writes, commit, tool:<name> or always.`
+  const scoped = { ...common, applicability }
+
   if (input.kind === "llm") {
     return input.instructions === undefined
       ? "An llm evaluator needs instructions."
-      : { ...common, kind: "llm", instructions: input.instructions, choices: { pass: 1, fail: 0 } }
+      : { ...scoped, kind: "llm", instructions: input.instructions, choices: { pass: 1, fail: 0 } }
   }
 
   if (input.kind === "threshold") {
     return input.metric === undefined || input.max === undefined
       ? "A threshold evaluator needs a metric and a max."
       : // A limit is not something the agent can learn its way under, so it only gives feedback.
-        { ...common, learn: input.learn ?? false, kind: "threshold", metric: input.metric, max: input.max }
+        { ...scoped, learn: input.learn ?? false, kind: "threshold", metric: input.metric, max: input.max }
   }
 
   if (input.pattern === undefined) return "A code evaluator needs a pattern."
@@ -171,7 +200,7 @@ export const definitionFrom = (input: typeof EvalInput.Type): EvalDefinition | s
   }
 
   return {
-    ...common,
+    ...scoped,
     kind: "code",
     pattern: input.pattern,
     target: input.target ?? "transcript",
@@ -183,11 +212,14 @@ export const definitionFrom = (input: typeof EvalInput.Type): EvalDefinition | s
 // --- what an evaluator sees ------------------------------------------------
 
 export interface TurnRecord {
+  readonly activity?: ReadonlyMap<string, string>
   readonly input: string
   readonly output: string
   readonly tool_input: string
   readonly tool_output: string
   readonly transcript: string
+  /** What a judge reads, when not the transcript: a recheck shows the failing turn too. */
+  readonly judged?: string
   /** Numeric facts about the turn and its session. */
   readonly metrics: { readonly [M in Metric]: number }
   /** The same facts as text, for a judge to read. */
@@ -224,7 +256,22 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
   const sessionBytes =
     (root === undefined ? undefined : readMetadata(root).session_bytes) ?? store.sessionBytes(sessionId)
 
+  const activity = new Map<string, string>()
+
+  for (const event of ["writes", "commit"]) {
+    const values = tools.map(
+      (tool) =>
+        readMetadata(tool).evidence?.[event === "writes" ? "writes" : "commit"] ??
+        (readMetadata(tool).approval?.decision === "deny" ? "no" : "unknown"),
+    )
+
+    activity.set(event, values.includes("yes") ? "yes" : values.includes("unknown") ? "unknown" : "no")
+  }
+
+  for (const tool of tools) activity.set(`tool:${stringAttr(tool, OI.TOOL_NAME) ?? tool.name}`, "yes")
+
   return {
+    activity,
     metrics: { session_bytes: sessionBytes, tool_calls: tools.length },
     facts: `Session storage on disk: ${formatBytes(sessionBytes)} (${sessionBytes} bytes). Tool calls this turn: ${tools.length}.`,
     input,
@@ -232,6 +279,35 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
     tool_input: calls.join("\n"),
     tool_output: results.join("\n"),
     transcript: [`[user] ${input}`, ...steps, `[assistant] ${output}`].join("\n\n"),
+  }
+}
+
+/** Unknown predicates or old spans run the evaluator, never silently skip it. */
+export const applicabilityFor = (condition: Applicability | undefined, record: TurnRecord): Verdict => {
+  const evidence = new Map<string, string>()
+
+  const test = (trigger: string): string => {
+    const value =
+      trigger === "always"
+        ? "yes"
+        : (record.activity?.get(trigger) ??
+          (trigger.startsWith("tool:") && record.activity !== undefined ? "no" : "unknown"))
+
+    evidence.set(trigger, value)
+
+    return value
+  }
+
+  const any = condition?.any.map(test) ?? []
+  const all = condition?.all?.map(test) ?? []
+  const skipped = (any.length > 0 && any.every((value) => value === "no")) || all.includes("no")
+
+  return {
+    label: skipped ? "skipped" : "applicable",
+    explanation: JSON.stringify({
+      condition: condition ?? "always (legacy)",
+      evidence: Object.fromEntries(evidence),
+    }),
   }
 }
 
@@ -376,16 +452,25 @@ const annotationFor = (
   traceId: string,
   definition: EvalDefinition,
   verdict: Verdict,
+  gate: Verdict,
+  rechecks: string | undefined,
 ): AnnotationFile => {
-  const failed = definition.fail_labels.includes(verdict.label)
+  const failed = verdict.label !== "skipped" && definition.fail_labels.includes(verdict.label)
 
   const body: MutableAnnotation = {
     name: definition.name,
     label: verdict.label,
     annotator_kind: definition.kind === "llm" ? "LLM" : "CODE",
     identifier: "oi-agent",
-    metadata: { failed, feedback: definition.feedback && failed },
+    metadata: {
+      failed,
+      feedback: definition.feedback && failed,
+      skipped: verdict.label === "skipped",
+      applicability: gate.explanation ?? "",
+    },
   }
+
+  if (rechecks !== undefined) body.metadata = { ...body.metadata, rechecks }
 
   if (verdict.score !== undefined) body.score = verdict.score
 
@@ -407,15 +492,21 @@ const runOne = (
   traceId: string,
   definition: EvalDefinition,
   record: TurnRecord,
+  rechecks?: string,
 ): Effect.Effect<AnnotationFile | undefined> =>
   Effect.gen(function* () {
     const report = yield* reporterFor(runtime, sessionId)
-    const verdict = yield* Effect.promise(() => evaluate(runtime, definition, record, report))
+    const gate = applicabilityFor(definition.applicability, record)
+
+    const verdict =
+      gate.label === "skipped"
+        ? gate
+        : yield* Effect.promise(() => evaluate(runtime, definition, record, report))
 
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_VALUE, JSON.stringify(verdict))
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_MIME, "application/json")
 
-    const annotation = annotationFor(sessionId, traceId, definition, verdict)
+    const annotation = annotationFor(sessionId, traceId, definition, verdict, gate, rechecks)
 
     runtime.store.writeAnnotation(annotation)
 
@@ -487,6 +578,34 @@ const learn = (
     Effect.catchDefect(() => Effect.void),
   )
 
+/** The evaluator, run regardless of its trigger, as a recheck of an earlier failure. */
+const obligation = (definition: EvalDefinition): EvalDefinition => {
+  const always = { ...definition, applicability: { any: ["always"] } }
+
+  return always.kind === "llm"
+    ? {
+        ...always,
+        instructions: `${always.instructions}\n\nThis is a recheck: the transcript holds an earlier turn that failed this check, then a corrective turn. Pass only if the obligation is now met, considering both.`,
+      }
+    : always
+}
+
+/** For a judge, the failing turn followed by the correction; code and limits only see the correction. */
+const recheckRecord = (
+  runtime: EvalRuntime,
+  sessionId: string,
+  previous: AnnotationFile,
+  record: TurnRecord,
+): TurnRecord => {
+  const original = turnRecord(runtime.store, sessionId, previous.target.trace_id ?? "")
+
+  return {
+    ...record,
+    facts: `${record.facts} Rechecks failed result ${previous.id}: ${previous.annotation.explanation ?? ""}`,
+    judged: `[failing turn]\n${original.transcript}\n\n[corrective turn]\n${record.transcript}`,
+  }
+}
+
 const failed = (annotation: AnnotationFile): boolean => annotation.annotation.metadata?.["failed"] === true
 
 /** Run every evaluator in the project against a finished turn. */
@@ -503,9 +622,40 @@ export const runEvals = async (
   const record = turnRecord(runtime.store, sessionId, traceId)
 
   const results = await Effect.runPromise(
-    Effect.forEach(definitions, (definition) => runOne(runtime, sessionId, traceId, definition, record), {
-      concurrency: 4,
-    }),
+    Effect.forEach(
+      definitions,
+      (definition) => {
+        const branch = new Set(loadSession(runtime.store, sessionId).turns.map((turn) => turn.trace_id))
+
+        const previous = runtime.store
+          .listAnnotations(sessionId)
+          .filter(
+            (a) =>
+              a.annotation.name === definition.name &&
+              a.target.trace_id !== traceId &&
+              branch.has(a.target.trace_id ?? "") &&
+              a.annotation.label !== "skipped",
+          )
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+
+        const skipped = applicabilityFor(definition.applicability, record).label === "skipped"
+
+        // A failed result is an open obligation: a follow-up turn that would
+        // be skipped (no new commit, say) is judged on whether it resolved it.
+        if (skipped && previous !== undefined && failed(previous))
+          return runOne(
+            runtime,
+            sessionId,
+            traceId,
+            obligation(definition),
+            recheckRecord(runtime, sessionId, previous, record),
+            previous.id,
+          )
+
+        return runOne(runtime, sessionId, traceId, definition, record)
+      },
+      { concurrency: 4 },
+    ),
   )
 
   const annotations: Array<AnnotationFile> = []

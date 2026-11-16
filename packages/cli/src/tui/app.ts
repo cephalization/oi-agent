@@ -608,7 +608,7 @@ class App {
 
       lines.push(
         "",
-        `${failed ? style.red("◆") : style.green("◆")} ${style.bold(name)}: ${verdict.join(", ")} ${style.gray(`(${annotator_kind})`)}`,
+        `${failed ? style.red("◆") : metadata?.["skipped"] === true ? style.gray("◇") : style.green("◆")} ${style.bold(name)}: ${verdict.join(", ")} ${style.gray(`(${annotator_kind})`)}`,
       )
 
       if (explanation !== undefined)

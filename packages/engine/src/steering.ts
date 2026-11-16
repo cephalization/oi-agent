@@ -235,7 +235,12 @@ export const detectSteering = (
           origin: { kind: "steering", session_id: sessionId, trace_id: traceId },
         })
 
-        outcome = { learned: true, name: definition.name, statement: verdict?.statement ?? "", file }
+        outcome = {
+          learned: true,
+          name: definition.name,
+          statement: `${verdict?.statement ?? ""} Trigger: ${JSON.stringify(definition.applicability ?? "always (legacy)")}.`,
+          file,
+        }
       }
     }
 
