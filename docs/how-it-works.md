@@ -237,6 +237,14 @@ These work best on the session you are in, because the evidence is right there.
   would skip, `runEvals` reruns it (an LLM judge sees the failing turn and
   the correction), so a turn that opens the missing PR without committing
   again can resolve it.
+- **"How do evals judge background work?"** Evals run after both launching
+  turns and result-delivery turns, not when a job exits. LLM judges distinguish
+  calls initiated in the reviewed turn from results delivered from earlier
+  work. Direct provenance links provide bounded launch/result excerpts without
+  loading child histories into the judge prompt. Delegating forbidden work can
+  fail immediately; accurately reporting or acknowledging that earlier work is
+  not a fresh launch. Regex targets remain literal, and outcome-dependent
+  pending evaluations are not yet supported.
 - **"How many tokens are in context?"** The status line's `N context` is
   the latest agent `LLM` span's `llm.token_count.total` (prompt, cached
   tokens included, plus reply, which the next request also sends):
