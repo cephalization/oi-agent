@@ -698,7 +698,7 @@ const exportSessions = async (idOrPrefix: string | undefined): Promise<void> => 
  * process, runs its turns: the terminal follows the session's files, and
  * what is typed goes to the task's inbox, waking a runner if it has none.
  * Tool calls the task needs a person for are answered through the session
- * that delegated it, which this process still attends.
+ * that delegated it, which the interactive loop attends even on direct resume.
  */
 const attached = async (
   engine: Engine,
@@ -758,14 +758,13 @@ const interactive = async (): Promise<void> => {
 
   let first = true
   let reloading: string | undefined
+  let attended: string | undefined
 
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
 
   /** Run a session in the terminal with this process as its host. */
   const hosted = (sessionId: string, from: string | undefined): Promise<AppExit> => {
-    engine.attend(sessionId)
-
     const notes = [...problems, ...modelNotes(engine, sessionId, first), ...guard(engine, opened, true)]
 
     first = false
@@ -791,6 +790,18 @@ const interactive = async (): Promise<void> => {
     const sessionId = opened.sessionId
     const header = store.readHeader(sessionId)
 
+    const owner =
+      header?.task !== undefined && header.parent !== undefined ? header.parent.session_id : sessionId
+
+    // The runner owns a task's turns; this terminal attends its delegator for results and approvals.
+    // Keep that attendance across parent/task switches, including when the first view is a task.
+    if (attended !== owner) {
+      if (attended !== undefined) engine.leave(attended)
+
+      engine.attend(owner)
+      attended = owner
+    }
+
     // A delegated task has a runner of its own: this terminal watches and talks to it.
     const exit: AppExit =
       header?.task !== undefined && header.parent !== undefined
@@ -804,10 +815,6 @@ const interactive = async (): Promise<void> => {
       reloading = sessionId
       break
     }
-
-    // Attaching to one of its tasks does not leave the session: its results and approvals still arrive.
-    if (exit.next === undefined || store.readHeader(exit.next)?.parent?.session_id !== sessionId)
-      engine.leave(sessionId)
 
     const away = header?.task === undefined ? await sessions.putAway(sessionId) : undefined
 
