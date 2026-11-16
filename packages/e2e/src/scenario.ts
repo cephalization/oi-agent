@@ -5,13 +5,16 @@
  * outline and the last screen, and cleanup.
  */
 import { execFileSync } from "node:child_process"
+import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { getSecret, nowNs } from "@oi-agent/engine"
 import type { Schema } from "effect"
 import { it } from "vite-plus/test"
 import { PHOENIX_ENDPOINT, PHOENIX_PROJECT, phoenixUp, reportScenario } from "./phoenix.ts"
 import { ModelProxy, modelsMode } from "./proxy.ts"
-import { canConfine, type RunResult, Sandbox, type SandboxConfig } from "./sandbox.ts"
+import { canConfine, type RunResult, Sandbox, type SandboxConfig, type SandboxOptions } from "./sandbox.ts"
+import { mapSamples, positiveInteger } from "./samples.ts"
 import { Spans } from "./spans.ts"
 import { findRex, RexTerminal, type Terminal, tail } from "./term.ts"
 
@@ -55,6 +58,8 @@ export interface ScenarioOptions {
   readonly pending?: number
   /** Live-model scenarios cannot be replayed (judges, sampling); skip them in replay mode. */
   readonly liveOnly?: boolean
+  /** Opt in to isolated headless samples. Requires liveOnly and no Rex. */
+  readonly samples?: boolean
   readonly timeoutMs?: number
 }
 
@@ -63,6 +68,12 @@ export interface Launch {
   /** Script to run instead of `packages/cli/src/main.ts`. */
   readonly entry?: string
   readonly env?: ReadonlyMap<string, string>
+}
+
+export interface Sample {
+  readonly sandbox: Sandbox
+  readonly spans: Spans
+  readonly run: (args: ReadonlyArray<string>, env?: ReadonlyMap<string, string>) => Promise<RunResult>
 }
 
 export interface Scenario {
@@ -76,6 +87,13 @@ export interface Scenario {
   readonly run: (args: ReadonlyArray<string>, env?: ReadonlyMap<string, string>) => Promise<RunResult>
   /** Extra text for the failure message, and for the scenario's span in Phoenix. */
   readonly note: (text: string) => void
+  /** Each attempt gets a fresh sandbox; retries only the known ChatGPT availability error. */
+  readonly samples: <A, B>(
+    entries: ReadonlyArray<A>,
+    body: (s: Sample, entry: A, retries: number) => Promise<B>,
+  ) => Promise<Array<B>>
+  /** Persist JSON outside disposable sandboxes, print once, and attach to Phoenix. */
+  readonly results: (rows: ReadonlyArray<Schema.Json>) => void
 }
 
 const runId = Date.now().toString(36)
@@ -198,6 +216,9 @@ export const scenario = (
         return
       }
 
+      if (options.samples === true && (options.liveOnly !== true || needs.has("rex")))
+        throw new Error("Samples require liveOnly: true and no Rex")
+
       const id = `${runId}-${slug(name)}`
 
       // Live-only scenarios are never replayed, so they have nothing to record.
@@ -206,7 +227,7 @@ export const scenario = (
 
       const phoenix = options.phoenix === true
 
-      const sandbox = new Sandbox(slug(name), {
+      const sandboxOptions: SandboxOptions = {
         fixture: options.fixture ?? "basic",
         config: {
           model: options.model ?? MODELS.main,
@@ -224,9 +245,12 @@ export const scenario = (
           ...(options.env ?? []),
         ]),
         confine: process.env["OI_E2E_CONFINE"] !== "0" && canConfine(),
-      })
+      }
 
+      const sandbox = new Sandbox(slug(name), sandboxOptions)
       const spans = new Spans(sandbox.home)
+      const children: Array<Sample> = []
+      const results: Array<Schema.Json> = []
       const terminals: Array<RexTerminal> = []
       const notes: Array<string> = []
       const startNs = nowNs()
@@ -237,6 +261,8 @@ export const scenario = (
         spans,
         mode: MODE,
         tui: async (args = [], launch = {}) => {
+          if (options.samples === true) throw new Error("Sample scenarios cannot open Rex terminals")
+
           const terminal = await RexTerminal.start(
             `oi-e2e-${id}-${terminals.length + 1}`,
             sandbox.cwd,
@@ -248,6 +274,39 @@ export const scenario = (
           return terminal
         },
         run: (args, env) => sandbox.run(args, env),
+        samples: async (entries, body) => {
+          if (options.samples !== true) throw new Error("Declare samples: true to run isolated samples")
+
+          return mapSamples(entries, positiveInteger("OI_E2E_CONCURRENCY", 4), async (entry, index) => {
+            for (let retries = 0; ; retries += 1) {
+              const child = new Sandbox(`${slug(name)}-${index}-${retries}`, sandboxOptions)
+
+              const sample: Sample = {
+                sandbox: child,
+                spans: new Spans(child.home),
+                run: (args, env) => child.run(args, env),
+              }
+
+              children.push(sample)
+
+              try {
+                return await body(sample, entry, retries)
+              } catch (error) {
+                if (
+                  retries !== 0 ||
+                  !(error instanceof Error) ||
+                  !error.message.includes("The ChatGPT user is temporarily unavailable")
+                )
+                  throw error
+
+                notes.push(`sample ${index}: ChatGPT unavailable; retrying once in a fresh sandbox`)
+              }
+            }
+          })
+        },
+        results: (rows) => {
+          results.push(...rows)
+        },
         note: (text) => {
           notes.push(text)
         },
@@ -270,6 +329,9 @@ export const scenario = (
           spans.summary(),
         )
 
+        for (const child of children)
+          sections.push(`--- sample ${child.sandbox.root} ---`, child.spans.summary())
+
         for (const [index, terminal] of terminals.entries())
           sections.push(
             `--- terminal ${index + 1} ---`,
@@ -286,7 +348,21 @@ export const scenario = (
       } finally {
         await Promise.all(terminals.map((terminal) => terminal.close()))
 
-        const sessionIds = spans.sessions()
+        const sessionIds = [...spans.sessions(), ...children.flatMap((child) => child.spans.sessions())]
+
+        for (const child of children) child.spans.close()
+
+        if (results.length > 0) {
+          const directory = process.env["OI_E2E_RESULTS_DIR"] ?? path.join(os.tmpdir(), "oi-e2e-results")
+
+          fs.mkdirSync(directory, { recursive: true })
+
+          const file = path.join(directory, `${id}.json`)
+
+          fs.writeFileSync(file, `${JSON.stringify(results, null, 2)}\n`)
+          process.stdout.write(`${label}: results ${file}\n`)
+          console.table(results, ["case", "sample", "learned", "producers", "retries", "durationMs"])
+        }
 
         spans.close()
         await proxy?.stop(failure === undefined)
@@ -298,12 +374,17 @@ export const scenario = (
           sessionIds,
           error: failure,
           notes,
+          results,
           sandbox: sandbox.root,
         })
 
         // Scores and other notes are worth seeing when a scenario passes too.
         if (failure === undefined && notes.length > 0)
           process.stdout.write(`${label}:\n${notes.map((line) => `  ${line}`).join("\n")}\n`)
+
+        for (const child of children)
+          child.sandbox.dispose(failure !== undefined && process.env["OI_E2E_KEEP"] === "1")
+
         sandbox.dispose(failure !== undefined && process.env["OI_E2E_KEEP"] === "1")
       }
     },

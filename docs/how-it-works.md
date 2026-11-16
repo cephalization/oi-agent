@@ -359,3 +359,13 @@ These work best on the session you are in, because the evidence is right there.
 - `README.md`: what it does and how to use it.
 - `PLAN.md`: the design decisions and what was measured.
 - `spec-gaps.md`: what OpenInference could not express, found by building this.
+
+### Scored experiment isolation
+
+The repository's e2e harness runs opted-in, live-only headless samples in
+independent sandboxes (`packages/e2e/src/scenario.ts`). Bounded workers
+(`samples.ts`, default concurrency 4) cannot share learned rules or evaluator
+files. The steering experiment records one JSON outcome per case/repetition,
+including whether the agent or steering detector created each evaluator,
+and attaches those rows to the scenario's Phoenix span. Ordinary Rex/proxy
+scenarios remain sequential; see `packages/e2e/README.md` for controls.

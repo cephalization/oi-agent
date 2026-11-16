@@ -14,9 +14,11 @@ import * as path from "node:path"
 import { kindOf, parser, projectDir, SteeringVerdict, stringAttr, OI } from "@oi-agent/engine"
 import { Schema } from "effect"
 import { describe, expect } from "vite-plus/test"
-import { expectOk, MODELS, type Scenario, scenario } from "../src/scenario.ts"
+import { expectOk, MODELS, type Sample, scenario } from "../src/scenario.ts"
 
-const SAMPLES = Number(process.env["OI_E2E_SAMPLES"] ?? "3")
+import { positiveInteger } from "../src/samples.ts"
+
+const SAMPLES = positiveInteger("OI_E2E_SAMPLES", 3)
 
 interface Case {
   /** A first prompt that sets up something to correct. */
@@ -105,7 +107,7 @@ const ONE_OFF: ReadonlyArray<Case> = [
 ]
 
 /** Evaluator files for this project and the user, by name. */
-const evalFiles = (s: Scenario): Array<string> => {
+const evalFiles = (s: Sample): Array<string> => {
   const env = { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }
   const dirs = [path.join(projectDir(s.sandbox.cwd, env), "evals"), path.join(s.sandbox.configDir, "evals")]
 
@@ -115,7 +117,7 @@ const evalFiles = (s: Scenario): Array<string> => {
 }
 
 /** Run one case in a fresh session; return the evaluators it created, then remove them. */
-const learned = async (s: Scenario, entry: Case): Promise<Array<string>> => {
+const learned = async (s: Sample, entry: Case, retain = false): Promise<Array<string>> => {
   // Rules learned in an earlier case go into every later system prompt: start each case without them.
   fs.rmSync(path.join(projectDir(s.sandbox.cwd, { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }), "rules.md"), {
     force: true,
@@ -133,7 +135,7 @@ const learned = async (s: Scenario, entry: Case): Promise<Array<string>> => {
 
   const created = evalFiles(s).filter((file) => !before.has(file))
 
-  for (const file of created) fs.rmSync(file)
+  if (!retain) for (const file of created) fs.rmSync(file)
 
   return created
 }
@@ -146,25 +148,64 @@ describe("learning from steering", () => {
     "durable corrections become evaluators; one-off ones do not",
     {
       liveOnly: true,
+      samples: true,
       config: new Map([["steering", "auto"]]),
       timeoutMs: 900_000,
     },
     async (s) => {
-      let durableHits = 0
-      let oneOffHits = 0
+      const cases = [
+        ...[...DURABLE, ...IMPLICIT].map((entry, index) => ({
+          entry,
+          key: `durable-${index}`,
+          durable: true,
+        })),
+        ...ONE_OFF.map((entry, index) => ({ entry, key: `one-off-${index}`, durable: false })),
+      ]
 
-      for (let sample = 0; sample < SAMPLES; sample += 1) {
-        for (const entry of [...DURABLE, ...IMPLICIT]) {
-          const created = await learned(s, entry)
+      const jobs = Array.from({ length: SAMPLES }, (_, sample) =>
+        cases.map((entry) => ({ ...entry, sample })),
+      ).flat()
 
-          // Each evaluator links back to the prompt that produced it.
-          for (const file of created) s.note(`learned from "${entry.steer}": ${path.basename(file)}`)
+      const rows = await s.samples(jobs, async (child, job, retries) => {
+        const started = Date.now()
+        const created = await learned(child, job.entry, true)
 
-          if (created.length > 0) durableHits += 1
+        const evaluators = created.map((file) => {
+          const definition = parser(
+            Schema.Struct({
+              name: Schema.String,
+              origin: Schema.optionalKey(Schema.Struct({ kind: Schema.String })),
+            }),
+          )(fs.readFileSync(file, "utf8"))
+
+          expect(definition).toBeDefined()
+
+          return {
+            file: path.basename(file),
+            producer: definition?.origin?.kind === "steering" ? "detector" : "agent",
+          }
+        })
+
+        const row = {
+          case: job.key,
+          sample: job.sample,
+          durable: job.durable,
+          learned: created.length > 0,
+          evaluators,
+          producers: evaluators.map((entry) => entry.producer).join(", "),
+          retries,
+          durationMs: Date.now() - started,
+          sandbox: child.sandbox.root,
+          sessions: child.spans.sessions(),
         }
 
-        for (const entry of ONE_OFF) if ((await learned(s, entry)).length > 0) oneOffHits += 1
-      }
+        s.results([row])
+
+        return row
+      })
+
+      const durableHits = rows.filter((row) => row.durable && row.learned).length
+      const oneOffHits = rows.filter((row) => !row.durable && row.learned).length
 
       const durableTotal = SAMPLES * (DURABLE.length + IMPLICIT.length)
       const oneOffTotal = SAMPLES * ONE_OFF.length
