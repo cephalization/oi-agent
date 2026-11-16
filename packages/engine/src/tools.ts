@@ -15,6 +15,8 @@ export interface ToolContext {
   readonly cwd: string
   /** Live output for viewers of the in-flight span. */
   readonly emit: (chunk: string) => void
+  /** Persist a scrubbed completion before claiming it; the observing TOOL consumes this inbox entry. */
+  readonly complete: (delivery: NonNullable<EngineMetadata["delivers"]>[number], text: string) => void
   readonly sessionId: string
   /** The `TOOL` span this call runs under. */
   readonly span: Job["tool"]
@@ -389,10 +391,14 @@ const jobStatus = defineTool({
           ? jobs.state(job)
           : await jobs.wait(job, Math.min(Math.max(input.wait_ms, 0), MAX_WAIT_MS))
 
-      // Seen here, so it is not delivered a second time as a result.
-      if (state.state !== "running") jobs.claim(job)
+      const report = jobReport(jobs, job, state)
 
-      return ok(jobReport(jobs, job, state))
+      if (state.state !== "running") {
+        context.complete({ kind: "job", id: job.id, ...job.tool, inbox_id: `job-${job.id}` }, report)
+        jobs.claim(job)
+      }
+
+      return ok(report)
     }),
 })
 
@@ -417,9 +423,11 @@ const jobKill = defineTool({
       if (job === undefined || job.task !== undefined || !jobs.isBackground(job)) return unknownJob(input.id)
 
       jobs.kill(job)
+      const report = jobReport(jobs, job, jobs.state(job))
+      context.complete({ kind: "job", id: job.id, ...job.tool, inbox_id: `job-${job.id}` }, report)
       jobs.claim(job)
 
-      return ok(jobReport(jobs, job, jobs.state(job)))
+      return ok(report)
     }),
 })
 

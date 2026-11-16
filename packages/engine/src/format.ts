@@ -307,15 +307,23 @@ export const EngineMetadata = Schema.Struct({
   /** Inbox entry this turn consumed. */
   inbox_id: Schema.optionalKey(Schema.String),
   /**
-   * On a turn's root span: the results of background work this turn delivers
+   * On a turn root or observing TOOL span: the results of background work it delivers
    * to the model, each with the inbox entry it consumed and the `TOOL` span
    * that started the work.
    */
   delivers: Schema.optionalKey(Schema.Array(Schema.Struct({ ...Delivery.fields, inbox_id: Schema.String }))),
+  /** On a turn root: inbox results consumed by ended child TOOL spans, indexed without reading model histories. */
+  observed_results: Schema.optionalKey(Schema.Array(Schema.String)),
   /** On a turn's root span: the `TOOL` span, in another session, that sent this turn's prompt. */
   origin: Schema.optionalKey(SessionSpanRef),
   /** On a `TOOL` span that delegated or steered a task: the task and its session. */
-  task: Schema.optionalKey(Schema.Struct({ id: Schema.String, session_id: Schema.String })),
+  task: Schema.optionalKey(
+    Schema.Struct({
+      id: Schema.String,
+      session_id: Schema.String,
+      started_runner: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   /** On a `TOOL` span: the job its command became when it outlived the call. */
   job: Schema.optionalKey(
     Schema.Struct({

@@ -230,6 +230,23 @@ describe("opt-in background outcome checks", () => {
     expect(judged).toHaveLength(0)
   })
 
+  it("waits for task_message that starts a new runner, then resolves its own linked outcome", async () => {
+    const { fixture, evaluate, judged } = setup()
+    saveEval(root, { ...outcomeCheck, applicability: { any: ["tool:task_message"] } })
+    const followup = fixture.turn({ launches: ["followup"] })
+    expect((await evaluate(followup.traceId))[0]?.annotation.label).toBe("pending")
+    expect(judged).toHaveLength(0)
+
+    const result = fixture.turn({
+      deliveries: followup.deliveries,
+      input: "follow-up runner completed: 42 passed",
+    })
+
+    expect((await evaluate(result.traceId))[0]?.annotation.label).toBe("pass")
+    expect(judged[0]?.judged).toContain("task_message")
+    expect(judged[0]?.judged).toContain("follow-up runner completed")
+  })
+
   it("does not defer launch prohibitions by default", async () => {
     const { fixture, evaluate, judged } = setup("fail")
     saveEval(root, { ...outcomeCheck, wait_for_background: false })

@@ -27,6 +27,9 @@ const setup = () => {
   const context: ToolContext = {
     cwd: os.tmpdir(),
     emit: () => undefined,
+    complete: (delivery, text) => {
+      store.writeInbox(SESSION, { user_id: "oi", text, delivers: delivery }, delivery.inbox_id)
+    },
     sessionId: SESSION,
     span: { trace_id: "trace", span_id: "span" },
     jobs,

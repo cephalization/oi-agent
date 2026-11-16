@@ -20,8 +20,10 @@ export const outcomeCheck: LlmEval = {
 
 interface BackgroundTurn {
   readonly previous?: EndedSpan["context"] | null
-  readonly launches?: ReadonlyArray<"job" | "task" | "steer">
+  readonly launches?: ReadonlyArray<"job" | "task" | "steer" | "followup">
   readonly deliveries?: ReadonlyArray<Delivery>
+  readonly observed?: ReadonlyArray<Delivery>
+  readonly observationTool?: "job_status" | "job_kill"
   readonly input?: string
   readonly output?: string
 }
@@ -79,7 +81,13 @@ export class BackgroundFixture {
       const metadata =
         kind === "job"
           ? { job: { id, log: "/never-read-raw-log", reason: "requested" as const } }
-          : { task: { id, session_id: this.store.createSession("/fixture-child").id } }
+          : {
+              task: {
+                id,
+                session_id: this.store.createSession("/fixture-child").id,
+                started_runner: kind === "followup",
+              },
+            }
 
       const tool: EndedSpan = {
         ...root,
@@ -101,6 +109,29 @@ export class BackgroundFixture {
 
       this.store.endSpan(this.sessionId, tool)
       deliveries.push({ kind: kind === "job" ? "job" : "task", id, trace_id: traceId, span_id: id })
+    }
+
+    if ((options.observed?.length ?? 0) > 0) {
+      const name = options.observationTool ?? "job_status"
+
+      const observer: EndedSpan = {
+        ...root,
+        name,
+        context: { trace_id: traceId, span_id: newSpanId() },
+        parent_id: rootId,
+        attributes: {
+          [OI.SPAN_KIND]: "TOOL",
+          [OI.SESSION_ID]: this.sessionId,
+          [OI.TOOL_NAME]: name,
+          [OI.INPUT_VALUE]: "Inspect the background job.",
+          [OI.OUTPUT_VALUE]: options.output ?? "",
+          [OI.METADATA]: writeMetadata(undefined, {
+            delivers: (options.observed ?? []).map((delivery) => ({ ...delivery, inbox_id: delivery.id })),
+          }),
+        },
+      }
+
+      this.store.endSpan(this.sessionId, observer)
     }
 
     return { traceId, ref: root.context, deliveries }

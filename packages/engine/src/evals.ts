@@ -286,7 +286,10 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
 
   const metadata = root === undefined ? undefined : readMetadata(root)
 
-  const deliveries = (metadata?.delivers ?? []).map((delivery) => ({
+  const deliveries = [
+    ...(metadata?.delivers ?? []),
+    ...tools.flatMap((tool) => readMetadata(tool).delivers ?? []),
+  ].map((delivery) => ({
     kind: delivery.kind,
     id: delivery.id,
     launch: linkedEvidence(store, {
@@ -301,7 +304,7 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
   const judged = JSON.stringify(
     {
       current_turn: { session_id: sessionId, trace_id: traceId },
-      input: { role: deliveries.length > 0 ? "delivered_results" : "prompt", text: input },
+      input: { role: (metadata?.delivers?.length ?? 0) > 0 ? "delivered_results" : "prompt", text: input },
       initiated_this_turn: tools.map((span) => ({
         span_id: span.context.span_id,
         name: span.name,
@@ -684,7 +687,7 @@ const recheckRecord = (
 
 type BackgroundRef = EndedSpan["context"]
 
-/** Only successful launches represented by durable TOOL metadata, not status/steering calls. */
+/** Only background launches, including follow-ups that actually start a fresh runner. */
 const backgroundLaunches = (store: Store, sessionId: string, traceId: string): Array<BackgroundRef> =>
   store
     .readTrace(sessionId, traceId)
@@ -694,7 +697,9 @@ const backgroundLaunches = (store: Store, sessionId: string, traceId: string): A
 
       return (
         metadata.job !== undefined ||
-        (metadata.task !== undefined && (stringAttr(span, OI.TOOL_NAME) ?? span.name) === "delegate")
+        (metadata.task !== undefined &&
+          ((stringAttr(span, OI.TOOL_NAME) ?? span.name) === "delegate" ||
+            metadata.task.started_runner === true))
       )
     })
     .map((span) => span.context)
@@ -703,28 +708,33 @@ const sameLaunch = (left: BackgroundRef, right: BackgroundRef): boolean =>
   left.trace_id === right.trace_id && left.span_id === right.span_id
 
 /**
- * Persisted deliveries are the completion boundary; raw job logs are never judge evidence.
- * A result claimed by a polling tool without a `delivers` edge remains pending, conservatively.
+ * Root deliveries and observing TOOL deliveries are the completion boundary.
+ * Raw job logs are never judge evidence.
  */
 const backgroundOutcome = (runtime: EvalRuntime, sessionId: string, origin: string, traceId: string) => {
   const launches = backgroundLaunches(runtime.store, sessionId, origin)
   const branch = branchTo(loadSession(runtime.store, sessionId), traceId)
 
   const deliveries = branch.flatMap((turn) =>
-    (readMetadata(turn.root).delivers ?? [])
-      .filter((delivery) => launches.some((launch) => sameLaunch(launch, delivery)))
-      .map((delivery) => ({
-        launch: linkedEvidence(runtime.store, {
-          session_id: sessionId,
-          trace_id: delivery.trace_id,
-          span_id: delivery.span_id,
-        }),
-        result: delivery.result === undefined ? undefined : linkedEvidence(runtime.store, delivery.result),
-        delivered_in: turn.trace_id,
-        // Job results live in the delivery input; child reports have a direct result link too.
-        input: truncate(stringAttr(turn.root, OI.INPUT_VALUE) ?? "", 8000),
-        report: truncate(stringAttr(turn.root, OI.OUTPUT_VALUE) ?? "", 2000),
-      })),
+    [
+      turn.root,
+      ...runtime.store.readTrace(sessionId, turn.trace_id).ended.filter((span) => kindOf(span) === "TOOL"),
+    ].flatMap((observer) =>
+      (readMetadata(observer).delivers ?? [])
+        .filter((delivery) => launches.some((launch) => sameLaunch(launch, delivery)))
+        .map((delivery) => ({
+          launch: linkedEvidence(runtime.store, {
+            session_id: sessionId,
+            trace_id: delivery.trace_id,
+            span_id: delivery.span_id,
+          }),
+          result: delivery.result === undefined ? undefined : linkedEvidence(runtime.store, delivery.result),
+          delivered_in: turn.trace_id,
+          // Job results live in the delivery input; child reports have a direct result link too.
+          input: truncate(stringAttr(observer, OI.INPUT_VALUE) ?? "", 8000),
+          report: truncate(stringAttr(observer, OI.OUTPUT_VALUE) ?? "", 2000),
+        })),
+    ),
   )
 
   const waiting = launches.some(

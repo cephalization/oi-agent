@@ -2,17 +2,19 @@ import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { Effect } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { loadConfig } from "../src/config.ts"
 import { Engine } from "../src/engine.ts"
 import { linksOf } from "../src/export/otlp.ts"
 import { pendingInbox } from "../src/fold.ts"
-import { type EndedSpan, kindOf, OI, writeMetadata } from "../src/format.ts"
+import { type EndedSpan, type EngineMetadata, kindOf, OI, writeMetadata } from "../src/format.ts"
 import { jobsOf } from "../src/jobs.ts"
 import { scriptedModel } from "../src/model.ts"
 import { Store, type StoreEvent } from "../src/store.ts"
+import { taskTools } from "../src/task-tools.ts"
 import { ApprovalDesk, type Delegator, Tasks } from "../src/tasks.ts"
-import { tempStore } from "./helpers.ts"
+import { MODELS, tempStore } from "./helpers.ts"
 
 const until = async (check: () => boolean): Promise<void> => {
   const deadline = Date.now() + 10_000
@@ -147,16 +149,56 @@ describe("tasks", () => {
     const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "shared" })
 
     await s.jobs.ended(task.job)
-    s.tasks.message(s.from, task, "One more thing.")
+    const followup = { ...s.from, span: { trace_id: "c".repeat(32), span_id: "d".repeat(16) } }
+    expect(s.tasks.message(followup, task, "One more thing.")).toBe(true)
 
     const again = s.tasks.find(s.parent.id, task.id)!
 
     expect(again.runners).toHaveLength(2)
+    expect(again.job.tool).toEqual(followup.span)
     expect(again.header.id).toBe(task.header.id)
     expect(pendingInbox(s.store, task.header.id).map((entry) => entry.text)).toEqual([
       "Do it.",
       "One more thing.",
     ])
+    await s.jobs.ended(again.job)
+  })
+
+  it("task_message marks a newly started runner and task_cancel records its terminal observation before claiming", async () => {
+    const s = setup("true")
+    const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "shared" })
+    await s.jobs.ended(task.job)
+    const message = taskTools.find((tool) => tool.name === "task_message")!
+    const cancel = taskTools.find((tool) => tool.name === "task_cancel")!
+    const observed: Array<string> = []
+
+    const context = {
+      cwd: s.cwd,
+      emit: () => undefined,
+      sessionId: s.parent.id,
+      span: { trace_id: "e".repeat(32), span_id: "f".repeat(16) },
+      jobs: s.jobs,
+      tasks: s.tasks,
+      userId: "tony",
+      models: MODELS,
+      complete: (delivery: NonNullable<EngineMetadata["delivers"]>[number], text: string) => {
+        expect(s.jobs.isReported(s.tasks.find(s.parent.id, task.id)!.job)).toBe(false)
+        s.store.writeInbox(s.parent.id, { user_id: "oi", text, delivers: delivery }, delivery.inbox_id)
+        observed.push(delivery.span_id)
+      },
+    }
+
+    const result = await Effect.runPromise(
+      message.run({ id: task.id, text: "Run verification again." }, context),
+    )
+
+    expect(result.task?.started_runner).toBe(true)
+    const again = s.tasks.find(s.parent.id, task.id)!
+    expect(again.job.tool).toEqual(context.span)
+    await Effect.runPromise(cancel.run({ id: task.id }, context))
+    expect(observed).toEqual([context.span.span_id])
+    expect(s.jobs.isReported(again.job)).toBe(true)
+    expect(s.store.listInbox(s.parent.id)).toHaveLength(1)
     await s.jobs.ended(again.job)
   })
 

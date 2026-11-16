@@ -243,7 +243,14 @@ const compactContext = (env: TurnEnv, input: TurnInput) =>
     return { trace_id: chain.traceId, span_id: chain.spanId }
   }).pipe(Effect.withSpan("context.compact", { attributes: { [OI.SPAN_KIND]: "CHAIN" } }, UNTRACED))
 
-const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) => {
+const toolStep = (
+  env: TurnEnv,
+  use: ToolCall,
+  userId: string,
+  prompt: string,
+  recordObserved: (ids: ReadonlyArray<string>) => void,
+) => {
+  const observed: Array<NonNullable<EngineMetadata["delivers"]>[number]> = []
   const tool = env.tools.find((candidate) => candidate.name === use.name)
 
   return Effect.gen(function* () {
@@ -292,6 +299,17 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) =
     const outcome = yield* tool.run(use.input, {
       cwd: env.cwd,
       emit: (chunk) => span.delta({ k: "stdout", i: 0, d: env.redactor.scrub(chunk) }),
+      complete: (delivery, text) => {
+        // Inbox first: if interrupted before this TOOL ends, ordinary delivery recovers the result.
+        if (!env.store.listInbox(env.sessionId).some((entry) => entry.id === delivery.inbox_id))
+          env.store.writeInbox(
+            env.sessionId,
+            { user_id: "oi", text: env.redactor.scrub(text), delivers: delivery },
+            delivery.inbox_id,
+          )
+        observed.push(delivery)
+        span.patchMetadata({ delivers: observed })
+      },
       sessionId: env.sessionId,
       span: { trace_id: span.traceId, span_id: span.spanId },
       jobs: env.jobs,
@@ -342,6 +360,12 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) =
       UNTRACED,
     ),
     Effect.catchTag("ToolFailed", () => Effect.void),
+    // Only index consumption after the TOOL is immutable, before the next model call can see its result.
+    Effect.tap(() =>
+      Effect.sync(() => {
+        if (observed.length > 0) recordObserved(observed.map((entry) => entry.inbox_id))
+      }),
+    ),
   )
 }
 
@@ -351,6 +375,7 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
     const traceId = root.traceId
     let steps = 0
     let response = EMPTY_REPLY
+    const observedResults: Array<string> = []
 
     // The fold reads this turn's input from the root span's in-flight file.
     root.flush()
@@ -395,10 +420,19 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       response = yield* modelStep(env, traceId)
 
       if (response.wantsTools) {
-        yield* Effect.forEach(response.calls, (use) => toolStep(env, use, input.userId, input.text), {
-          concurrency: "unbounded",
-          discard: true,
-        })
+        yield* Effect.forEach(
+          response.calls,
+          (use) =>
+            toolStep(env, use, input.userId, input.text, (ids) => {
+              observedResults.push(...ids)
+              root.patchMetadata({ observed_results: observedResults })
+              root.flush()
+            }),
+          {
+            concurrency: "unbounded",
+            discard: true,
+          },
+        )
         continue
       }
 

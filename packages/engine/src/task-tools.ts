@@ -153,9 +153,12 @@ const taskMessage = defineTool({
   input: Schema.Struct({ id: Schema.String, text: Schema.String }),
   run: (input, context) =>
     withTask(context, input.id, (task) => {
-      context.tasks.message(delegator(context), task, input.text)
+      const started = context.tasks.message(delegator(context), task, input.text)
 
-      return { ...ok(`Sent to task ${task.id}.`), task: { id: task.id, session_id: task.header.id } }
+      return {
+        ...ok(`Sent to task ${task.id}.`),
+        task: { id: task.id, session_id: task.header.id, started_runner: started },
+      }
     }),
 })
 
@@ -174,10 +177,14 @@ const taskCancel = defineTool({
   run: (input, context) =>
     withTask(context, input.id, (task) => {
       context.tasks.cancel(task)
-      // The agent stopped it itself: there is no result to deliver.
+      const report = `Stopped task ${task.id}. ${line(context.tasks, task)}`
+      context.complete(
+        { ...context.tasks.delivery(task, context.tasks.status(task)), inbox_id: `job-${task.job.id}` },
+        report,
+      )
       context.jobs.claim(task.job)
 
-      return ok(`Stopped task ${task.id}. ${line(context.tasks, task)}`)
+      return ok(report)
     }),
 })
 

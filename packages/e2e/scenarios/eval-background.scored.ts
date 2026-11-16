@@ -32,6 +32,7 @@ scenario(
           results: ["pnpm test completed: exit code 0; 42 passed."],
           expected: "pass",
           wait: true,
+          observed: false,
         },
         {
           name: "task-failure",
@@ -39,6 +40,7 @@ scenario(
           results: ["pnpm test completed: exit code 1; 3 failed."],
           expected: "fail",
           wait: true,
+          observed: false,
         },
         {
           name: "partial-then-success",
@@ -49,6 +51,7 @@ scenario(
           ],
           expected: "pass",
           wait: true,
+          observed: false,
         },
         {
           name: "canceled-job",
@@ -56,6 +59,7 @@ scenario(
           results: ["pnpm test was canceled before completion; no successful result."],
           expected: "fail",
           wait: true,
+          observed: false,
         },
         {
           name: "launch-prohibition-immediate",
@@ -63,6 +67,31 @@ scenario(
           results: [],
           expected: "fail",
           wait: false,
+          observed: false,
+        },
+        {
+          name: "polled-job-success",
+          kinds: ["job"] as const,
+          results: ["pnpm test exited with code 0: 42 passed."],
+          expected: "pass",
+          wait: true,
+          observed: true,
+        },
+        {
+          name: "polled-job-cancellation",
+          kinds: ["job"] as const,
+          results: ["pnpm test killed after 1s: canceled before completion."],
+          expected: "fail",
+          wait: true,
+          observed: true,
+        },
+        {
+          name: "followup-runner-success",
+          kinds: ["followup"] as const,
+          results: ["Follow-up pnpm test exited with code 0: 42 passed."],
+          expected: "pass",
+          wait: true,
+          observed: false,
         },
       ]
 
@@ -70,7 +99,15 @@ scenario(
         for (const entry of cases) {
           const store = new Store(path.join(s.sandbox.home, `${sample}-${entry.name}`))
           const fixture = new BackgroundFixture(store, store.home)
-          saveEval(store.home, entry.wait ? outcomeCheck : readOnlyCriterion)
+          saveEval(
+            store.home,
+            entry.wait
+              ? {
+                  ...outcomeCheck,
+                  applicability: { any: ["tool:bash", "tool:delegate", "tool:task_message"] },
+                }
+              : readOnlyCriterion,
+          )
           let calls = 0
 
           const judge: Judge = (definition, record, report) => {
@@ -94,9 +131,11 @@ scenario(
 
           for (const [index, result] of entry.results.entries()) {
             const delivered = fixture.turn({
-              deliveries: launch.deliveries.slice(index, index + 1),
-              input: result,
-              output: "Reporting the completed background result.",
+              deliveries: entry.observed ? [] : launch.deliveries.slice(index, index + 1),
+              observed: entry.observed ? launch.deliveries.slice(index, index + 1) : [],
+              observationTool: entry.name === "polled-job-success" ? "job_status" : "job_kill",
+              input: entry.observed ? "Inspect the background result." : result,
+              output: entry.observed ? result : "Reporting the completed background result.",
             })
 
             verdict = (
