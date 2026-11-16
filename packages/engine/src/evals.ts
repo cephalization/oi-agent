@@ -17,6 +17,7 @@ import {
   type AnnotationBody,
   type AnnotationFile,
   type EndedSpan,
+  type SessionSpanRef,
   kindOf,
   OI,
   parser,
@@ -226,6 +227,21 @@ export interface TurnRecord {
   readonly facts: string
 }
 
+/** A single linked span, never its model history or further provenance. */
+const linkedEvidence = (store: Store, ref: SessionSpanRef) => {
+  const span = store
+    .readTrace(ref.session_id, ref.trace_id)
+    .ended.find((entry) => entry.context.span_id === ref.span_id)
+
+  return {
+    ...ref,
+    available: span !== undefined,
+    name: span?.name,
+    input: span === undefined ? undefined : truncate(stringAttr(span, OI.INPUT_VALUE) ?? "", 4000),
+    output: span === undefined ? undefined : truncate(stringAttr(span, OI.OUTPUT_VALUE) ?? "", 2000),
+  }
+}
+
 /** `104857600` as `100.0 MB`. */
 export const formatBytes = (bytes: number): string => {
   if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} kB`
@@ -256,6 +272,38 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
   const sessionBytes =
     (root === undefined ? undefined : readMetadata(root).session_bytes) ?? store.sessionBytes(sessionId)
 
+  const metadata = root === undefined ? undefined : readMetadata(root)
+
+  const deliveries = (metadata?.delivers ?? []).map((delivery) => ({
+    kind: delivery.kind,
+    id: delivery.id,
+    launch: linkedEvidence(store, {
+      session_id: sessionId,
+      trace_id: delivery.trace_id,
+      span_id: delivery.span_id,
+    }),
+    result: delivery.result === undefined ? undefined : linkedEvidence(store, delivery.result),
+  }))
+
+  // Only direct provenance edges: never recurse into a child's conversation.
+  const judged = JSON.stringify(
+    {
+      current_turn: { session_id: sessionId, trace_id: traceId },
+      input: { role: deliveries.length > 0 ? "delivered_results" : "prompt", text: input },
+      initiated_this_turn: tools.map((span) => ({
+        span_id: span.context.span_id,
+        name: span.name,
+        input: stringAttr(span, OI.INPUT_VALUE) ?? "",
+        result: truncate(stringAttr(span, OI.OUTPUT_VALUE) ?? "", 2000),
+      })),
+      delivered_now: deliveries,
+      prompt_origin: metadata?.origin === undefined ? undefined : linkedEvidence(store, metadata.origin),
+      assistant_report: output,
+    },
+    null,
+    2,
+  )
+
   const activity = new Map<string, string>()
 
   for (const event of ["writes", "commit"]) {
@@ -272,6 +320,7 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
 
   return {
     activity,
+    judged,
     metrics: { session_bytes: sessionBytes, tool_calls: tools.length },
     facts: `Session storage on disk: ${formatBytes(sessionBytes)} (${sessionBytes} bytes). Tool calls this turn: ${tools.length}.`,
     input,
@@ -602,7 +651,7 @@ const recheckRecord = (
   return {
     ...record,
     facts: `${record.facts} Rechecks failed result ${previous.id}: ${previous.annotation.explanation ?? ""}`,
-    judged: `[failing turn]\n${original.transcript}\n\n[corrective turn]\n${record.transcript}`,
+    judged: `[failing turn]\n${original.judged ?? original.transcript}\n\n[corrective turn]\n${record.judged ?? record.transcript}`,
   }
 }
 

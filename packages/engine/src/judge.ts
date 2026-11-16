@@ -26,6 +26,13 @@ The turn:
 {{transcript}}
 </turn>
 
+Attribute actions before judging:
+- initiated_this_turn contains calls made by this agent now. Delegating or steering forbidden work is an initiation and can violate a launch prohibition immediately, even before the work finishes.
+- delivered_now contains results of earlier launches. Its launch evidence and child result are context, not new calls by this turn. prompt_origin identifies who sent a subagent prompt; it is not a call made by the subagent now. Missing linked evidence means unavailable, not proof of compliance.
+- Input, tool results and assistant_report may quote or describe historical actions. Accurately reporting completed work, acknowledging a violation or apologizing does not repeat the launch. A new call or instruction initiating the same forbidden work does.
+- Distinguish prohibitions on initiating work from outcome/reporting criteria: results may be relevant to the latter. Do not invent successful completion from a launch alone.
+- For a recheck, historical failure remains historical. A launch prohibition cannot be undone, but acknowledging it without a fresh initiation is not another launch violation. For remediable obligations (such as opening a PR after a commit), require the remedy, not just an apology.
+
 Judge only whether this turn meets the criterion. If the criterion does not apply to what the turn was about, choose the label that means it was satisfied.`
 
 /** Wrap a model so each call it serves is reported with its token usage. */
