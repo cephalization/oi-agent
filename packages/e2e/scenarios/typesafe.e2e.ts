@@ -31,12 +31,13 @@ describe("real TypeSafe", () => {
       env,
     },
     async (s) => {
-      const command = "gh pr list --repo cephalization/oi-agent --state open --json number,title"
+      // Any state, so there is always a PR to list: open PRs come and go, and an empty list read as a failure.
+      const command = "gh pr list --repo cephalization/oi-agent --state all --limit 1 --json number,title"
 
       expectOk(
         await s.run([
           "run",
-          `What PRs are open and ready in cephalization/oi-agent? ${callBash(command)} Summarize the list.`,
+          `What is the most recent PR in cephalization/oi-agent? ${callBash(command)} Reply with its number and title.`,
         ]),
       )
 
