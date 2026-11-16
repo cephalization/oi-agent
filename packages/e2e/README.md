@@ -118,3 +118,27 @@ Without a key this scenario skips with `no TypeSafe credentials`; it is live-onl
 has no replay cassette. `scenarios/decisions.e2e.ts` continues to use the
 local fake, including an explicitly empty key override for its no-key case,
 so installing a real key does not change that test's meaning.
+
+## Scored live samples
+
+Declare `liveOnly: true, samples: true`, then call `s.samples(jobs, body)`.
+Each job **and retry** receives its own fixture checkout, config, session home,
+`Spans` and headless `run()`. Child sandboxes inherit the scenario's settings
+and environment and are closed/disposed with it (`OI_E2E_KEEP=1` retains them
+on failure). No Rex or recording proxy is allowed in this mode; ordinary
+scenarios remain sequential.
+
+`OI_E2E_CONCURRENCY` defaults to 4; set it to 1 for an isolated serial control.
+`OI_E2E_SAMPLES` controls repetitions in the steering experiment (default 3).
+Both must be positive integers. Workers drain before a failure is reported,
+so cleanup cannot delete an in-flight worker's sandbox. A sample failing with
+`The ChatGPT user is temporarily unavailable` gets one fresh-sandbox retry;
+other errors are not retried. Retries are reported in notes and result rows.
+
+`s.results(rows)` saves scored results as JSON in `OI_E2E_RESULTS_DIR`
+(default: `$TMPDIR/oi-e2e-results`), outside disposable sandboxes. The runner
+prints one results table, even on assertion failure, and attaches those same
+rows to its Phoenix span's `metadata.oi_e2e.results`. Steering rows identify
+case, repetition, learned outcome, evaluator filenames and their producer
+(agent or detector), retries, duration and session IDs. Evaluator files remain
+available until cleanup, or afterwards when a failed sandbox is kept.

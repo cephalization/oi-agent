@@ -7,6 +7,7 @@
  * drove, so Phoenix's session view shows the harness's verdict next to the
  * agent's own turns.
  */
+import type { Schema } from "effect"
 import {
   encodeTraceRequest,
   type EndedSpan,
@@ -45,6 +46,7 @@ export interface ScenarioRecord {
   readonly error: string | undefined
   /** Notes the scenario added, such as scores. */
   readonly notes: ReadonlyArray<string>
+  readonly results: ReadonlyArray<Schema.Json>
   readonly sandbox: string
 }
 
@@ -64,6 +66,7 @@ export const reportScenario = async (record: ScenarioRecord): Promise<void> => {
           mode: record.mode,
           sessions: record.sessionIds,
           sandbox: record.sandbox,
+          results: record.results,
         },
       }),
     ],
