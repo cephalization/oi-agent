@@ -79,7 +79,7 @@ describe("tasks", () => {
     expect(s.tasks.status(task).state).toBe("cancelled")
   })
 
-  it("a worktree task gets its own checkout and branch, removed again if it changed nothing", async () => {
+  it("an unchanged worktree and branch survive completion so a task message can resume", async () => {
     const s = setup("true")
     const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "worktree" })
     const worktree = task.task.worktree!
@@ -98,11 +98,19 @@ describe("tasks", () => {
     // The runner left without a turn: that is a failure, and the report says where to look.
     expect(status.state).toBe("failed")
     expect(s.tasks.report(task, status)).toContain("It left no report")
-    expect(s.tasks.report(task, status)).toContain("worktree: removed")
-    expect(fs.existsSync(worktree.path)).toBe(false)
+    expect(s.tasks.report(task, status)).toContain(`worktree: ${worktree.path}`)
+    expect(fs.existsSync(worktree.path)).toBe(true)
     expect(
       execFileSync("git", ["-C", s.cwd, "branch", "--list", worktree.branch], { encoding: "utf8" }),
-    ).toBe("")
+    ).toContain(worktree.branch)
+
+    s.tasks.message(s.from, task, "Resume in the same checkout.")
+
+    const again = s.tasks.find(s.parent.id, task.id)!
+
+    expect(again.runners).toHaveLength(2)
+    expect(again.job.cwd).toBe(task.header.cwd)
+    await expect(s.jobs.ended(again.job)).resolves.toMatchObject({ state: "exited", code: 0 })
   })
 
   it("a worktree with work in it is kept and described", async () => {

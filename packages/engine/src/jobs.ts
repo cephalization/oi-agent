@@ -203,6 +203,16 @@ export class Jobs {
         detached: true,
       })
 
+      // Even a failed spawn returns a ChildProcess and emits error on the next
+      // tick. Listen before checking pid, including when start throws below.
+      child.once("error", (error) => {
+        if (child.pid === undefined || !fs.existsSync(dir)) return
+
+        fs.appendFileSync(path.join(dir, "log"), `Failed to start command: ${error.message}\n`)
+        fs.writeFileSync(path.join(dir, "exit.tmp"), "127")
+        fs.renameSync(path.join(dir, "exit.tmp"), path.join(dir, "exit"))
+      })
+
       if (child.pid === undefined) {
         fs.rmSync(dir, { recursive: true, force: true })
         throw new Error("Failed to start command: bash could not be run")
@@ -225,7 +235,8 @@ export class Jobs {
       this.children.set(
         id,
         new Promise((resolve) => {
-          child.once("exit", () => resolve())
+          // close also fires after a spawn error, which need not emit exit.
+          child.once("close", () => resolve())
         }),
       )
 

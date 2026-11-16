@@ -442,23 +442,9 @@ export class Tasks {
     }
   }
 
-  /** Remove a finished task's worktree and branch when it changed nothing: there is nothing to merge or look at. */
-  tidy(task: Task): void {
-    const worktree = task.task.worktree
-
-    if (worktree === undefined || !fs.existsSync(worktree.path)) return
-
-    const { commits, dirty } = this.changes(worktree)
-
-    if (commits > 0 || dirty) return
-
-    // `--git-common-dir` is the delegator's `.git`: the worktree is removed from there, not from inside itself.
-    const common = git(worktree.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-
-    if (common === undefined) return
-
-    git(path.dirname(common), ["worktree", "remove", worktree.path])
-    git(path.dirname(common), ["branch", "-D", worktree.branch])
+  /** Completion must not remove the cwd needed by a later task_message or resume. */
+  tidy(_task: Task): void {
+    // Kept as a lifecycle hook for callers; worktrees and branches need explicit cleanup.
   }
 
   /** Where a task's work is, for the delegating agent. */
@@ -467,7 +453,7 @@ export class Tasks {
 
     if (worktree === undefined) return undefined
 
-    if (!fs.existsSync(worktree.path)) return "worktree: removed, since the task changed nothing"
+    if (!fs.existsSync(worktree.path)) return `worktree: missing at ${worktree.path}`
 
     const { commits, dirty } = this.changes(worktree)
 

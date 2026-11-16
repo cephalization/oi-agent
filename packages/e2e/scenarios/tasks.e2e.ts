@@ -171,7 +171,7 @@ describe("delegated tasks", () => {
           "run",
           "--yolo",
           "--no-wait",
-          delegate("pick a word", "shared", "Reply with exactly: the word is heron"),
+          delegate("pick a word", "worktree", "Reply with exactly: the word is heron"),
         ]),
       )
 
@@ -189,8 +189,8 @@ describe("delegated tasks", () => {
       )
 
       expect(first?.output?.toLowerCase()).toContain("heron")
-      expect(child.cwd).toBe(fs.realpathSync(s.sandbox.cwd))
-      expect(child.task?.worktree).toBeUndefined()
+      expect(child.cwd).toBe(child.task?.worktree?.path)
+      expect(fs.existsSync(child.cwd)).toBe(true)
 
       // The next process delivers the result, then sends the task a follow-up, which starts a new runner.
       expectOk(
@@ -208,6 +208,8 @@ describe("delegated tasks", () => {
       const message = s.spans.tools(parent).find((call) => call.name === "task_message")?.span
 
       expect(again[1]?.output).toContain("HERON")
+      expect(fs.existsSync(child.cwd)).toBe(true)
+      expect(git(child.cwd, "branch", "--show-current")).toBe(child.task?.worktree?.branch)
       expect(readMetadata(again[1]!.root).origin).toEqual({
         session_id: parent,
         trace_id: message?.context.trace_id,

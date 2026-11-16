@@ -136,7 +136,10 @@ These work best on the session you are in, because the evidence is right there.
   results that arrived while nobody was there are delivered then. `oi run`
   waits for the jobs it started unless given `--no-wait`. The log lives
   outside the session tree because it is raw output that grows; the session
-  tree holds only scrubbed, immutable files.
+  tree holds only scrubbed, immutable files. If the shell cannot start (for
+  example, its working directory was deleted), the tool reports failure,
+  removes the incomplete job and handles Node's later spawn-error event
+  without crashing the process.
 - **"What is a subagent?"** Another oi agent with a session of its own
   (`source/engine/src/tasks.ts`). `delegate` creates the session with a
   header that names the `TOOL` span which delegated it (`parent`) and the
@@ -157,9 +160,11 @@ These work best on the session you are in, because the evidence is right there.
   (`linksOf` in `source/engine/src/export/otlp.ts`).
   With `isolation: "worktree"` the task works in `git worktree` at
   `<home>/worktrees/<task>` on branch `oi/<title>-<task>`, started from the
-  delegator's commit; one that changed nothing is removed when the task
-  ends. `task_message` writes another prompt to the task's inbox and starts
-  a new runner if the last one has left, so a follow-up continues with
+  delegator's commit. Its worktree and branch stay even when it changed
+  nothing: a finished task can still receive a follow-up or be resumed.
+  Cleanup is explicit, not part of delivering its result. `task_message`
+  writes another prompt to the task's inbox and starts a new runner if the
+  last one has left, so a follow-up continues with
   everything the task knew. `task_cancel` kills the runner's process group
   and the task's own jobs. A subagent's session has no delegate tools.
   A tool call a subagent needs a person for cannot be asked in a process
@@ -388,6 +393,11 @@ These work best on the session you are in, because the evidence is right there.
   then delete the folder and leave a marker in `<home>/remote/`, outside the
   session tree. Opening it imports it again; leaving moves it back. The fold
   never reads Phoenix directly: a session is always run from local files.
+  Moving out is blocked by open spans, unread inbox entries, or background
+  jobs (including task runners) still running or awaiting a report. A task
+  session also checks its runner in the delegator's jobs. These blockers are
+  checked again after export and remote verification, immediately before
+  deletion, so a result arriving during export stays on disk for delivery.
 - **"What happens when I switch model or effort mid-session?"** `/model` and
   Shift+Tab call `Engine.configure` (`source/engine/src/engine.ts`), which
   builds a new model for the next turn; no span changes. `/model` also
