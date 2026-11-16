@@ -12,7 +12,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { Effect, Match, Option, Schema } from "effect"
 import { projectDir } from "./config.ts"
-import { loadSession } from "./fold.ts"
+import { branchTo, loadSession } from "./fold.ts"
 import {
   type AnnotationBody,
   type AnnotationFile,
@@ -70,6 +70,8 @@ const common = {
 export const LlmEval = Schema.Struct({
   ...common,
   kind: Schema.Literal("llm"),
+  /** Outcome checks only: defer until directly launched background work is delivered. */
+  wait_for_background: Schema.optionalKey(Schema.Boolean),
   /** What the judge should decide, in plain language. */
   instructions: Schema.String,
   /** Label to score, for example `{ "pass": 1, "fail": 0 }`. */
@@ -151,6 +153,7 @@ export const EvalInput = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   kind: Schema.Literals(["llm", "code", "threshold"]),
+  wait_for_background: Schema.optionalKey(Schema.Boolean),
   metric: Schema.optionalKey(Metric),
   max: Schema.optionalKey(Schema.Finite),
   instructions: Schema.optionalKey(Schema.String),
@@ -179,10 +182,19 @@ export const definitionFrom = (input: typeof EvalInput.Type): EvalDefinition | s
     return `Unknown applicability predicate ${unknown.join(", ")}: use writes, commit, tool:<name> or always.`
   const scoped = { ...common, applicability }
 
+  if (input.wait_for_background === true && input.kind !== "llm")
+    return "wait_for_background is only supported for llm outcome checks."
+
   if (input.kind === "llm") {
     return input.instructions === undefined
       ? "An llm evaluator needs instructions."
-      : { ...scoped, kind: "llm", instructions: input.instructions, choices: { pass: 1, fail: 0 } }
+      : {
+          ...scoped,
+          kind: "llm",
+          wait_for_background: input.wait_for_background ?? false,
+          instructions: input.instructions,
+          choices: { pass: 1, fail: 0 },
+        }
   }
 
   if (input.kind === "threshold") {
@@ -503,8 +515,10 @@ const annotationFor = (
   verdict: Verdict,
   gate: Verdict,
   rechecks: string | undefined,
+  deferredFrom: string | undefined,
 ): AnnotationFile => {
-  const failed = verdict.label !== "skipped" && definition.fail_labels.includes(verdict.label)
+  const failed =
+    !["skipped", "pending"].includes(verdict.label) && definition.fail_labels.includes(verdict.label)
 
   const body: MutableAnnotation = {
     name: definition.name,
@@ -515,9 +529,12 @@ const annotationFor = (
       failed,
       feedback: definition.feedback && failed,
       skipped: verdict.label === "skipped",
+      pending: verdict.label === "pending",
       applicability: gate.explanation ?? "",
     },
   }
+
+  if (deferredFrom !== undefined) body.metadata = { ...body.metadata, deferred_from: deferredFrom }
 
   if (rechecks !== undefined) body.metadata = { ...body.metadata, rechecks }
 
@@ -542,20 +559,26 @@ const runOne = (
   definition: EvalDefinition,
   record: TurnRecord,
   rechecks?: string,
+  deferredFrom?: string,
+  waiting?: boolean,
 ): Effect.Effect<AnnotationFile | undefined> =>
   Effect.gen(function* () {
     const report = yield* reporterFor(runtime, sessionId)
     const gate = applicabilityFor(definition.applicability, record)
 
-    const verdict =
-      gate.label === "skipped"
+    const verdict = waiting
+      ? {
+          label: "pending",
+          explanation: "Waiting for results of directly launched background work to be delivered.",
+        }
+      : gate.label === "skipped"
         ? gate
         : yield* Effect.promise(() => evaluate(runtime, definition, record, report))
 
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_VALUE, JSON.stringify(verdict))
     yield* Effect.annotateCurrentSpan(OI.OUTPUT_MIME, "application/json")
 
-    const annotation = annotationFor(sessionId, traceId, definition, verdict, gate, rechecks)
+    const annotation = annotationFor(sessionId, traceId, definition, verdict, gate, rechecks, deferredFrom)
 
     runtime.store.writeAnnotation(annotation)
 
@@ -646,13 +669,123 @@ const recheckRecord = (
   previous: AnnotationFile,
   record: TurnRecord,
 ): TurnRecord => {
-  const original = turnRecord(runtime.store, sessionId, previous.target.trace_id ?? "")
+  const deferred = previous.annotation.metadata?.["deferred_from"]
+
+  const original = Schema.is(Schema.String)(deferred)
+    ? backgroundOutcome(runtime, sessionId, deferred, previous.target.trace_id ?? "").record
+    : turnRecord(runtime.store, sessionId, previous.target.trace_id ?? "")
 
   return {
     ...record,
     facts: `${record.facts} Rechecks failed result ${previous.id}: ${previous.annotation.explanation ?? ""}`,
     judged: `[failing turn]\n${original.judged ?? original.transcript}\n\n[corrective turn]\n${record.judged ?? record.transcript}`,
   }
+}
+
+type BackgroundRef = EndedSpan["context"]
+
+/** Only successful launches represented by durable TOOL metadata, not status/steering calls. */
+const backgroundLaunches = (store: Store, sessionId: string, traceId: string): Array<BackgroundRef> =>
+  store
+    .readTrace(sessionId, traceId)
+    .ended.filter((span) => {
+      if (kindOf(span) !== "TOOL") return false
+      const metadata = readMetadata(span)
+
+      return (
+        metadata.job !== undefined ||
+        (metadata.task !== undefined && (stringAttr(span, OI.TOOL_NAME) ?? span.name) === "delegate")
+      )
+    })
+    .map((span) => span.context)
+
+const sameLaunch = (left: BackgroundRef, right: BackgroundRef): boolean =>
+  left.trace_id === right.trace_id && left.span_id === right.span_id
+
+/**
+ * Persisted deliveries are the completion boundary; raw job logs are never judge evidence.
+ * A result claimed by a polling tool without a `delivers` edge remains pending, conservatively.
+ */
+const backgroundOutcome = (runtime: EvalRuntime, sessionId: string, origin: string, traceId: string) => {
+  const launches = backgroundLaunches(runtime.store, sessionId, origin)
+  const branch = branchTo(loadSession(runtime.store, sessionId), traceId)
+
+  const deliveries = branch.flatMap((turn) =>
+    (readMetadata(turn.root).delivers ?? [])
+      .filter((delivery) => launches.some((launch) => sameLaunch(launch, delivery)))
+      .map((delivery) => ({
+        launch: linkedEvidence(runtime.store, {
+          session_id: sessionId,
+          trace_id: delivery.trace_id,
+          span_id: delivery.span_id,
+        }),
+        result: delivery.result === undefined ? undefined : linkedEvidence(runtime.store, delivery.result),
+        delivered_in: turn.trace_id,
+        // Job results live in the delivery input; child reports have a direct result link too.
+        input: truncate(stringAttr(turn.root, OI.INPUT_VALUE) ?? "", 8000),
+        report: truncate(stringAttr(turn.root, OI.OUTPUT_VALUE) ?? "", 2000),
+      })),
+  )
+
+  const waiting = launches.some(
+    (launch) => !deliveries.some((delivery) => sameLaunch(launch, delivery.launch)),
+  )
+
+  const original = turnRecord(runtime.store, sessionId, origin)
+  const evidence = JSON.stringify(deliveries, null, 2)
+
+  const record: TurnRecord = {
+    ...original,
+    judged: `[original launch turn]\n${original.judged ?? original.transcript}\n\n[delivered outcomes; context, not new initiations]\n${evidence}`,
+    transcript: `${original.transcript}\n\n[delivered outcomes]\n${evidence}`,
+  }
+
+  return { waiting, record }
+}
+
+/** One independent obligation per launch turn, recoverable solely from annotations and spans. */
+const backgroundEvals = (
+  runtime: EvalRuntime,
+  sessionId: string,
+  traceId: string,
+  definition: LlmEval,
+  record: TurnRecord,
+): Effect.Effect<Array<AnnotationFile | undefined>> | undefined => {
+  const branch = new Set(
+    branchTo(loadSession(runtime.store, sessionId), traceId).map((turn) => turn.trace_id),
+  )
+
+  const latest = new Map<string, AnnotationFile>()
+
+  for (const annotation of runtime.store.listAnnotations(sessionId)) {
+    const origin = annotation.annotation.metadata?.["deferred_from"]
+
+    if (
+      annotation.annotation.name !== definition.name ||
+      !branch.has(annotation.target.trace_id ?? "") ||
+      !Schema.is(Schema.String)(origin) ||
+      !branch.has(origin)
+    )
+      continue
+    latest.set(origin, annotation)
+  }
+
+  const origins = [...latest].flatMap(([origin, annotation]) =>
+    annotation.annotation.label === "pending" ? [origin] : [],
+  )
+
+  const launches = backgroundLaunches(runtime.store, sessionId, traceId)
+  const applicable = applicabilityFor(definition.applicability, record).label !== "skipped"
+
+  if (launches.length > 0 && applicable && !origins.includes(traceId)) origins.push(traceId)
+
+  if (origins.length === 0) return undefined
+
+  return Effect.forEach(origins, (origin) => {
+    const outcome = backgroundOutcome(runtime, sessionId, origin, traceId)
+
+    return runOne(runtime, sessionId, traceId, definition, outcome.record, undefined, origin, outcome.waiting)
+  })
 }
 
 const failed = (annotation: AnnotationFile): boolean => annotation.annotation.metadata?.["failed"] === true
@@ -674,6 +807,12 @@ export const runEvals = async (
     Effect.forEach(
       definitions,
       (definition) => {
+        if (definition.kind === "llm" && definition.wait_for_background === true) {
+          const background = backgroundEvals(runtime, sessionId, traceId, definition, record)
+
+          if (background !== undefined) return background
+        }
+
         const branch = new Set(loadSession(runtime.store, sessionId).turns.map((turn) => turn.trace_id))
 
         const previous = runtime.store
@@ -683,7 +822,8 @@ export const runEvals = async (
               a.annotation.name === definition.name &&
               a.target.trace_id !== traceId &&
               branch.has(a.target.trace_id ?? "") &&
-              a.annotation.label !== "skipped",
+              a.annotation.label !== "skipped" &&
+              a.annotation.label !== "pending",
           )
           .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
 
@@ -699,9 +839,9 @@ export const runEvals = async (
             obligation(definition),
             recheckRecord(runtime, sessionId, previous, record),
             previous.id,
-          )
+          ).pipe(Effect.map((result) => [result]))
 
-        return runOne(runtime, sessionId, traceId, definition, record)
+        return runOne(runtime, sessionId, traceId, definition, record).pipe(Effect.map((result) => [result]))
       },
       { concurrency: 4 },
     ),
@@ -709,15 +849,24 @@ export const runEvals = async (
 
   const annotations: Array<AnnotationFile> = []
 
-  for (const [index, annotation] of results.entries()) {
+  for (const [index, group] of results.entries()) {
     const definition = definitions[index]
 
-    if (annotation === undefined || definition === undefined) continue
+    if (definition === undefined) continue
 
-    annotations.push(annotation)
+    for (const annotation of group) {
+      if (annotation === undefined) continue
+      annotations.push(annotation)
 
-    if (definition.learn && failed(annotation)) {
-      await Effect.runPromise(learn(runtime, sessionId, cwd, definition, annotation, record))
+      if (definition.learn && failed(annotation)) {
+        const origin = annotation.annotation.metadata?.["deferred_from"]
+
+        const learnedRecord = Schema.is(Schema.String)(origin)
+          ? backgroundOutcome(runtime, sessionId, origin, traceId).record
+          : record
+
+        await Effect.runPromise(learn(runtime, sessionId, cwd, definition, annotation, learnedRecord))
+      }
     }
   }
 

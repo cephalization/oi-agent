@@ -257,7 +257,7 @@ export class Transcript {
       this.passes = 0
     }
 
-    if (file.annotation.label === "skipped") return
+    if (["skipped", "pending"].includes(file.annotation.label ?? "")) return
 
     if (file.annotation.name !== "steering" && !failedVerdict(file)) {
       this.passes += 1

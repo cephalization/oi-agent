@@ -124,6 +124,25 @@ describe("evaluators", () => {
     expect(loadEvals(cwd).map((definition) => definition.name)).toEqual(["no_rm_rf"])
   })
 
+  it("lets create_eval explicitly opt an LLM outcome check into waiting", async () => {
+    const { engine, sessionId, cwd } = setup((_call, step) =>
+      step === 0
+        ? use("create_eval", {
+            name: "background_outcome",
+            description: "Background verification succeeds.",
+            kind: "llm",
+            instructions: "The directly launched verification completed successfully.",
+            wait_for_background: true,
+            learn: false,
+          })
+        : say("Created the outcome check."),
+    )
+
+    await engine.submit(sessionId, { text: "Create an outcome-dependent check.", userId: "tony" })
+    await engine.idle(sessionId)
+    expect(loadEvals(cwd)[0]).toMatchObject({ name: "background_outcome", wait_for_background: true })
+  })
+
   it("annotates a failing turn, feeds it back, and learns a rule", async () => {
     const seen: Array<ReadonlyArray<Json>> = []
 
