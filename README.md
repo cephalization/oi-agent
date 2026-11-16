@@ -292,6 +292,12 @@ Phoenix, a failure is shown to the agent at the start of its next turn, and
 the failure is distilled into a standing rule in that folder's `rules.md`.
 In the terminal a failure is printed in full; passes are only counted in the
 status bar, and `/verdicts` shows every verdict on the last reviewed turn.
+A check runs only on turns it applies to: oi records when it applies
+(`writes` for observed file changes, `commit` for an observed Git commit,
+`tool:<name>`, or every turn) separately from what counts as a violation,
+and shows the trigger when it saves the check. "Open a PR after every
+commit" skips a turn spent discussing issues, without a judge call; the skip
+is recorded as `skipped`, not a pass. When oi cannot tell, the check runs.
 Nothing is written into the project itself. `/revert`
 undoes the latest rule.
 

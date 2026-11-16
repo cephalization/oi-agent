@@ -40,6 +40,8 @@ OpenInference team, not proposals.
 | 16  | Which configured endpoint served a call                                 | `metadata.provider`, also put in `llm.provider`                                                                   | `llm.provider` has well-known values (`openai`, `anthropic`, …); a self-hosted or third-party OpenAI-compatible server has none, so its configured name is used.      |
 
 | 17 | Which harness policy asked a decision model | `metadata.purpose` on the `DECISION` span | `approval` or `steering`; the standard attributes describe the model and usage, not the requesting policy. |
+| 18 | What a tool call did to the workspace | `metadata.evidence` (`writes`, `commit`: `yes`/`no`/`unknown`) on the `TOOL` span | A `TOOL` span records input and output, not observed side effects; a shell command's text does not say whether it changed files or made a commit. |
+| 19 | An evaluation that did not apply | annotation label `skipped`, with `metadata.skipped`, `metadata.applicability` (trigger and evidence) and, for a recheck, `metadata.rechecks` | Annotations have a label and a score but no notion of "not applicable"; a skip is a label by convention, never counted as a pass or a failure. |
 
 Decision models use OpenInference's `DECISION` span kind and `decision.*`
 model/token attributes without any `llm.*` attributes. The harness-specific
