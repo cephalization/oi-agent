@@ -1,5 +1,11 @@
 # oi-agent
 
+## 0.7.0
+
+### Minor Changes
+
+- [#38](https://github.com/cephalization/oi-agent/pull/38) [`9313fd9`](https://github.com/cephalization/oi-agent/commit/9313fd9097b666aecc56ffc9d8aa59c6d63466f6) Thanks [@cephalization](https://github.com/cephalization)! - Passing evaluators no longer print a line each after every turn: the status bar shows how many passed (`◆ 3 evals passed`), and only failures are printed in full. The new `/verdicts` command shows every verdict on the last reviewed turn, with its label, score, explanation and metadata.
+
 ## 0.6.0
 
 ### Minor Changes
