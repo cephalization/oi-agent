@@ -37,9 +37,9 @@ Before opening a PR:
    live on the cheap default models (`chatgpt/gpt-5.6-luna`, and
    `claude-haiku-5-5` where Anthropic is needed); scenario files run four at
    a time and the whole suite takes two to three minutes. Do not switch
-   scenarios to expensive models. From oi's bash tool, pass
-   `timeout_ms: 600000`: the default two minutes kills the suite partway
-   through.
+   scenarios to expensive models. From oi's bash tool, start the suite
+   with `background: true`: its result is delivered when it finishes, and
+   the full output is in the job's log.
    If the change touches steering detection, learning from corrections or
    evaluators, also run `pnpm e2e:scored` (about three more minutes) and
    report its scores: the scored experiments are not part of `pnpm e2e`.
