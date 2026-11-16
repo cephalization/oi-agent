@@ -1,7 +1,4 @@
-import * as fs from "node:fs"
 import { createServer } from "node:http"
-import * as os from "node:os"
-import * as path from "node:path"
 import { Effect, Exit, Layer, Schema } from "effect"
 import { describe, expect, it } from "vite-plus/test"
 import { approveAll, runTurn, type TurnEnv, type TurnInput } from "../src/agent.ts"
@@ -11,26 +8,9 @@ import { contextFor, loadSession } from "../src/fold.ts"
 import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { Model, type ModelCall, scriptedModel } from "../src/model.ts"
 import { openaiModel, type OpenAISettings } from "../src/openai.ts"
-import { jobsOf } from "../src/jobs.ts"
-import { Redactor } from "../src/redact.ts"
 import { builtinTools } from "../src/tools.ts"
 import type { Json } from "../src/wire.ts"
-import { tempStore } from "./helpers.ts"
-
-const setup = (): TurnEnv => {
-  const store = tempStore()
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-agent-cwd-"))
-  const session = store.createSession(cwd)
-
-  return {
-    store,
-    sessionId: session.id,
-    cwd,
-    tools: builtinTools,
-    jobs: jobsOf(store),
-    redactor: new Redactor(),
-  }
-}
+import { tempEnv } from "./helpers.ts"
 
 const run = (
   env: TurnEnv,
@@ -108,7 +88,7 @@ const anthropicText = (text: string): Json => ({
 
 describe("OpenAI dialects through the agent loop", () => {
   it("runs a Chat Completions turn with a tool call, rebuilding each request from disk", async () => {
-    const env = setup()
+    const env = tempEnv()
     const seen: Array<ReadonlyArray<Json>> = []
 
     await run(env, turn("say hi"), openaiChat, (call, step) => {
@@ -144,7 +124,7 @@ describe("OpenAI dialects through the agent loop", () => {
   })
 
   it("replays Responses output items without ids, keeping encrypted reasoning", async () => {
-    const env = setup()
+    const env = tempEnv()
     const seen: Array<ReadonlyArray<Json>> = []
 
     await run(env, turn("say hi"), openaiResponses, (call, step) => {
@@ -173,7 +153,7 @@ describe("OpenAI dialects through the agent loop", () => {
 
 describe("switching provider mid-session", () => {
   it("carries text, tool calls and results across dialects, and drops reasoning", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     await run(env, turn("list files"), anthropicMessages, (_call, step) =>
       step === 0 ? anthropicCall("toolu_1", "echo from-claude") : anthropicText("One file."),
@@ -218,7 +198,7 @@ describe("switching provider mid-session", () => {
   })
 
   it("leaves a conversation in its own dialect untouched", async () => {
-    const env = setup()
+    const env = tempEnv()
 
     // One tool call, then an answer: a model that only ever calls tools runs the loop to its step limit.
     await run(env, turn("hi"), anthropicMessages, (_call, step) =>

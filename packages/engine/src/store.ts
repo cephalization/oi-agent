@@ -223,13 +223,19 @@ export class Store {
 
   // --- sessions -----------------------------------------------------------
 
-  createSession(cwd: string, id: string = newSessionId()): SessionHeader {
+  /** `delegated` makes it a subagent's session: who delegated it, and what the task is. */
+  createSession(
+    cwd: string,
+    id: string = newSessionId(),
+    delegated?: Required<Pick<SessionHeader, "parent" | "task">>,
+  ): SessionHeader {
     const header: SessionHeader = {
       format: FORMAT_VERSION,
       id,
       created_at: nsToIso(nowNs()),
       cwd,
       device: this.device(),
+      ...delegated,
     }
 
     writeAtomic(path.join(this.sessionDir(id), "session.json"), printHeader(header), true)

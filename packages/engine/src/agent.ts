@@ -11,14 +11,22 @@ import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
 import { sessionIdForTrace } from "./ids.ts"
 import { contextFor } from "./fold.ts"
-import { type AnnotationFile, type EngineMetadata, OI, writeMetadata } from "./format.ts"
+import {
+  type AnnotationFile,
+  type EngineMetadata,
+  OI,
+  type SessionSpanRef,
+  type TaskHeader,
+  writeMetadata,
+} from "./format.ts"
 import { Model, ModelError } from "./model.ts"
 import { systemPrompt } from "./prompt.ts"
 import type { Redactor } from "./redact.ts"
 import { rulesVersion } from "./rules.ts"
 import type { Jobs } from "./jobs.ts"
 import type { Store } from "./store.ts"
-import type { ToolSpec } from "./tools.ts"
+import type { Tasks } from "./tasks.ts"
+import type { ToolContext, ToolSpec } from "./tools.ts"
 import { DiskSpan, diskTracer } from "./tracer.ts"
 import type { Reply, ToolCall } from "./dialect.ts"
 import type { Json } from "./wire.ts"
@@ -85,6 +93,10 @@ export interface TurnEnv {
   readonly cwd: string
   readonly tools: ReadonlyArray<ToolSpec>
   readonly jobs: Jobs
+  readonly tasks: Tasks
+  readonly models: ToolContext["models"]
+  /** Set when this session is a subagent's: the task it was delegated. */
+  readonly task?: TaskHeader | undefined
   readonly redactor: Redactor
   /** The agent's shipped source and docs, if available, so it can explain itself. */
   readonly selfDir?: string | undefined
@@ -98,6 +110,8 @@ export interface TurnInput {
   readonly operation?: "compact" | "handoff" | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
+  /** The `TOOL` span in another session that sent this turn's prompt. */
+  readonly origin?: SessionSpanRef | undefined
   /** Results of background work that this turn's text delivers to the model. */
   readonly delivers?: EngineMetadata["delivers"]
   /** Eval feedback to put in front of the user's text. */
@@ -134,6 +148,7 @@ const modelStep = (env: TurnEnv, traceId: string) =>
           env.selfDir === undefined
             ? undefined
             : { selfDir: env.selfDir, sessionDir: env.store.sessionDir(env.sessionId) },
+          { delegates: env.tools.some((tool) => tool.name === "delegate"), task: env.task },
         ),
         tools: env.tools,
         messages: contextFor(env.store, env.sessionId, traceId, model.dialect),
@@ -280,9 +295,14 @@ const toolStep = (env: TurnEnv, use: ToolCall, userId: string, prompt: string) =
       sessionId: env.sessionId,
       span: { trace_id: span.traceId, span_id: span.spanId },
       jobs: env.jobs,
+      tasks: env.tasks,
+      userId,
+      models: env.models,
     })
 
     if (outcome.job !== undefined) span.patchMetadata({ job: outcome.job })
+
+    if (outcome.task !== undefined) span.patchMetadata({ task: outcome.task })
 
     span.patchMetadata({
       evidence: tool.mutates
@@ -427,6 +447,8 @@ export const runTurn = (
   if (input.inboxId !== undefined) metadata.inbox_id = input.inboxId
 
   if (input.delivers !== undefined) metadata.delivers = input.delivers
+
+  if (input.origin !== undefined) metadata.origin = input.origin
 
   if (injected.length > 0) metadata.injected = injected
 

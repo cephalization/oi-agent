@@ -71,12 +71,45 @@ export const Device = Schema.Struct({ id: Schema.String, name: Schema.String })
 
 export type Device = typeof Device.Type
 
+/** A span in a session, named from another session. */
+export const SessionSpanRef = Schema.Struct({
+  session_id: Schema.String,
+  trace_id: Schema.String,
+  span_id: Schema.String,
+})
+
+export type SessionSpanRef = typeof SessionSpanRef.Type
+
+/** What a session was delegated to do, on the header of a subagent's session. */
+export const TaskHeader = Schema.Struct({
+  /** Short id the delegating agent and the user call the task by. */
+  id: Schema.String,
+  title: Schema.String,
+  /** `worktree`: its own git worktree and branch. `shared`: the delegating session's directory. */
+  isolation: Schema.Literals(["worktree", "shared"]),
+  /** `provider/model` it was started on. */
+  model: Schema.String,
+  worktree: Schema.optionalKey(
+    Schema.Struct({
+      path: Schema.String,
+      branch: Schema.String,
+      /** The commit the branch started from. */
+      base: Schema.String,
+    }),
+  ),
+})
+
+export type TaskHeader = typeof TaskHeader.Type
+
 export const SessionHeader = Schema.Struct({
   format: Schema.Literal(FORMAT_VERSION),
   id: Schema.String,
   created_at: Schema.String,
   cwd: Schema.String,
   device: Device,
+  /** On a subagent's session: the `TOOL` span, in another session, that delegated it. */
+  parent: Schema.optionalKey(SessionSpanRef),
+  task: Schema.optionalKey(TaskHeader),
 })
 
 export type SessionHeader = typeof SessionHeader.Type
@@ -119,10 +152,12 @@ export type AnnotationFile = typeof AnnotationFile.Type
 
 /** Background work whose result is being delivered, and the `TOOL` span that started it. */
 export const Delivery = Schema.Struct({
-  kind: Schema.Literal("job"),
+  kind: Schema.Literals(["job", "task"]),
   id: Schema.String,
   trace_id: Schema.String,
   span_id: Schema.String,
+  /** For a task: the root span of the subagent's last turn, whose output is the result. */
+  result: Schema.optionalKey(SessionSpanRef),
 })
 
 export type Delivery = typeof Delivery.Type
@@ -140,6 +175,8 @@ export const InboxFile = Schema.Struct({
   previous_trace_id: Schema.optionalKey(Schema.String),
   /** Set when this is a result, not a prompt: what finished. */
   delivers: Schema.optionalKey(Delivery),
+  /** Set when another session sent this prompt (a brief, a follow-up): the `TOOL` span that sent it. */
+  origin: Schema.optionalKey(SessionSpanRef),
 })
 
 export type InboxFile = typeof InboxFile.Type
@@ -275,6 +312,10 @@ export const EngineMetadata = Schema.Struct({
    * that started the work.
    */
   delivers: Schema.optionalKey(Schema.Array(Schema.Struct({ ...Delivery.fields, inbox_id: Schema.String }))),
+  /** On a turn's root span: the `TOOL` span, in another session, that sent this turn's prompt. */
+  origin: Schema.optionalKey(SessionSpanRef),
+  /** On a `TOOL` span that delegated or steered a task: the task and its session. */
+  task: Schema.optionalKey(Schema.Struct({ id: Schema.String, session_id: Schema.String })),
   /** On a `TOOL` span: the job its command became when it outlived the call. */
   job: Schema.optionalKey(
     Schema.Struct({

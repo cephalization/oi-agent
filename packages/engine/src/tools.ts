@@ -8,6 +8,7 @@ import { Effect, Option, Schema } from "effect"
 import type { EngineMetadata } from "./format.ts"
 import { describeState, type Job, jobReport, LogReader } from "./jobs.ts"
 import type { Jobs } from "./jobs.ts"
+import type { Tasks } from "./tasks.ts"
 import type { Json } from "./wire.ts"
 
 export interface ToolContext {
@@ -18,6 +19,11 @@ export interface ToolContext {
   /** The `TOOL` span this call runs under. */
   readonly span: Job["tool"]
   readonly jobs: Jobs
+  readonly tasks: Tasks
+  /** Who started the turn. */
+  readonly userId: string
+  /** `provider/model` a subagent runs on: the session's own, and the configured cheap one (empty: none). */
+  readonly models: () => { readonly default: string; readonly cheap: string }
 }
 
 export interface ToolOutcome {
@@ -25,6 +31,8 @@ export interface ToolOutcome {
   readonly isError: boolean
   /** The background job the call left running, for the `TOOL` span's metadata. */
   readonly job?: NonNullable<EngineMetadata["job"]>
+  /** The task the call delegated or spoke to, for the `TOOL` span's metadata. */
+  readonly task?: NonNullable<EngineMetadata["task"]>
 }
 
 export interface ToolSpec {
@@ -365,6 +373,7 @@ const jobStatus = defineTool({
       if (input.id === undefined) {
         const lines = jobs
           .list(context.sessionId)
+          .filter((job) => job.task === undefined)
           .map((job) => `${job.id}  ${describeState(job, jobs.state(job))}  ${job.command}`)
 
         return ok(lines.length === 0 ? "No background jobs in this session." : lines.join("\n"))
@@ -372,7 +381,8 @@ const jobStatus = defineTool({
 
       const job = jobs.read(context.sessionId, input.id)
 
-      if (job === undefined || !jobs.isBackground(job)) return unknownJob(input.id)
+      // A subagent's runner is a task, with tools of its own.
+      if (job === undefined || job.task !== undefined || !jobs.isBackground(job)) return unknownJob(input.id)
 
       const state =
         input.wait_ms === undefined
@@ -403,7 +413,8 @@ const jobKill = defineTool({
       const { jobs } = context
       const job = jobs.read(context.sessionId, input.id)
 
-      if (job === undefined || !jobs.isBackground(job)) return unknownJob(input.id)
+      // A subagent's runner is a task, with tools of its own.
+      if (job === undefined || job.task !== undefined || !jobs.isBackground(job)) return unknownJob(input.id)
 
       jobs.kill(job)
       jobs.claim(job)

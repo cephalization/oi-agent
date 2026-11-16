@@ -42,9 +42,11 @@ export const JobFile = Schema.Struct({
   started_at: Schema.String,
   /** The `TOOL` span that started it. */
   tool: SpanRef,
+  /** Set when the command is a subagent's runner: the task and its session. */
+  task: Schema.optionalKey(Schema.Struct({ id: Schema.String, session_id: Schema.String })),
 })
 
-export type Job = typeof JobFile.Type
+export type Job = { -readonly [K in keyof typeof JobFile.Type]: (typeof JobFile.Type)[K] }
 
 const parseJob = parser(JobFile)
 const printJob = printer(JobFile)
@@ -63,6 +65,7 @@ export interface JobStart {
   readonly command: string
   readonly cwd: string
   readonly tool: Job["tool"]
+  readonly task?: Job["task"]
 }
 
 /**
@@ -215,6 +218,8 @@ export class Jobs {
         tool: input.tool,
       }
 
+      if (input.task !== undefined) job.task = input.task
+
       fs.writeFileSync(path.join(dir, "job.json"), printJob(job))
 
       this.children.set(
@@ -318,6 +323,11 @@ export class Jobs {
     } catch {
       // The process group already exited.
     }
+  }
+
+  /** Stop every job of a session that is still running. */
+  killAll(sessionId: string): void {
+    for (const job of this.all(sessionId)) this.kill(job)
   }
 
   /** Forget a job whose tool call has read everything it needs. */
