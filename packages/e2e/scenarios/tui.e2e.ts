@@ -64,6 +64,19 @@ describe("interactive", () => {
       expect(used).toBe(calls.reduce((sum, count) => sum + count, 0))
       expect(used).toBeGreaterThan(context)
       expect(screen).not.toMatch(/\d tokens(?! in| across)/)
+
+      await term.line("/quit")
+      expect(await term.exited()).toBe(0)
+
+      const resumed = await s.tui(["-s", session])
+
+      await resumed.waitFor(/\d[\d.]*[kM]? context\b/)
+      await resumed.line("/session")
+
+      const restored = await resumed.waitFor(/Tokens used: \d+/)
+
+      expect(Number(/Context: (\d+) tokens/.exec(restored)?.[1])).toBe(context)
+      expect(Number(/Tokens used: (\d+)/.exec(restored)?.[1])).toBe(used)
     },
   )
 

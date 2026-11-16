@@ -157,9 +157,10 @@ These work best on the session you are in, because the evidence is right there.
   the latest agent `LLM` span's `llm.token_count.total` (prompt, cached
   tokens included, plus reply, which the next request also sends):
   `contextTokens` in `source/cli/src/tui/transcript.ts`. Evaluator,
-  steering and decision calls are separate traces and do not count. `/session`
-  also prints the session's total across every model call, which is what was
-  billed, with cached history counted again on each call.
+  steering and decision calls are separate traces and do not count.
+  `Transcript.replay` restores these counts from the stored spans when a session
+  is reopened. `/session` also prints the session's total across every model
+  call, with cached history counted again on each call.
 - **"Where do eval results show up?"** `Transcript.annotation`
   (`source/cli/src/tui/transcript.ts`) prints a failed verdict, and a
   `steering` note that something was learned, in the transcript. A pass is
