@@ -189,7 +189,8 @@ as text, tool calls and tool results. With the menu closed, Tab cycles approval 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/handoff`, `/session`, `/tour`, `/help` and `/quit`.
+`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`,
+`/session`, `/tour`, `/help` and `/quit`.
 
 The status bar keeps a session-id prefix visible, including after switching or
 handing off threads. Run `/session` to print the full copyable ID, an
@@ -226,6 +227,43 @@ need to check what was retained. Resume from disk or Phoenix uses the same
 checkpoint. Failed or interrupted compactions retain the original context.
 Run it between turns, before the context is too large to summarize. Automatic
 compaction is not implemented yet.
+
+### Delegated work: the conversation stays free
+
+oi hands most real work to subagents, so the conversation you are in stays
+open for thinking, planning and deciding. Ask for something that takes more
+than a quick answer and the agent writes a brief and delegates it; you can
+keep talking while it runs.
+
+- **A subagent is another oi agent with its own session.** It sees only its
+  brief. A task that changes files gets its own git worktree and branch
+  (under the oi home, never inside your project), so tasks running side by
+  side, and your checkout, do not collide. A task that changed nothing has
+  its worktree removed when it ends.
+- **Running work is listed above the status line**: each task and background
+  command, how long it has run, and what it is doing now.
+- **Results come back by themselves.** When a task or command finishes, the
+  agent is told and tells you what matters. If you are typing, the result
+  waits (`✉ 1 result waiting`) until you send or clear your prompt; `/inbox`
+  delivers what is waiting now. Several results arrive together as one digest.
+- **A task that needs you asks here.** A tool call a subagent needs approved
+  shows the usual prompt in your terminal, labelled with the task, and the
+  subagent waits.
+- **`/tasks`** lists every task with its state, branch and directory.
+  **`/attach <task>`** opens one: you watch it work and what you type goes to
+  it. **`/detach`** returns. You can also tell the agent to steer or stop a
+  task ("tell the test task to skip replay", "cancel it").
+- **Tasks outlive the terminal.** Quit or `/reload` and they keep running;
+  what finished while you were away is delivered when you come back.
+
+Slow commands work the same way without a subagent: a `bash` command that
+outlives its time limit keeps running in the background instead of being
+killed, and its result is delivered when it ends.
+
+Config: `"cheap_model": "provider/model"` is what the agent uses for
+mechanical tasks (running a suite, a rote edit); without it every task runs
+on the session's model. `"max_tasks"` (default 4) limits how many run at once.
+`oi run` waits for the work it started unless given `--no-wait`.
 
 ### Hand off work into a new thread
 

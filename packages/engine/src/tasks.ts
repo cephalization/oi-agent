@@ -47,7 +47,11 @@ export interface TaskOptions {
    * process cannot start subagents.
    */
   readonly runner?: ((sessionId: string, model: string) => string) | undefined
+  /** How many tasks one session may have running at once. */
+  readonly limit?: number | undefined
 }
+
+const DEFAULT_LIMIT = 4
 
 /** The session and `TOOL` span a task is delegated or spoken to from. */
 export interface Delegator {
@@ -300,6 +304,14 @@ export class Tasks {
   delegate(from: Delegator, brief: Brief): Task {
     if (!this.available) throw new Error("This oi cannot start subagents.")
 
+    const limit = this.options.limit ?? DEFAULT_LIMIT
+    const running = this.list(from.sessionId).filter((task) => this.jobs.state(task.job).state === "running")
+
+    if (running.length >= limit)
+      throw new Error(
+        `${running.length} tasks are already running, which is the limit (max_tasks). Delegate this one when a result is delivered, or do it here.`,
+      )
+
     const id = randomBytes(4).toString("hex")
     const worktree = brief.isolation === "worktree" ? this.worktree(from.cwd, id, brief.title) : undefined
 
@@ -337,6 +349,12 @@ export class Tasks {
     })
 
     this.wake(task, from.span)
+  }
+
+  /** A prompt typed to the task by a person looking at it, not sent by a tool call. */
+  say(task: Task, userId: string, text: string): void {
+    this.store.writeInbox(task.header.id, { user_id: userId, text })
+    this.wake(task)
   }
 
   /** Give a task with unread prompts a runner, if it has none. Returns whether one was started. */
@@ -416,29 +434,42 @@ export class Tasks {
     return `${status.state} after ${formatDuration(status.endedMs - status.startedMs)}`
   }
 
-  /**
-   * Remove a finished task's worktree and branch when it changed nothing.
-   * Returns a line about what is left for the delegating agent to know.
-   */
+  /** What a task's worktree holds beyond the commit it started from. */
+  private changes(worktree: NonNullable<TaskHeader["worktree"]>) {
+    return {
+      commits: Number(git(worktree.path, ["rev-list", "--count", `${worktree.base}..HEAD`]) ?? "0"),
+      dirty: (git(worktree.path, ["status", "--porcelain"]) ?? "") !== "",
+    }
+  }
+
+  /** Remove a finished task's worktree and branch when it changed nothing: there is nothing to merge or look at. */
+  tidy(task: Task): void {
+    const worktree = task.task.worktree
+
+    if (worktree === undefined || !fs.existsSync(worktree.path)) return
+
+    const { commits, dirty } = this.changes(worktree)
+
+    if (commits > 0 || dirty) return
+
+    // `--git-common-dir` is the delegator's `.git`: the worktree is removed from there, not from inside itself.
+    const common = git(worktree.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+
+    if (common === undefined) return
+
+    git(path.dirname(common), ["worktree", "remove", worktree.path])
+    git(path.dirname(common), ["branch", "-D", worktree.branch])
+  }
+
+  /** Where a task's work is, for the delegating agent. */
   private checkout(task: Task): string | undefined {
     const worktree = task.task.worktree
 
-    if (worktree === undefined || !fs.existsSync(worktree.path)) return undefined
+    if (worktree === undefined) return undefined
 
-    const commits = Number(git(worktree.path, ["rev-list", "--count", `${worktree.base}..HEAD`]) ?? "0")
-    const dirty = (git(worktree.path, ["status", "--porcelain"]) ?? "") !== ""
+    if (!fs.existsSync(worktree.path)) return "worktree: removed, since the task changed nothing"
 
-    if (commits === 0 && !dirty) {
-      // `--git-common-dir` is the delegator's `.git`: the worktree is removed from there, not from inside itself.
-      const common = git(worktree.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-
-      if (common !== undefined) {
-        git(path.dirname(common), ["worktree", "remove", worktree.path])
-        git(path.dirname(common), ["branch", "-D", worktree.branch])
-      }
-
-      return "worktree: removed, since the task changed nothing"
-    }
+    const { commits, dirty } = this.changes(worktree)
 
     return [
       `worktree: ${worktree.path}`,

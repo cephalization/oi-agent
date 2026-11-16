@@ -44,6 +44,8 @@ OpenInference team, not proposals.
 | 19 | An evaluation that did not apply | annotation label `skipped`, with `metadata.skipped`, `metadata.applicability` (trigger and evidence) and, for a recheck, `metadata.rechecks` | Annotations have a label and a score but no notion of "not applicable"; a skip is a label by convention, never counted as a pass or a failure. |
 | 20 | A tool call whose work continues after its span ends | `metadata.job = { id, log, reason }` on the `TOOL` span, which ends with the output so far; the command's log and exit code are files outside the session tree | A span has one end. OTel's answer for work that outlives its initiator is a new span linked to it, but a shell command has no span of its own to link from, and Phoenix does not store links. |
 | 21 | The result of background work arriving later, and which call it answers | an `inbox/` entry with `delivers = { kind, id, trace_id, span_id }`; the turn that hands it to the model has `user.id` `oi` and `metadata.delivers`, each item naming the inbox entry and the `TOOL` span that started the work | The consumer side of the same gap: this is what a span link from the delivering turn to the initiating span would say. Kept in `metadata` until links are stored end to end. Extends gap 4, which covers prompts waiting in the inbox. |
+| 22 | A session that another session started, and why | `parent = { session_id, trace_id, span_id }` and `task = { id, title, isolation, model, worktree? }` in `session.json`; `metadata.task = { id, session_id }` on the delegating `TOOL` span | `session.id` groups traces; nothing says one session came from a span in another. A subagent is a session, not a nested span, because it outlives the turn that starts it and has its own writer. |
+| 23 | A prompt sent by a tool call in another session (a brief, a follow-up) | `origin = { session_id, trace_id, span_id }` on the `inbox/` entry and in `metadata` on the root span of the turn that runs it | The producer side of gap 21, across sessions. `user.id` says whose turn it is, not which call sent it. |
 
 Decision models use OpenInference's `DECISION` span kind and `decision.*`
 model/token attributes without any `llm.*` attributes. The harness-specific
@@ -123,3 +125,16 @@ files and the fold's output:
   the flattened `llm.*` attributes. This would list exactly what gap 11 loses.
 - Images, documents, server-side tool blocks and compaction blocks.
 - Providers other than Anthropic.
+
+## Relations as span links
+
+Gaps 1, 21 and 23 are relations between spans that are not parent and child:
+the turn a turn continues, the tool call whose background work a turn
+delivers (and the subagent turn that produced the result), and the tool call
+in another session that sent a turn's prompt. OpenTelemetry states these as
+span links, and its guidance for work that outlives its initiator is a new
+trace linked to it, not a long-lived child. Span files keep the relations in
+`metadata`, since readers of the folder need them and Phoenix does not store
+links yet. The OTLP projection (`linksOf` in `export/otlp.ts`) also writes
+each one as a real link, with an `oi_agent.relation` attribute naming the
+metadata field it restates, so nothing is lost when a backend does keep them.

@@ -18,7 +18,7 @@ So "what is the agent's state?" has a literal answer: a folder.
 
 ```
 <sessions>/<session-id>/
-  session.json                                 where and when the session began
+  session.json                                 where and when the session began (and, for a subagent, who delegated it)
   traces/<trace-id>/                           one folder per user turn
     <start-ns>-<span-id>.json                  a finished span; never modified
     <start-ns>-<span-id>.open.json             a span still running
@@ -93,6 +93,8 @@ creation and crash recovery.
 | Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
 | The tools the model can call                     | `source/engine/src/tools.ts`                                         |
 | Commands that outlive their tool call            | `source/engine/src/jobs.ts`, `jobEnded` in `engine.ts`               |
+| Subagents: delegating, steering, approvals       | `source/engine/src/tasks.ts`, `task-tools.ts`, `serve` in `main.ts`  |
+| Watching a session another process writes        | `follow` in `source/engine/src/store.ts`                             |
 | The system prompt                                | `source/engine/src/prompt.ts`                                        |
 | Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
@@ -135,6 +137,53 @@ These work best on the session you are in, because the evidence is right there.
   waits for the jobs it started unless given `--no-wait`. The log lives
   outside the session tree because it is raw output that grows; the session
   tree holds only scrubbed, immutable files.
+- **"What is a subagent?"** Another oi agent with a session of its own
+  (`source/engine/src/tasks.ts`). `delegate` creates the session with a
+  header that names the `TOOL` span which delegated it (`parent`) and the
+  task (`task`: id, title, isolation, model, worktree), writes the brief
+  into the new session's `inbox/` with `origin` pointing at that span, and
+  starts a _runner_: a background job of the delegating session whose
+  command is `oi serve <session>`. `serve` (`source/cli/src/main.ts`) is a
+  headless process that runs what is in the session's inbox and exits when
+  nothing is left: no turn, no job, no unread prompt. So the brief is the
+  subagent's first turn, word for word, and that turn's root span carries
+  `metadata.oi_agent.origin`.
+  Because the runner is a job, a task outlives the turn and the process
+  that started it, and its end is delivered like a job's: `jobEnded` writes
+  a result to the delegator's inbox, built from the subagent's last turn,
+  and the delivery turn's `metadata.delivers` names the delegate span and,
+  as `result`, the subagent's turn. Both directions can be walked from the
+  files. On export the same relations are also written as OTel span links
+  (`linksOf` in `source/engine/src/export/otlp.ts`).
+  With `isolation: "worktree"` the task works in `git worktree` at
+  `<home>/worktrees/<task>` on branch `oi/<title>-<task>`, started from the
+  delegator's commit; one that changed nothing is removed when the task
+  ends. `task_message` writes another prompt to the task's inbox and starts
+  a new runner if the last one has left, so a follow-up continues with
+  everything the task knew. `task_cancel` kills the runner's process group
+  and the task's own jobs. A subagent's session has no delegate tools.
+  A tool call a subagent needs a person for cannot be asked in a process
+  with no terminal: the request is written to
+  `<home>/approvals/<session>/` and the delegating session's engine, while
+  someone attends it, shows it through the usual approval prompt and writes
+  the decision back (`ApprovalDesk`, `relayApprovals`). The decision is
+  recorded on the subagent's `TOOL` span as always.
+  The system prompt differs by role (`source/engine/src/prompt.ts`): a
+  session with the delegate tools is told to prefer delegating and how to
+  write a brief; a subagent is told what to report and where it is working.
+- **"What do /attach and the status panel read?"** The same files. The panel
+  above the status line is `Engine.background`: the session's running jobs,
+  and for each task the tool call open in its session. `/attach` switches
+  the terminal to the task's session without making this process its
+  writer: `Store.follow` polls the session's files and emits the events a
+  writer in this process would, and what you type goes to the task's inbox
+  (`Tasks.say`). The delegating session stays attended, so results and
+  approval requests still arrive.
+- **"Why did my result not interrupt me?"** Results are held while you are
+  in the middle of something. The terminal sets `Engine.calm`, which
+  `drainInbox` asks before queueing a delivery turn: an empty prompt, no
+  question on screen and a second and a half without a key. `/inbox`
+  delivers regardless. All results waiting are delivered in one turn.
 - **"How does the terminal know you need attention?"** On a TTY,
   `source/cli/src/program-status.ts` projects root AGENT open/end events into
   OSC 7501 working, done, error or idle reports; the TUI's approval callbacks

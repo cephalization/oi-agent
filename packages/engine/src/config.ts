@@ -59,6 +59,8 @@ export const Config = Schema.Struct({
    * picks with `model: "cheap"` when it delegates. Empty: the session's model.
    */
   cheap_model: Schema.String,
+  /** How many subagents one session may have running at once. */
+  max_tasks: Schema.Int,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -90,6 +92,7 @@ const PartialConfig = Schema.fromJsonString(
       }),
     ),
     cheap_model: Schema.optionalKey(Schema.String),
+    max_tasks: Schema.optionalKey(Schema.Int),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -235,6 +238,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
       model: file?.decision?.model ?? DEFAULT_DECISION.model,
     },
     cheap_model: env["OI_AGENT_CHEAP_MODEL"] ?? file?.cheap_model ?? "",
+    max_tasks: file?.max_tasks ?? 4,
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

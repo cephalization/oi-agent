@@ -35,7 +35,7 @@ import {
   type SessionHeader,
   stringAttr,
 } from "./format.ts"
-import { type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
+import { describeState, type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
 import { Tasks } from "./tasks.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
@@ -66,6 +66,18 @@ export interface Prompt {
   readonly inboxId?: string | undefined
   readonly delivers?: EngineMetadata["delivers"]
   readonly origin?: EngineMetadata["origin"]
+}
+
+/** A command or task running in the background of a session. */
+export interface BackgroundWork {
+  readonly kind: "job" | "task"
+  readonly id: string
+  /** The command, or the task's title. */
+  readonly title: string
+  /** `running for 2m14s: bash pnpm e2e`. */
+  readonly status: string
+  /** It cannot go on until a person answers. */
+  readonly waiting?: boolean
 }
 
 /** How often an attended session looks for approval requests from its tasks. */
@@ -143,6 +155,12 @@ export class Engine {
   readonly jobs: Jobs
   readonly tasks: Tasks
   hooks: TurnHooks = NO_HOOKS
+  /**
+   * Asked before results are delivered to a session: an interface answers
+   * `false` while the person is in the middle of something (typing, say),
+   * and calls `drainInbox` when they are not. Results wait in the inbox.
+   */
+  calm: (sessionId: string) => boolean = () => true
   private settings: Config
   private model: Layer.Layer<Model>
   private readonly modelFor: ((config: Config) => Layer.Layer<Model>) | undefined
@@ -160,6 +178,8 @@ export class Engine {
   private readonly served: boolean
   /** Per attended session: the check for its tasks' approval requests. */
   private readonly watches = new Map<string, ReturnType<typeof setInterval>>()
+  /** Requests from tasks that nobody has answered yet, by span. */
+  private readonly relayed = new Map<string, ApprovalRequest>()
 
   constructor(options: EngineOptions) {
     this.store = options.store
@@ -173,7 +193,7 @@ export class Engine {
     this.decider = options.decider
     this.served = options.served === true
     this.jobs = jobsOf(this.store)
-    this.tasks = new Tasks(this.store, this.jobs, { runner: options.runner })
+    this.tasks = new Tasks(this.store, this.jobs, { runner: options.runner, limit: options.config.max_tasks })
     this.jobs.onEnd((job) => this.jobEnded(job))
   }
 
@@ -228,9 +248,16 @@ export class Engine {
     this.approvalMode = mode
   }
 
-  /** Be told when a tool call is waiting for a decision. */
+  /**
+   * Be told when a tool call is waiting for a decision. A task's request
+   * that is still unanswered is told again to each new listener: the
+   * interface that first showed it may be gone (the terminal moved to
+   * another session), and the task is still waiting.
+   */
   onApproval(listener: (request: ApprovalRequest) => void): () => void {
     this.approvalListeners.add(listener)
+
+    for (const request of this.relayed.values()) listener(request)
 
     return () => {
       this.approvalListeners.delete(listener)
@@ -453,13 +480,19 @@ export class Engine {
         if (this.pending.has(request.span_id)) continue
 
         const label = `task ${task.id} "${task.task.title}"`
-        const reason = request.reason === undefined ? label : `${label}: ${request.reason}`
 
-        this.pending.set(request.span_id, (decision) =>
-          this.tasks.approvals.answer(task.header.id, request.span_id, decision),
-        )
+        const relayed = {
+          ...request,
+          reason: request.reason === undefined ? label : `${label}: ${request.reason}`,
+        }
 
-        for (const listener of this.approvalListeners) listener({ ...request, reason })
+        this.relayed.set(request.span_id, relayed)
+        this.pending.set(request.span_id, (decision) => {
+          this.relayed.delete(request.span_id)
+          this.tasks.approvals.answer(task.header.id, request.span_id, decision)
+        })
+
+        for (const listener of this.approvalListeners) listener(relayed)
       }
     }
   }
@@ -469,10 +502,12 @@ export class Engine {
    * turn of its own, and every result of background work together in one.
    * Safe to call at any time, and again after a crash.
    */
-  drainInbox(sessionId: string): void {
+  drainInbox(sessionId: string, now: boolean = false): void {
     for (const entry of pendingInbox(this.store, sessionId)) {
       if (entry.delivers !== undefined) {
-        this.queueDelivery(sessionId)
+        // `now`: the person asked for their results, whatever they are in the middle of.
+        if (now || this.calm(sessionId)) this.queueDelivery(sessionId)
+
         continue
       }
 
@@ -530,7 +565,41 @@ export class Engine {
 
     const status = this.tasks.status(task)
 
+    this.tasks.tidy(task)
+
     return { text: this.tasks.report(task, status), delivers: this.tasks.delivery(task, status) }
+  }
+
+  /** Results waiting in a session's inbox for a calm moment. */
+  waitingResults(sessionId: string): Array<InboxFile> {
+    return pendingInbox(this.store, sessionId).filter((entry) => entry.delivers !== undefined)
+  }
+
+  /** A session's commands and tasks that are still running, oldest first, each as one line of status. */
+  background(sessionId: string): Array<BackgroundWork> {
+    const tasks = new Map(this.tasks.list(sessionId).map((task) => [task.job.id, task]))
+
+    return this.jobs.running(sessionId).map((job) => {
+      const task = tasks.get(job.id)
+
+      if (task === undefined)
+        return {
+          kind: "job",
+          id: job.id,
+          title: job.command,
+          status: describeState(job, { state: "running" }),
+        }
+
+      const status = this.tasks.status(task)
+
+      return {
+        kind: "task",
+        id: task.id,
+        title: task.task.title,
+        status: this.tasks.describe(status),
+        waiting: status.state === "waiting for approval",
+      }
+    })
   }
 
   /** A background job ended and no tool call was watching: its result goes to the session's inbox. */

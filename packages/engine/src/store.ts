@@ -74,6 +74,10 @@ const HEARTBEAT_MS = 2000
 /** An in-flight span with no heartbeat for this long has no live writer. */
 export const STALE_AFTER_MS = 10_000
 
+/** How often a followed session's files are checked, and how many of its newest traces. */
+const FOLLOW_MS = 150
+const FOLLOW_TRACES = 3
+
 const ENDED_NAME = /^\d{20}-[0-9a-f]{16}\.json$/
 const OPEN_NAME = /^\d{20}-[0-9a-f]{16}\.open\.json$/
 const TRACE_NAME = /^[0-9a-f]{32}$/
@@ -472,6 +476,102 @@ export class Store {
     return readAll(parseAnnotation, path.join(this.sessionDir(sessionId), "annotations")).sort((a, b) =>
       a.created_at.localeCompare(b.created_at),
     )
+  }
+
+  // --- following another writer -------------------------------------------
+
+  /**
+   * Emit events for what another process writes to a session, by watching
+   * its files: the same events a writer in this process would emit. It
+   * starts from now: spans already ended are history, read with the fold;
+   * spans in flight are announced, with what they stream from here on.
+   * Returns how to stop.
+   */
+  follow(sessionId: string, intervalMs: number = FOLLOW_MS): () => void {
+    const ended = new Set<string>()
+    /** In-flight span file → how many of its deltas have been emitted. */
+    const open = new Map<string, number>()
+    const side = new Set<string>()
+    let first = true
+
+    const scanTrace = (traceId: string): void => {
+      const dir = this.traceDir(sessionId, traceId)
+      const finished: Array<EndedSpan> = []
+
+      for (const name of listDir(dir)) {
+        const file = path.join(dir, name)
+
+        if (ENDED_NAME.test(name) && !ended.has(file)) {
+          ended.add(file)
+
+          const span = first ? undefined : readWith(parseEndedSpan, file)
+
+          if (span !== undefined) finished.push(span)
+        }
+
+        if (!OPEN_NAME.test(name)) continue
+
+        const span = readWith(parseSpan, file)
+
+        if (span === undefined) continue
+
+        const deltas = readDeltas(file.replace(/\.open\.json$/, ".stream.jsonl"))
+        const sent = open.get(file)
+
+        // A turn already running is shown by the fold; only what is inside it is news.
+        if (sent === undefined && !(first && span.parent_id === null))
+          this.emit({ type: "span_open", session_id: sessionId, span })
+
+        for (const delta of deltas.slice(sent ?? (first ? deltas.length : 0)))
+          this.emit({
+            type: "delta",
+            session_id: sessionId,
+            trace_id: span.context.trace_id,
+            span_id: span.context.span_id,
+            delta,
+          })
+
+        open.set(file, deltas.length)
+      }
+
+      // Files list by start time; spans that ended since the last look are told in the order they ended.
+      for (const span of finished.toSorted((a, b) => a.end_time.localeCompare(b.end_time)))
+        this.emit({ type: "span_end", session_id: sessionId, span })
+    }
+
+    const scanSide = (): void => {
+      for (const entry of this.listInbox(sessionId)) {
+        if (side.has(entry.id)) continue
+
+        side.add(entry.id)
+
+        if (!first) this.emit({ type: "inbox", session_id: sessionId, entry })
+      }
+
+      for (const annotation of this.listAnnotations(sessionId)) {
+        if (side.has(annotation.id)) continue
+
+        side.add(annotation.id)
+
+        if (!first) this.emit({ type: "annotation", session_id: sessionId, annotation })
+      }
+    }
+
+    const scan = (): void => {
+      const traces = this.listTraceIds(sessionId)
+
+      // Trace ids sort by time: after the first pass, only the newest can change.
+      for (const traceId of first ? traces : traces.slice(-FOLLOW_TRACES)) scanTrace(traceId)
+
+      scanSide()
+      first = false
+    }
+
+    scan()
+
+    const timer = setInterval(scan, intervalMs)
+
+    return () => clearInterval(timer)
   }
 
   // --- inbox --------------------------------------------------------------

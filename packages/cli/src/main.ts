@@ -9,7 +9,7 @@ import { Providers } from "./providers.ts"
 import { ago, summarizeSessions } from "./sessions.ts"
 import { type Opened, type Phoenix, Sessions } from "./storage.ts"
 import { ProgramStatus } from "./program-status.ts"
-import { runApp } from "./tui/app.ts"
+import { type AppExit, runApp } from "./tui/app.ts"
 import {
   type ApprovalMode,
   attachEvals,
@@ -48,9 +48,11 @@ import {
   shownInTerminal,
   splitModel,
   Store,
+  type SessionHeader,
   type StoreEvent,
   stringAttr,
   tailcatForward,
+  type TaskHeader,
   taskTools,
 } from "@oi-agent/engine"
 
@@ -688,6 +690,56 @@ const exportSessions = async (idOrPrefix: string | undefined): Promise<void> => 
   if (report.errors.length > 0) fail(report.errors.join("\n"))
 }
 
+/**
+ * Open a delegated task's session in the terminal. Its runner, not this
+ * process, runs its turns: the terminal follows the session's files, and
+ * what is typed goes to the task's inbox, waking a runner if it has none.
+ * Tool calls the task needs a person for are answered through the session
+ * that delegated it, which this process still attends.
+ */
+const attached = async (
+  engine: Engine,
+  header: SessionHeader,
+  parentId: string,
+  task: TaskHeader,
+): Promise<AppExit> => {
+  const stop = store.follow(header.id)
+
+  const exit = await runApp({
+    store,
+    sessionId: header.id,
+    user: engine.config.user,
+    label: `task ${task.id} · /detach to return`,
+    peer: {
+      info: { header, role: "driver", host: engine.config.user },
+      sessionId: header.id,
+      prompt: (text) => {
+        const found = engine.tasks.find(parentId, task.id)
+
+        if (found === undefined) return Promise.resolve(`Task ${task.id} is no longer known to its session.`)
+
+        engine.tasks.say(found, engine.config.user, text)
+
+        return Promise.resolve(undefined)
+      },
+      closed: new Promise<void>(() => undefined),
+      close: () => undefined,
+    },
+    approver: {
+      // Not `ask`: turning approvals off from here would change the delegating session, not the task.
+      approvals: "auto",
+      onApproval: (listener) => engine.onApproval(listener),
+      resolveApproval: (spanId, decision) => engine.resolveApproval(spanId, decision),
+      setApprovalMode: () => undefined,
+    },
+    detachTo: parentId,
+  })
+
+  stop()
+
+  return exit
+}
+
 const interactive = async (): Promise<void> => {
   const engine = buildEngine(values.yolo ? "allow" : undefined)
   const remote = connectPhoenix()
@@ -707,17 +759,15 @@ const interactive = async (): Promise<void> => {
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
 
-  // `/resume` and `/new` end the app with the session to open next.
-  while (target !== undefined) {
-    const sessionId = opened.sessionId
-
+  /** Run a session in the terminal with this process as its host. */
+  const hosted = (sessionId: string, from: string | undefined): Promise<AppExit> => {
     engine.attend(sessionId)
 
     const notes = [...problems, ...modelNotes(engine, sessionId, first), ...guard(engine, opened, true)]
 
     first = false
 
-    const exit = await runApp({
+    return runApp({
       store,
       sessionId,
       user: engine.config.user,
@@ -725,15 +775,26 @@ const interactive = async (): Promise<void> => {
       engine,
       phoenix: remote?.exporter,
       sessions,
-      from: target.from,
+      from,
       notes,
       providers,
       reload: reloadEntry === undefined ? undefined : preflight(reloadEntry),
       onStart: signalReady,
     })
+  }
+
+  // `/resume`, `/new` and `/attach` end the app with the session to open next.
+  while (target !== undefined) {
+    const sessionId = opened.sessionId
+    const header = store.readHeader(sessionId)
+
+    // A delegated task has a runner of its own: this terminal watches and talks to it.
+    const exit: AppExit =
+      header?.task !== undefined && header.parent !== undefined
+        ? await attached(engine, header, header.parent.session_id, header.task)
+        : await hosted(sessionId, target.from)
 
     problems = []
-    engine.leave(sessionId)
 
     // A reload keeps the session where it is: the next process opens it again.
     if (exit.reload) {
@@ -741,7 +802,11 @@ const interactive = async (): Promise<void> => {
       break
     }
 
-    const away = await sessions.putAway(sessionId)
+    // Attaching to one of its tasks does not leave the session: its results and approvals still arrive.
+    if (exit.next === undefined || store.readHeader(exit.next)?.parent?.session_id !== sessionId)
+      engine.leave(sessionId)
+
+    const away = header?.task === undefined ? await sessions.putAway(sessionId) : undefined
 
     if (away !== undefined) process.stdout.write(`\u001B[2m${away}\u001B[0m\n`)
 
