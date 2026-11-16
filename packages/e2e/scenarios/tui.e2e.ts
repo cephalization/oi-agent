@@ -5,6 +5,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { OI } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
 import { scenario } from "../src/scenario.ts"
 import { awaitApproval, callBash } from "../src/steps.ts"
@@ -30,6 +31,41 @@ describe("interactive", () => {
     await term.line("/quit")
     expect(await term.exited()).toBe(0)
   })
+
+  scenario(
+    "the status line shows the latest call's context, and /session the running total",
+    { needs: ["rex"], config: new Map([["steering", "off"]]) },
+    async (s) => {
+      const term = await s.tui(["--yolo"])
+
+      await term.waitFor(PROMPT)
+      await term.line("Reply with exactly the word: pong")
+
+      const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
+
+      await s.spans.settledTurns(session, 1)
+      await term.line(callBash("echo context-check"))
+      await s.spans.settledTurns(session, 2)
+      await term.waitFor(/\d[\d.]*[kM]? context\b/)
+      await term.line("/session")
+
+      const screen = await term.waitFor(/Tokens used: \d+/)
+
+      const calls = s.spans
+        .ofKind(session, "LLM")
+        .map((span) => Number(span.attributes[OI.TOKENS_TOTAL] ?? 0))
+
+      const context = Number(/Context: (\d+) tokens/.exec(screen)?.[1])
+      const used = Number(/Tokens used: (\d+)/.exec(screen)?.[1])
+
+      // Three calls: the reply, then a tool call and the answer after it.
+      expect(calls.length).toBeGreaterThanOrEqual(3)
+      expect(context).toBe(calls.at(-1))
+      expect(used).toBe(calls.reduce((sum, count) => sum + count, 0))
+      expect(used).toBeGreaterThan(context)
+      expect(screen).not.toMatch(/\d tokens(?! in| across)/)
+    },
+  )
 
   scenario(
     "session switches start a fresh viewport without deleting scrollback",

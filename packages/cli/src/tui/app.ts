@@ -427,7 +427,13 @@ class App {
       add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), false)
     }
 
-    if (transcript.totalTokens > 0) add(style.gray(`${compact(transcript.totalTokens)} tokens`), true)
+    if (transcript.contextTokens > 0) {
+      const context = style.gray(`${compact(transcript.contextTokens)} context`)
+
+      parts.push(context)
+      // How full the context is matters more than the model name or session size: dropped last.
+      optional.unshift(context)
+    }
 
     if (transcript.passedEvals > 0)
       add(
@@ -1236,7 +1242,12 @@ class App {
     if (name === "/help") return this.say(helpLines(this.commands))
 
     if (name === "/session")
-      return this.say([`Session: ${this.options.sessionId}`, `Resume: oi -s ${this.options.sessionId}`])
+      return this.say([
+        `Session: ${this.options.sessionId}`,
+        `Resume: oi -s ${this.options.sessionId}`,
+        `Context: ${this.transcript.contextTokens} tokens in the latest model call`,
+        `Tokens used: ${this.transcript.totalTokens} across every model call, evaluators included`,
+      ])
 
     if (name === "/quit") return this.done()
 
