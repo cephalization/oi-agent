@@ -135,6 +135,24 @@ These work best on the session you are in, because the evidence is right there.
 - **"How does an eval change your behaviour?"** Show an annotation file, then
   the `<eval-feedback>` block at the start of the next turn's first request,
   then the rules file if a rule was learned.
+- **"Do evaluators run on every turn?"** Only when they apply. A definition
+  can carry `applicability` (`EvalDefinition` in
+  `source/engine/src/evals.ts`): `any` predicates (one must hold) and `all`
+  predicates (every one must). `writes` and `commit` come from
+  `metadata.evidence` on `TOOL` spans: before and after each mutating tool
+  call, `observeWorkspace` (`source/engine/src/evidence.ts`) hashes the Git
+  worktree's tracked and non-ignored files and reads `HEAD`'s reflog, so a
+  commit made from bash counts, and a failed commit or a no-op edit does not.
+  `tool:<name>` means the tool was called; `always` is every turn. Evidence
+  that cannot be determined (no Git, a bound exceeded) is `unknown`, and an
+  unknown predicate runs the check rather than skip it. A skip is an
+  annotation labelled `skipped` with the trigger and evidence in its
+  metadata, made without calling a judge, and it never gives feedback or
+  learns a rule. A definition without `applicability` runs every turn, as
+  before. A failed result is an open obligation: on a later turn the check
+  would skip, `runEvals` reruns it (an LLM judge sees the failing turn and
+  the correction), so a turn that opens the missing PR without committing
+  again can resolve it.
 - **"Where do eval results show up?"** `Transcript.annotation`
   (`source/cli/src/tui/transcript.ts`) prints a failed verdict, and a
   `steering` note that something was learned, in the transcript. A pass is
@@ -154,7 +172,8 @@ These work best on the session you are in, because the evidence is right there.
   when the product is itself an agent harness. Application authorization
   dialogs and runtime mode changes are product behavior, not conversational
   habits to reward or punish. Above 0.7 confidence, and when no
-  existing evaluator covers it, it is saved with an `origin` naming the turn,
+  existing evaluator covers it, it is saved with an `origin` naming the turn
+  and the trigger the detector chose (shown in the `learned` note),
   Every verdict becomes a `steering` annotation on the turn (`learned`,
   `durable` or `one-off`, with the confidence as score); the terminal shows
   only `learned` ones (`shownInTerminal`). Each detection is also an
