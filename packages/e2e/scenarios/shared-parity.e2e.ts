@@ -153,6 +153,29 @@ scenario(
       await driver.waitFor(/task 12345678 Child status/)
       await viewer.waitFor(/task 12345678 Child status/)
 
+      // Start another task after both peers have joined. No parent Store event
+      // announces it: the read-only status stream must discover it for both roles.
+      const next = store.createSession(s.sandbox.cwd, undefined, {
+        parent: origin,
+        task: { id: "87654321", title: "New child", isolation: "shared", model: "scripted/scripted" },
+      })
+
+      const nextJob = jobs.start({
+        sessionId: parent.id,
+        cwd: next.cwd,
+        command: "sleep 300",
+        tool: origin,
+        task: { id: "87654321", session_id: next.id },
+      })
+
+      jobs.toBackground(nextJob, "requested")
+      await driver.waitFor(/task 87654321 New child/)
+      await viewer.waitFor(/task 87654321 New child/)
+      await viewer.line("Cancel all tasks.")
+      expect(pendingInbox(store, parent.id)).toEqual([])
+      expect(jobs.state(nextJob).state).toBe("running")
+      expect(await driver.viewport()).not.toMatch(/Allow bash/)
+
       const tool: SpanFile = {
         name: "bash",
         context: { trace_id: "c".repeat(32), span_id: "d".repeat(16) },
@@ -206,8 +229,12 @@ scenario(
       abort.abort()
       await host.key("ctrl+c")
       await host.exited()
-      jobs.claim(job)
-      jobs.kill(job)
+
+      for (const running of jobs.list(parent.id)) {
+        jobs.claim(running)
+        jobs.kill(running)
+      }
+
       jobs.close()
     }
   },

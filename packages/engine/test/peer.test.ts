@@ -204,6 +204,69 @@ describe("peer sync", () => {
     expect(peer.state().work).toEqual([])
   })
 
+  it("snapshots existing tasks and streams newly started tasks equally to both roles", async () => {
+    const { engine, sessionId, server, base } = await host()
+
+    const delegate = (title: string) => {
+      const task = engine.tasks.delegate(
+        {
+          sessionId,
+          cwd: engine.store.readHeader(sessionId)!.cwd,
+          userId: "host",
+          span: { trace_id: "a".repeat(32), span_id: "b".repeat(16) },
+        },
+        { title, prompt: "work", model: "scripted/scripted", isolation: "shared" },
+      )
+
+      cleanup.push(() => engine.tasks.cancel(task))
+
+      return task
+    }
+
+    const existing = delegate("Already running")
+    const { peer: driver } = await join(base, server.tokens.driver, "ana")
+    const { peer: viewer } = await join(base, server.tokens.viewer, "eve")
+
+    for (const peer of [driver, viewer]) {
+      expect(peer.state().work).toMatchObject([{ kind: "task", id: existing.id, title: "Already running" }])
+    }
+
+    const started = delegate("Started after joining")
+
+    await until(() => driver.state().work.length === 2 && viewer.state().work.length === 2)
+
+    for (const peer of [driver, viewer]) {
+      expect(peer.state().work.map((work) => work.id)).toEqual([existing.id, started.id])
+      expect(peer.state().work).toMatchObject([
+        {
+          kind: "task",
+          title: "Already running",
+          waiting: false,
+          status: expect.stringMatching(/^running for /),
+        },
+        {
+          kind: "task",
+          title: "Started after joining",
+          waiting: false,
+          status: expect.stringMatching(/^running for /),
+        },
+      ])
+    }
+
+    expect(await viewer.prompt("cannot control tasks")).toContain("403")
+
+    for (const route of ["/v1/task/cancel", "/v1/approval"]) {
+      for (const token of [server.tokens.driver, server.tokens.viewer]) {
+        const response = await fetch(`${base}${route}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}` },
+        })
+
+        expect(response.status).toBe(404)
+      }
+    }
+  })
+
   it("round-trips share links", () => {
     const link = { address: "tcAbC_d-9", port: 4312, token: "tok-en_1" }
 
