@@ -14,6 +14,9 @@ import {
   getSecret,
   handoffSeedFor,
   readMetadata,
+  type InboxFile,
+  kindOf,
+  pendingInbox,
   type BackgroundWork,
   type Engine,
   type ModelChoice,
@@ -137,6 +140,10 @@ const MENU_ROWS = 8
 const UP = "\u001B[A"
 const DOWN = "\u001B[B"
 const SHIFT_TAB = "\u001B[Z"
+const CTRL_T = "\u0014"
+
+/** How many waiting prompts are listed above the status line. */
+const WAITING_ROWS = 3
 
 const SHARE_ARGUMENTS: ReadonlyArray<Suggestion> = [
   { value: "local", label: "local", hint: "share on this machine only, without a tunnel" },
@@ -180,6 +187,12 @@ class App {
   private work: ReadonlyArray<BackgroundWork> = []
   /** Results waiting to be delivered until the person stops typing. */
   private held = 0
+  /** What Enter does with a prompt while a turn runs: say it to that turn, or leave it for the next. */
+  private whileRunning: "steer" | "queue" = "steer"
+  /** Prompts sent from here that no turn has taken yet, as last read from the inbox. */
+  private waiting: ReadonlyArray<InboxFile> = []
+  /** Messages sent to a running turn from here, until it reads them or they become a turn. */
+  private readonly steers = new Set<string>()
   private lastKeyMs = 0
   /** Highlighted row of the completion menu. */
   private selected = 0
@@ -532,6 +545,72 @@ class App {
       : lines
   }
 
+  /** What pressing Enter will do with what is typed, decided by what the conversation itself is doing. */
+  private enterHint(canPrompt: boolean): string {
+    const { engine, peer, detachTo } = this.options
+
+    if (!canPrompt) return "view only: the host has not let you prompt"
+
+    if (this.editor.text.trimStart().startsWith("/")) return "enter runs the command"
+
+    if (detachTo !== undefined) return "enter sends to the task, which reads it when its current turn ends"
+
+    if (peer !== undefined) return "enter sends to the host, to run after the turn in progress"
+
+    if (engine === undefined) return ""
+
+    if (!this.transcript.running) {
+      const background = this.work.length === 0 ? "" : " · background work keeps running"
+
+      return `enter starts a new turn${background}`
+    }
+
+    return this.whileRunning === "steer"
+      ? "enter steers the running turn · ctrl+t to queue for the next turn instead"
+      : "enter queues for the next turn · ctrl+t to steer the running turn instead"
+  }
+
+  /** Prompts sent from here that are still waiting: said to the running turn, or queued behind it. */
+  private waitingLines(): Array<string> {
+    const columns = this.screen.columns
+
+    const lines = this.waiting.slice(0, WAITING_ROWS).map((entry) => {
+      const label =
+        entry.steers === true
+          ? "↳ steering, when the turn's current step ends: "
+          : "⧗ queued for the next turn: "
+
+      return `${style.yellow(label)}${clip(entry.text.replaceAll(/\s+/g, " "), Math.max(columns - label.length - 1, 8))}`
+    })
+
+    return this.waiting.length > WAITING_ROWS
+      ? [...lines, style.gray(`  … ${this.waiting.length - WAITING_ROWS} more waiting`)]
+      : lines
+  }
+
+  /** Read again which prompts sent from here are waiting, and say what became of the ones meant for a running turn. */
+  private watchPrompts(): void {
+    const { store, sessionId, user, engine } = this.options
+
+    if (engine === undefined) return
+
+    this.waiting = pendingInbox(store, sessionId).filter(
+      (entry) => entry.delivers === undefined && entry.origin === undefined && entry.user_id === user,
+    )
+
+    if (this.steers.size === 0) return
+
+    for (const turn of loadSession(store, sessionId).turns) {
+      const metadata = readMetadata(turn.root)
+
+      for (const entry of metadata.steered ?? []) this.steers.delete(entry.inbox_id)
+
+      // Its turn ended before reading it, so it ran as a turn of its own: say so, once.
+      if (metadata.inbox_id !== undefined && this.steers.delete(metadata.inbox_id))
+        this.say(["  the turn ended before it could be steered: this ran as the next turn instead"])
+    }
+  }
+
   /** Nothing is being typed, asked or chosen: a result can arrive without interrupting. */
   private calm(): boolean {
     return (
@@ -602,7 +681,7 @@ class App {
       return
     }
 
-    lines.push(...this.workLines(), this.status())
+    lines.push(...this.workLines(), ...this.waitingLines(), this.status())
 
     if (this.notice !== "") lines.push(style.yellow(this.notice))
 
@@ -656,6 +735,7 @@ class App {
 
     if (completion !== undefined)
       lines.push(...this.menuLines(completion.items, this.highlighted(completion)))
+    else lines.push(style.gray(clip(this.enterHint(canPrompt), this.screen.columns - 1)))
 
     this.screen.render({
       lines,
@@ -1552,6 +1632,18 @@ class App {
       return
     }
 
+    if (engine !== undefined && engine.busy(sessionId)) {
+      const steered =
+        this.whileRunning === "steer" ? engine.steer(sessionId, { text, userId: user }) : undefined
+
+      if (steered === undefined) engine.queue(sessionId, { text, userId: user })
+      else this.steers.add(steered.id)
+
+      this.watchPrompts()
+
+      return
+    }
+
     if (engine !== undefined) {
       const from = this.from
 
@@ -1633,6 +1725,12 @@ class App {
       return this.draw()
     }
 
+    if (data === CTRL_T) {
+      this.whileRunning = this.whileRunning === "steer" ? "queue" : "steer"
+
+      return this.draw()
+    }
+
     const before = this.editor.text
     const action = this.editor.feed(data)
 
@@ -1684,6 +1782,18 @@ class App {
 
       this.transcript.onEvent(event)
       this.program.event(event)
+
+      // A model call starting is where a running turn takes what was said to it.
+      if (event.type === "span_open" && kindOf(event.span) === "LLM") {
+        const root = store.readTraceRoots(sessionId, event.span.context.trace_id)
+        const span = root.open[0]?.span ?? root.ended[0]
+
+        if (span !== undefined) this.transcript.steered(readMetadata(span).steered ?? [])
+      }
+
+      // Reading the inbox means reading every turn's root: only when something of ours may be waiting.
+      if (event.type === "inbox" || this.waiting.length > 0 || this.steers.size > 0) this.watchPrompts()
+
       this.draw()
     })
 

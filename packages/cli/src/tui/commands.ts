@@ -126,6 +126,7 @@ export const helpLines = (commands: ReadonlyArray<Command>): Array<string> => {
     "In /resume:   tab keeps the session on disk, or only in Phoenix",
     "Otherwise:  tab cycle ask / auto / yolo · shift+tab cycle reasoning effort",
     "            enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
+    "            ctrl+t while a turn runs: enter steers it, or queues for the next turn",
   ]
 }
 
