@@ -499,8 +499,14 @@ These work best on the session you are in, because the evidence is right there.
   `llm.invocation_parameters`, so the switch is visible span by span. The
   history is replayed verbatim to the new model, and the API drops thinking
   blocks a different model cannot read. The levels offered come from the
-  Models API's `capabilities.effort` (`listModels` in
-  `source/engine/src/model.ts`).
+  Anthropic Models API's `capabilities.effort` (`listModels` in
+  `source/engine/src/model.ts`). OpenAI and ChatGPT use the model list's
+  `supported_reasoning_levels`, keeping the levels oi understands (including
+  `xhigh` and `max`). When that field is absent, `openaiEfforts` in
+  `source/engine/src/openai.ts` offers low/medium/high for GPT-5 and later,
+  o-series and Codex models. The provider catalog is refreshed in memory;
+  the same discovered levels constrain both Shift+Tab and the next request
+  (`source/cli/src/providers.ts`). Effort names are sent unchanged.
 - **"Which model does a resumed session use?"** The one it last used, read
   back from its spans rather than saved anywhere: `lastModelOf`
   (`source/engine/src/fold.ts`) takes the newest agent turn's `LLM` span

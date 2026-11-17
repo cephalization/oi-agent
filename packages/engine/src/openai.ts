@@ -12,7 +12,7 @@
  */
 import { createHash } from "node:crypto"
 import { Effect, Layer, Option, Schema } from "effect"
-import type { Effort } from "./config.ts"
+import { type Effort, EFFORTS } from "./config.ts"
 import type { Dialect } from "./dialect.ts"
 import type { Billing } from "./format.ts"
 import { openaiChat, openaiResponses } from "./dialects/index.ts"
@@ -272,9 +272,6 @@ const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(ResponsesEv
 const FailedResponse = Schema.Struct({ error: Nullable(Schema.Struct({ message: Schema.String })) })
 const decodeFailed = Schema.decodeUnknownOption(FailedResponse)
 
-/** OpenAI's effort names stop at `xhigh`. */
-const openaiEffort = (effort: Effort): string => (effort === "max" ? "xhigh" : effort)
-
 // --- requests -----------------------------------------------------------------------
 
 const chatBody = (settings: OpenAISettings, call: ModelCall): Json => {
@@ -295,7 +292,7 @@ const chatBody = (settings: OpenAISettings, call: ModelCall): Json => {
       })),
     ])
 
-  if (settings.effort !== undefined) body.push(["reasoning_effort", openaiEffort(settings.effort)])
+  if (settings.effort !== undefined) body.push(["reasoning_effort", settings.effort])
 
   return Object.fromEntries(body)
 }
@@ -324,7 +321,7 @@ const responsesFields = (settings: OpenAISettings, call: ModelCall): Array<[stri
     ])
 
   if (settings.effort !== undefined) {
-    body.push(["reasoning", { effort: openaiEffort(settings.effort), summary: "auto" }])
+    body.push(["reasoning", { effort: settings.effort, summary: "auto" }])
     // Reasoning carries over between calls only as encrypted content.
     body.push(["include", ["reasoning.encrypted_content"]])
   }
@@ -541,6 +538,8 @@ export const openaiModel = (settings: OpenAISettings): Layer.Layer<Model> => {
 
 // --- model lists ------------------------------------------------------------------------
 
+const ReasoningLevels = Nullable(Schema.Array(Schema.Struct({ effort: Schema.String })))
+
 const ModelList = Schema.Union([
   /** OpenAI and most compatible servers. */
   Schema.Struct({
@@ -548,6 +547,7 @@ const ModelList = Schema.Union([
       Schema.Struct({
         id: Schema.String,
         display_name: Nullable(Schema.String),
+        supported_reasoning_levels: ReasoningLevels,
         /** OpenRouter-style servers (llama.cpp, ds4, …) name the model and its output limit. */
         name: Nullable(Schema.String),
         top_provider: Nullable(Schema.Struct({ max_completion_tokens: Nullable(Schema.Number) })),
@@ -560,6 +560,7 @@ const ModelList = Schema.Union([
       Schema.Struct({
         slug: Schema.String,
         display_name: Nullable(Schema.String),
+        supported_reasoning_levels: ReasoningLevels,
         visibility: Nullable(Schema.String),
       }),
     ),
@@ -572,8 +573,8 @@ const decodeList = Schema.decodeUnknownOption(Schema.fromJsonString(ModelList))
 const NOT_CHAT =
   /audio|realtime|transcribe|tts|image|embedding|moderation|dall-e|whisper|search|instruct|davinci|babbage/
 
-/** OpenAI reasoning models take an effort; the API does not list which levels, so offer the common three. */
-const REASONING = /^(?:o\d|gpt-5|codex)/
+/** Fallback when discovery has not supplied effort levels: GPT-5 onward, o-series and Codex. */
+const REASONING = /^(?:o\d|gpt-(?:[5-9]|\d{2,})(?:[.-]|$)|codex)/
 
 /** The effort levels to offer for an OpenAI model id. */
 export const openaiEfforts = (model: string): ReadonlyArray<Effort> =>
@@ -612,13 +613,19 @@ export const listOpenAIModels = async (options: ListOptions): Promise<Array<Mode
           id: model.id,
           name: model.display_name ?? model.name ?? model.id,
           maxOutput: model.top_provider?.max_completion_tokens ?? undefined,
+          levels: model.supported_reasoning_levels,
         }))
       : list.models
           .filter(
             (model) =>
               model.visibility === undefined || model.visibility === null || model.visibility === "list",
           )
-          .map((model) => ({ id: model.slug, name: model.display_name ?? model.slug, maxOutput: undefined }))
+          .map((model) => ({
+            id: model.slug,
+            name: model.display_name ?? model.slug,
+            maxOutput: undefined,
+            levels: model.supported_reasoning_levels,
+          }))
 
   return entries
     .filter((entry) => !options.openaiCatalog || !NOT_CHAT.test(entry.id))
@@ -626,7 +633,11 @@ export const listOpenAIModels = async (options: ListOptions): Promise<Array<Mode
       id: entry.id,
       name: entry.name,
       provider: options.provider,
-      efforts: options.openaiCatalog ? openaiEfforts(entry.id) : [],
+      efforts: options.openaiCatalog
+        ? entry.levels == null
+          ? openaiEfforts(entry.id)
+          : EFFORTS.filter((effort) => entry.levels?.some((level) => level.effort === effort))
+        : [],
       maxOutput: entry.maxOutput,
     }))
     .toSorted((a, b) => a.id.localeCompare(b.id))

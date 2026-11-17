@@ -6,6 +6,7 @@ import {
   BUILTIN_PROVIDERS,
   describeModels,
   listOpenAIModels,
+  openaiEfforts,
   parseModelIds,
   providerIdFrom,
   vendorOf,
@@ -79,5 +80,59 @@ describe("compatible servers", () => {
       { id: "plain" },
       { id: "unlisted" },
     ])
+  })
+})
+
+describe("OpenAI reasoning capabilities", () => {
+  it("recognizes GPT generations from 5 onward before discovery completes", () => {
+    for (const id of ["gpt-5.6-luna", "gpt-6.1-sol", "gpt-10", "o3", "codex-mini-latest"])
+      expect(openaiEfforts(id)).toEqual(["low", "medium", "high"])
+
+    for (const id of ["gpt-4.1", "gpt-4o", "gpt-3.5-turbo", "other"]) expect(openaiEfforts(id)).toEqual([])
+  })
+
+  it("uses advertised ChatGPT effort levels, including unknown model names and explicit empty levels", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("content-type", "application/json")
+      response.end(
+        JSON.stringify({
+          models: [
+            {
+              slug: "gpt-6.1-sol",
+              supported_reasoning_levels: [
+                { effort: "low" },
+                { effort: "medium" },
+                { effort: "high" },
+                { effort: "xhigh" },
+                { effort: "max" },
+                { effort: "ultra" },
+              ],
+            },
+            { slug: "new-reasoner", supported_reasoning_levels: [{ effort: "high" }] },
+            { slug: "gpt-5-no-effort", supported_reasoning_levels: [] },
+            { slug: "gpt-5.6-luna" },
+          ],
+        }),
+      )
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+
+    // SAFETY: a server listening on a TCP port has an AddressInfo address.
+    const { port } = server.address() as AddressInfo
+
+    const listed = await listOpenAIModels({
+      provider: "chatgpt",
+      baseUrl: `http://127.0.0.1:${port}`,
+      token: undefined,
+      openaiCatalog: true,
+    }).finally(() => server.close())
+
+    const levels = new Map(listed.map((model) => [model.id, model.efforts]))
+
+    expect(levels.get("gpt-6.1-sol")).toEqual(["low", "medium", "high", "xhigh", "max"])
+    expect(levels.get("new-reasoner")).toEqual(["high"])
+    expect(levels.get("gpt-5-no-effort")).toEqual([])
+    expect(levels.get("gpt-5.6-luna")).toEqual(["low", "medium", "high"])
   })
 })
