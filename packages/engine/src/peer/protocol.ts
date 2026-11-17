@@ -23,17 +23,41 @@ export const SessionInfo = Schema.Struct({ header: SessionHeader, role: Role, ho
 
 export type SessionInfo = typeof SessionInfo.Type
 
+/** Ephemeral, read-only host status; derived afresh, never persisted as conversation state. */
+export const SessionState = Schema.Struct({
+  busy: Schema.Boolean,
+  steerable: Schema.Boolean,
+  waiting: Schema.Array(InboxFile),
+  held: Schema.Number,
+  work: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literals(["job", "task"]),
+      id: Schema.String,
+      title: Schema.String,
+      status: Schema.String,
+      waiting: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+})
+
+export type SessionState = typeof SessionState.Type
+
 export const Manifest = Schema.Struct({
+  state: SessionState,
   paths: Schema.Array(Schema.String),
   open: Schema.Array(Schema.Struct({ span: SpanFile, deltas: Schema.Array(StreamDelta) })),
 })
 
 export type Manifest = typeof Manifest.Type
 
-export const PromptRequest = Schema.Struct({ text: Schema.String })
+export const PromptRequest = Schema.Struct({
+  text: Schema.String,
+  mode: Schema.optionalKey(Schema.Literals(["steer", "queue"])),
+})
 
 /** A store event as sent to peers. */
 export const WireEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("state"), session_id: Schema.String, state: SessionState }),
   Schema.Struct({ type: Schema.Literal("session"), session_id: Schema.String, header: SessionHeader }),
   Schema.Struct({ type: Schema.Literal("span_open"), session_id: Schema.String, span: SpanFile }),
   Schema.Struct({ type: Schema.Literal("span_end"), session_id: Schema.String, span: EndedSpan }),

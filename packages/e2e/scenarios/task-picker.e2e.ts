@@ -93,8 +93,12 @@ scenario(
       expect(screen).toContain(fresh.header.id)
       expect(screen).toContain("picker-work")
       expect(screen).toContain("task-worktree")
-      expect(screen.indexOf("22222222 newer active")).toBeLessThan(screen.indexOf("11111111 older active"))
-      expect(screen.indexOf("11111111 older active")).toBeLessThan(screen.indexOf("33333333 newest finished"))
+      // The same names also appear in the live background panel, in start order.
+      // Check the picker itself, not the preceding status rows or scrollback.
+      const picker = screen.slice(screen.lastIndexOf("? Tasks · enter to choose"))
+
+      expect(picker.indexOf("22222222 newer active")).toBeLessThan(picker.indexOf("11111111 older active"))
+      expect(picker.indexOf("11111111 older active")).toBeLessThan(picker.indexOf("33333333 newest finished"))
       expect(screen).toMatch(/33333333 newest finished[^\n]*finished/)
       await term.key("down")
       await term.waitFor(/❯ 11111111 older active/)

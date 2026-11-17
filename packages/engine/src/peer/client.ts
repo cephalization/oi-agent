@@ -2,13 +2,14 @@ import { Option, Schema } from "effect"
 import { type EndedSpan, printSpan, spanFileName } from "../format.ts"
 import { isoToNs } from "../ids.ts"
 import type { Store } from "../store.ts"
-import { Manifest, SessionInfo, WireEvent } from "./protocol.ts"
+import { Manifest, SessionInfo, type SessionState, WireEvent } from "./protocol.ts"
 
 export interface PeerConnection {
+  readonly state: () => SessionState
   readonly info: SessionInfo
   readonly sessionId: string
   /** Submit a prompt to the host. Resolves to an error message, if any. */
-  readonly prompt: (text: string) => Promise<string | undefined>
+  readonly prompt: (text: string, mode?: "steer" | "queue") => Promise<string | undefined>
   /** Resolves when the event stream ends. */
   readonly closed: Promise<void>
   readonly close: () => void
@@ -74,6 +75,7 @@ export const joinSession = async (
   // Follow events before copying files, so nothing that ends in between is missed.
   const events = await fetch(`${baseUrl}/v1/events`, { headers, signal: controller.signal })
   const manifest = Option.getOrThrow(decodeManifest(await (await get("/v1/manifest")).json()))
+  let state = manifest.state
   const have = new Set(store.manifest(sessionId))
   const open = new Map<string, WireEvent>()
 
@@ -111,7 +113,8 @@ export const joinSession = async (
             ? Option.getOrUndefined(decodeEvent(frame.slice(6)))
             : undefined
 
-          if (event !== undefined) apply(store, sessionId, event, open)
+          if (event?.type === "state") state = event.state
+          else if (event !== undefined) apply(store, sessionId, event, open)
         }
       }
     } catch {
@@ -120,15 +123,16 @@ export const joinSession = async (
   }
 
   return {
+    state: () => state,
     info,
     sessionId,
     closed: pump(),
     close: () => controller.abort(),
-    prompt: async (text) => {
+    prompt: async (text, mode = "steer") => {
       const response = await fetch(`${baseUrl}/v1/prompt`, {
         method: "POST",
         headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, mode }),
       })
 
       return response.ok ? undefined : `The host rejected the prompt (HTTP ${response.status}).`
