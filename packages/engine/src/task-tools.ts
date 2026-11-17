@@ -176,12 +176,18 @@ const taskCancel = defineTool({
   input: Schema.Struct({ id: Schema.String }),
   run: (input, context) =>
     withTask(context, input.id, (task) => {
+      const running = context.jobs.state(task.job).state === "running"
+
       context.tasks.cancel(task)
-      const report = `Stopped task ${task.id}. ${line(context.tasks, task)}`
-      context.complete(
-        { ...context.tasks.delivery(task, context.tasks.status(task)), inbox_id: `job-${task.job.id}` },
-        report,
-      )
+
+      const status = context.tasks.status(task)
+
+      // A task that had already ended has a report nobody has read yet: this call is what reads it.
+      const report = running
+        ? `Stopped task ${task.id}. ${line(context.tasks, task)}`
+        : `Task ${task.id} had already ended, so nothing was stopped.\n${context.tasks.report(task, status)}`
+
+      context.complete({ ...context.tasks.delivery(task, status), inbox_id: `job-${task.job.id}` }, report)
       context.jobs.claim(task.job)
 
       return ok(report)
