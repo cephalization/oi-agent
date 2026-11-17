@@ -569,6 +569,9 @@ class App {
     if (!engine.busy(this.options.sessionId))
       return "enter starts a new turn here · another process is running one in this session"
 
+    // A /compact or /handoff reads nothing said to it: whatever is sent waits for it to finish.
+    if (!engine.steerable(this.options.sessionId)) return "enter queues for the next turn"
+
     return this.whileRunning === "steer"
       ? "enter steers the running turn · ctrl+t to queue for the next turn instead"
       : "enter queues for the next turn · ctrl+t to steer the running turn instead"

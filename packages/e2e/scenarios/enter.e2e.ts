@@ -202,4 +202,40 @@ describe("what Enter does", () => {
       expect(await term.exited()).toBe(0)
     },
   )
+
+  scenario(
+    "quitting with a message queued starts nothing, and oi -c runs it in the session that was left",
+    { needs: ["rex"], approvals: "allow" },
+    async (s) => {
+      const term = await s.tui()
+      const session = await startGatedTurn(s, term, "Then reply with just: first-done.")
+
+      await term.waitFor(STEERS)
+      await term.key("ctrl+t")
+      await term.waitFor(QUEUES)
+      await term.line("Reply with exactly the word: pong")
+      await term.waitFor(/⧗ queued for the next turn: Reply with exactly the word: pong/)
+      await term.line("/quit")
+      expect(await term.exited()).toBe(0)
+
+      // Nobody is there: the turn was stopped, and the queued message did not start.
+      release(s)
+      expect(s.spans.turns(session)).toHaveLength(1)
+      expect(pendingInbox(s.spans.store, session).map((entry) => entry.text)).toEqual([
+        "Reply with exactly the word: pong",
+      ])
+
+      // -c is the session that was worked in, and opening it runs what was left.
+      const back = await s.tui(["-c"])
+      const turns = await s.spans.settledTurns(session, 2)
+
+      expect(s.spans.sessions()).toEqual([session])
+      expect(turns[1]?.input).toBe("Reply with exactly the word: pong")
+      expect(turns[1]?.output?.toLowerCase()).toContain("pong")
+      expect(pendingInbox(s.spans.store, session)).toEqual([])
+      await back.waitFor(IDLE)
+      await back.line("/quit")
+      expect(await back.exited()).toBe(0)
+    },
+  )
 })

@@ -167,6 +167,8 @@ reused between calls; `OI_AGENT_OPENAI_TRANSPORT=http` uses plain HTTP instead.
 | `oi join <link>`               | Join a session shared with `/share`.                                      |
 | `oi sessions` / `oi show <id>` | List sessions; print one.                                                 |
 | `oi metrics [id]`              | Where a session's time went (`--json` for all the numbers).               |
+| `oi auth logout <provider>`    | Forget a provider's key, or sign out of ChatGPT.                          |
+| `oi serve <session>`           | Run what waits in a session's inbox, unattended (how a task is run).      |
 | `oi export [id]`               | Send sessions to Phoenix. Safe to repeat.                                 |
 | `oi auth login [provider]`     | Store a provider's key; `oi auth login chatgpt` signs in with ChatGPT.    |
 | `oi where`                     | Print the sessions directory.                                             |
@@ -191,7 +193,7 @@ and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
 `/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`,
-`/session`, `/tour`, `/help` and `/quit`.
+`/session`, `/tour`, `/reload`, `/help` and `/quit`.
 
 The status bar keeps a session-id prefix visible, including after switching or
 handing off threads. Run `/session` to print the full copyable ID, an
@@ -336,7 +338,8 @@ sessions/<session-id>/
   inbox/<id>.json                               prompts from peers, results of background work
 ```
 
-Kill the process mid-turn and run `oi -c`: it continues from the files.
+Kill the process mid-turn and run `oi -c`: the session opens from the files,
+with the turn that was cut short recorded as interrupted.
 
 **Prompt an eval into existence.** Tell the agent something like "from now on,
 always run the tests before telling me a change is done; set up a check for
