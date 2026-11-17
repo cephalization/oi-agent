@@ -201,6 +201,7 @@ export class Providers {
         effort: settings.effort,
         maxTokens: settings.max_tokens,
         apiKey,
+        web: settings.web === "auto",
       })
     }
 
@@ -240,6 +241,8 @@ export class Providers {
       model: settings.model,
       effort: fitEffort(settings.effort, levels),
       maxTokens: Math.min(settings.max_tokens, limit ?? settings.max_tokens),
+      // Only OpenAI itself is known to have the tool; a compatible server may reject it.
+      web: settings.web === "auto" && provider.kind !== "openai-compatible",
       token: provider.kind === "chatgpt" ? chatgptToken : () => Promise.resolve(key),
       onUnauthorized:
         provider.kind === "chatgpt"

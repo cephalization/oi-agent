@@ -32,6 +32,10 @@ export const Delegation = Schema.Literals(["auto", "off"])
 
 export type Delegation = typeof Delegation.Type
 
+export const Web = Schema.Literals(["auto", "off"])
+
+export type Web = typeof Web.Type
+
 export const Config = Schema.Struct({
   /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
   provider: Schema.String,
@@ -68,6 +72,11 @@ export const Config = Schema.Struct({
   max_tasks: Schema.Int,
   /** `auto`: the agent hands work to subagents. `off`: it has no delegate tools and does everything itself. */
   delegation: Delegation,
+  /**
+   * `auto`: requests offer the provider's own web search and fetch tools, where it has them.
+   * `off`: they never do, and the agent reaches the web only through `bash`.
+   */
+  web: Web,
   /** Directory that holds sessions. */
   home: Schema.String,
   phoenix: Schema.Struct({
@@ -101,6 +110,7 @@ const PartialConfig = Schema.fromJsonString(
     cheap_model: Schema.optionalKey(Schema.String),
     max_tasks: Schema.optionalKey(Schema.Int),
     delegation: Schema.optionalKey(Delegation),
+    web: Schema.optionalKey(Web),
     home: Schema.optionalKey(Schema.String),
     phoenix: Schema.optionalKey(
       Schema.Struct({
@@ -116,6 +126,7 @@ const decodeApprovals = Schema.decodeUnknownOption(Approvals)
 const decodeEffort = Schema.decodeUnknownOption(Effort)
 const decodeSteering = Schema.decodeUnknownOption(Steering)
 const decodeDelegation = Schema.decodeUnknownOption(Delegation)
+const decodeWeb = Schema.decodeUnknownOption(Web)
 const encodeConfig = Schema.encodeSync(Config)
 
 /** An effort level from text, such as a command-line flag; undefined when it is not one. */
@@ -250,6 +261,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     max_tasks: file?.max_tasks ?? 4,
     delegation:
       Option.getOrUndefined(decodeDelegation(env["OI_AGENT_DELEGATION"])) ?? file?.delegation ?? "auto",
+    web: Option.getOrUndefined(decodeWeb(env["OI_AGENT_WEB"])) ?? file?.web ?? "auto",
     home: env["OI_AGENT_HOME"] ?? file?.home ?? defaultHome(),
     phoenix: {
       endpoint: env["PHOENIX_COLLECTOR_ENDPOINT"] ?? file?.phoenix?.endpoint ?? "",

@@ -197,6 +197,77 @@ describe("switching provider mid-session", () => {
     expect(JSON.stringify(back)).not.toContain("sig-1")
   })
 
+  it("carries Anthropic's web tool calls and results to another provider as text", () => {
+    const transcript = anthropicMessages.toTranscript([
+      { role: "user", content: "when was it released?" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "server_tool_use",
+            id: "srvtoolu_1",
+            name: "web_search",
+            input: { query: "node 22 release" },
+          },
+          {
+            type: "web_search_tool_result",
+            tool_use_id: "srvtoolu_1",
+            content: [
+              {
+                type: "web_search_result",
+                title: "Node v22",
+                url: "https://nodejs.org/v22",
+                encrypted_content: "x",
+              },
+            ],
+          },
+          {
+            type: "server_tool_use",
+            id: "srvtoolu_2",
+            name: "web_fetch",
+            input: { url: "https://nodejs.org/v22" },
+          },
+          {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtoolu_2",
+            content: {
+              type: "web_fetch_result",
+              url: "https://nodejs.org/v22",
+              content: {
+                type: "document",
+                source: { type: "text", media_type: "text/plain", data: "Released 2024-04-24." },
+              },
+            },
+          },
+          // A failed search has an error object where the results would be: nothing to carry.
+          {
+            type: "web_search_tool_result",
+            tool_use_id: "srvtoolu_3",
+            content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
+          },
+          { type: "text", text: "April 24, 2024." },
+        ],
+      },
+    ])
+
+    expect(transcript).toEqual([
+      { role: "user", text: "when was it released?" },
+      {
+        role: "assistant",
+        text: [
+          '[web_search: {"query":"node 22 release"}]',
+          "Node v22 — https://nodejs.org/v22",
+          '[web_fetch: {"url":"https://nodejs.org/v22"}]',
+          "Released 2024-04-24.",
+          "April 24, 2024.",
+        ].join("\n"),
+        calls: [],
+      },
+    ])
+    // No server block was mistaken for a call or a result this harness has to answer.
+    expect(openaiResponses.fromTranscript(transcript)).toHaveLength(2)
+  })
+
   it("leaves a conversation in its own dialect untouched", async () => {
     const env = tempEnv()
 
@@ -331,6 +402,34 @@ describe("the OpenAI HTTP model", () => {
       instructions: "be brief",
       stream: true,
     })
+  })
+
+  it("offers OpenAI's web search, and rebuilds a response whose last event left its output empty", async () => {
+    // The ChatGPT backend does this when a response used web search.
+    const search = { type: "web_search_call", status: "completed", action: { type: "search", query: "q" } }
+    const message = { type: "message", role: "assistant", content: [{ type: "output_text", text: "Found." }] }
+
+    const local = await serve(() => ({
+      status: 200,
+      body: sse([
+        { type: "response.output_item.done", output_index: 1, item: message },
+        { type: "response.output_item.done", output_index: 0, item: search },
+        { type: "response.completed", response: { model: "m1", status: "completed", output: [] } },
+      ]),
+    }))
+
+    const exit = await call(openaiModel({ ...settings(local.base, "responses"), web: true }))
+    const plain = await call(openaiModel(settings(local.base, "responses")))
+
+    local.close()
+
+    const raw = Exit.isSuccess(exit) ? exit.value : ""
+
+    expect(JSON.parse(raw).output).toEqual([search, message])
+    expect(openaiResponses.reply(raw)?.text).toBe("Found.")
+    expect(JSON.parse(local.requests[0]?.body ?? "{}").tools.at(-1)).toEqual({ type: "web_search" })
+    expect(Exit.isSuccess(plain)).toBe(true)
+    expect(local.requests[1]?.body).not.toContain("web_search")
   })
 
   it("reports rejected credentials with the provider's hint", async () => {
