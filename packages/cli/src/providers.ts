@@ -138,7 +138,7 @@ export class Providers {
         id: model.id,
         name: model.name ?? model.id,
         provider: provider.id,
-        efforts: [],
+        efforts: provider.kind === "openai-compatible" ? [] : openaiEfforts(model.id),
         maxOutput: model.max_output,
       }))
 
@@ -215,7 +215,10 @@ export class Providers {
       throw new Error("Not signed in to ChatGPT. Run /provider login.")
 
     // Only OpenAI's reasoning models take an effort; other servers get none.
-    const levels = provider.kind === "openai-compatible" ? [] : openaiEfforts(settings.model)
+    const listed = this.catalog.find((model) => model.provider === provider.id && model.id === settings.model)
+
+    const levels =
+      provider.kind === "openai-compatible" ? [] : (listed?.efforts ?? openaiEfforts(settings.model))
 
     // Ask for no more than the model can write; servers reject a larger max_tokens.
     const limit =
