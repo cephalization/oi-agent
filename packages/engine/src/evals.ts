@@ -16,6 +16,7 @@ import { branchTo, loadSession, type TurnSummary } from "./fold.ts"
 import {
   type AnnotationBody,
   type AnnotationFile,
+  type Billing,
   type EndedSpan,
   type SessionSpanRef,
   type SpanFile,
@@ -386,7 +387,13 @@ export interface Verdict {
 
 /** One model call made on behalf of an evaluator, reported so it can be traced and costed. */
 export interface ModelUsage {
+  /** The model family or API, for `llm.system`. */
+  readonly system: string
+  /** Who served the call, for `llm.provider`. */
+  readonly vendor: string
+  /** The configured provider's id. */
   readonly provider: string
+  readonly billing: Billing
   readonly model: string
   readonly prompt: string
   readonly completion: string
@@ -450,8 +457,8 @@ const usageSpan = (
   attributes: {
     [OI.SESSION_ID]: sessionId,
     [OI.SPAN_KIND]: "LLM",
-    [OI.LLM_SYSTEM]: usage.provider,
-    [OI.LLM_PROVIDER]: usage.provider,
+    [OI.LLM_SYSTEM]: usage.system,
+    [OI.LLM_PROVIDER]: usage.vendor,
     [OI.LLM_MODEL]: usage.model,
     [OI.INPUT_VALUE]: usage.prompt,
     [OI.INPUT_MIME]: "text/plain",
@@ -466,6 +473,7 @@ const usageSpan = (
     [OI.TOKENS_TOTAL]: usage.input_tokens + usage.output_tokens,
     [OI.TOKENS_CACHE_READ]: usage.cache_read_tokens,
     [OI.TOKENS_CACHE_WRITE]: usage.cache_write_tokens,
+    [OI.METADATA]: writeMetadata(undefined, { provider: usage.provider, billing: usage.billing }),
   },
 })
 

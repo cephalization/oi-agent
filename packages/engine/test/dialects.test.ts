@@ -243,6 +243,8 @@ const sse = (events: ReadonlyArray<Json>, done = false): string =>
 
 const settings = (base: string, api: OpenAISettings["api"]): OpenAISettings => ({
   provider: "local",
+  vendor: "local",
+  billing: "api",
   api,
   baseUrl: base,
   model: "m1",

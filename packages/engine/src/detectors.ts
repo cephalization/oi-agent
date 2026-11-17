@@ -50,13 +50,17 @@ const complete = async (model: ModelLayer, prompt: string, report: DetectorRepor
     )
 
     const attributes = new Map([
-      ...service.dialect.requestAttributes(request, service.provider),
+      ...service.dialect.requestAttributes(request, service.vendor),
       ...service.dialect.responseAttributes(raw),
     ])
 
     attributes.set(
       OI.METADATA,
-      writeMetadata(undefined, { api: service.dialect.api, provider: service.provider }),
+      writeMetadata(undefined, {
+        api: service.dialect.api,
+        provider: service.provider,
+        billing: service.billing,
+      }),
     )
 
     const completion: Completion = { attributes, text: service.dialect.reply(raw)?.text ?? "" }

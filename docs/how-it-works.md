@@ -507,6 +507,15 @@ These work best on the session you are in, because the evidence is right there.
   list, and requests ask for no more than each model's `max_output`. Keys are
   keychain accounts named after the providers, and a ChatGPT sign-in (OAuth with PKCE, `source/engine/src/chatgpt.ts`)
   is a keychain entry holding a refreshable token.
+  A provider is a way of reaching models, not a vendor: `chatgpt` and
+  `openai` both reach OpenAI. So an `LLM` span has the vendor in
+  `llm.provider` (`vendorOf`: `openai`, `anthropic`, a compatible entry's
+  optional `vendor`, else its id), oi's provider id in
+  `metadata.oi_agent.provider`, which is what oi itself reads, and
+  `metadata.oi_agent.billing`: `plan` for the ChatGPT sign-in, whose calls
+  are not billed per token, and `api` otherwise. Phoenix prices every call
+  from its model name, so plan calls still show a list-price cost there;
+  `billing` is how to tell them apart.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge.

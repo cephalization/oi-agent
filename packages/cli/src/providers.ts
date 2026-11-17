@@ -12,6 +12,7 @@ import {
   chatgptAccount,
   chatgptSignIn,
   chatgptSignOut,
+  billingOf,
   chatgptToken,
   checkModel,
   type Config,
@@ -33,6 +34,7 @@ import {
   providerIdFrom,
   saveProviders,
   secretAccount,
+  vendorOf,
   setSecret,
 } from "@oi-agent/engine"
 import { fitEffort } from "./tui/modes.ts"
@@ -222,6 +224,8 @@ export class Providers {
 
     return openaiModel({
       provider: provider.id,
+      vendor: vendorOf(provider),
+      billing: billingOf(provider),
       // OpenAI's own Responses API keeps its prompt cache per connection, so use one.
       // Other servers get plain HTTP; OI_AGENT_OPENAI_TRANSPORT=http forces it everywhere.
       transport:

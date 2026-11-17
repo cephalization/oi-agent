@@ -193,10 +193,10 @@ export const anthropicMessages: Dialect = {
       : { role: "user", content: parts.map((text) => ({ type: "text", text })) },
   toTranscript,
   fromTranscript,
-  requestAttributes: (raw) =>
+  requestAttributes: (raw, vendor) =>
     Option.match(parseRequest(raw), {
       onNone: () => new Map(),
-      onSome: (request) => requestAttributes(request, raw),
+      onSome: (request) => requestAttributes(request, raw, vendor),
     }),
   responseAttributes: (raw) =>
     Option.match(parseResponse(raw), {

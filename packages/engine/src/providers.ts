@@ -7,6 +7,7 @@
  * API keys and ChatGPT tokens are in the keychain, one account per provider.
  */
 import { Schema } from "effect"
+import type { Billing } from "./format.ts"
 import type { ModelOption } from "./model.ts"
 
 export const ProviderKind = Schema.Literals(["anthropic", "openai", "chatgpt", "openai-compatible"])
@@ -32,6 +33,12 @@ export const ProviderConfig = Schema.Struct({
   kind: ProviderKind,
   /** The API root, for example `http://localhost:11434/v1`. */
   base_url: Schema.optionalKey(Schema.String),
+  /**
+   * Who serves the models, as an OpenInference `llm.provider` value (`groq`,
+   * `mistralai`, `deepseek`, …), for a compatible server run by a known vendor.
+   * Without it, calls are recorded under the provider's id.
+   */
+  vendor: Schema.optionalKey(Schema.String),
   /** Which OpenAI API to speak. Compatible servers default to Chat Completions. */
   api: Schema.optionalKey(Schema.Literals(["chat", "responses"])),
   /** The models to offer. Without it, the server's own `/models` list is used. */
@@ -65,6 +72,20 @@ export const findProvider = (
   configured: ReadonlyArray<ProviderConfig>,
   id: string,
 ): ProviderConfig | undefined => allProviders(configured).find((provider) => provider.id === id)
+
+/**
+ * Who serves a provider's calls, for `llm.provider`. A provider is a way of
+ * reaching models: the ChatGPT plan sign-in and an OpenAI API key both reach
+ * OpenAI. A compatible server with no declared vendor is known only by its id.
+ */
+export const vendorOf = (provider: ProviderConfig): string =>
+  provider.kind === "anthropic"
+    ? "anthropic"
+    : provider.kind === "openai" || provider.kind === "chatgpt"
+      ? "openai"
+      : (provider.vendor ?? provider.id)
+
+export const billingOf = (provider: ProviderConfig): Billing => (provider.kind === "chatgpt" ? "plan" : "api")
 
 /** The keychain account holding a provider's API key, or its ChatGPT sign-in. */
 export const secretAccount = (provider: ProviderConfig): string =>
