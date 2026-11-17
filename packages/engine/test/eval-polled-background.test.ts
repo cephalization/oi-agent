@@ -14,6 +14,13 @@ import type { Json } from "../src/wire.ts"
 import { outcomeCheck } from "./fixtures/eval-background.ts"
 import { tempStore } from "./helpers.ts"
 
+/** Labels of the outcome checks: the results that settle a launch turn, not each turn's own verdict. */
+const outcomes = (store: Store, sessionId: string): Array<string | undefined> =>
+  store
+    .listAnnotations(sessionId)
+    .filter((a) => a.annotation.metadata?.["deferred_from"] !== undefined)
+    .map((a) => a.annotation.label)
+
 const say = (text: string): Json => ({ content: [{ type: "text", text }], stop_reason: "end_turn" })
 
 const use = (name: string, input: Json): Json => ({
@@ -76,11 +83,11 @@ for (const tool of ["job_status", "job_kill"]) {
       try {
         await engine.submit(sessionId, { text: "Start verification", userId: "tester" })
         await engine.idle(sessionId)
-        expect(store.listAnnotations(sessionId).map((a) => a.annotation.label)).toEqual(["pending"])
+        expect(outcomes(store, sessionId)).toEqual(["pending"])
         engine.attend(sessionId)
         await engine.submit(sessionId, { text: "Observe the result", userId: "tester" })
         await engine.idle(sessionId)
-        expect(store.listAnnotations(sessionId).map((a) => a.annotation.label)).toEqual(["pending", expected])
+        expect(outcomes(store, sessionId)).toEqual(["pending", expected])
         expect(judged).toHaveLength(1)
         expect(judged[0]?.judged).toContain(tool === "job_status" ? "exited with code 0" : "killed after")
         expect(judged[0]?.judged).toContain("original launch turn")
@@ -111,7 +118,9 @@ for (const tool of ["job_status", "job_kill"]) {
           store: reopened,
           config,
           approvals: "allow",
-          model: scriptedModel(() => say("Unexpected duplicate")),
+          model: scriptedModel((_call, step) =>
+            step === 0 ? use(tool, { id: job.id }) : say("Still done."),
+          ),
         })
 
         try {
@@ -124,6 +133,20 @@ for (const tool of ["job_status", "job_kill"]) {
             (await runEvals({ ...runtime, store: reopened }, sessionId, turns[1]!.trace_id))[0]?.annotation
               .label,
           ).toBe("skipped")
+
+          // Asking about the job again later is not a second result.
+          await after.submit(sessionId, { text: "Check that old job again", userId: "tester" })
+          await after.idle(sessionId)
+
+          const again = loadSession(reopened, sessionId).turns[2]!
+
+          const asked = reopened
+            .readTrace(sessionId, again.trace_id)
+            .ended.filter((span) => kindOf(span) === "TOOL")
+
+          expect(asked).toHaveLength(1)
+          expect(readMetadata(asked[0]!).delivers).toBeUndefined()
+          expect(readMetadata(again.root).observed_results).toBeUndefined()
         } finally {
           after.close()
         }
@@ -191,7 +214,7 @@ it("recovers an interrupted polled observation from its durable inbox without lo
     await engine.submit(sessionId, { text: "Wait for verification", userId: "tester" })
     await engine.idle(sessionId)
     expect(judged).toHaveLength(0)
-    expect(store.listAnnotations(sessionId).map((a) => a.annotation.label)).toEqual(["pending", "pending"])
+    expect(outcomes(store, sessionId)).toEqual(["pending"])
     expect(pendingInbox(store, sessionId)).toHaveLength(1)
     // Also cover death after a reported marker exists but before an observing TOOL can be committed.
     const claimed = engine.jobs.list(sessionId)[0]!
@@ -214,11 +237,7 @@ it("recovers an interrupted polled observation from its durable inbox without lo
       await after.settled(sessionId)
       expect(judged).toHaveLength(1)
       expect(judged[0]?.judged).toContain("recovered-verification")
-      expect(reopened.listAnnotations(sessionId).map((a) => a.annotation.label)).toEqual([
-        "pending",
-        "pending",
-        "pass",
-      ])
+      expect(outcomes(reopened, sessionId)).toEqual(["pending", "pass"])
       expect(pendingInbox(reopened, sessionId)).toEqual([])
       expect(reopened.listInbox(sessionId)).toHaveLength(1)
       expect(loadSession(reopened, sessionId).turns).toHaveLength(3)

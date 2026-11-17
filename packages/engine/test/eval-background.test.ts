@@ -109,15 +109,19 @@ describe("opt-in background outcome checks", () => {
       input: "The tests are done, everything passed (no attributed delivery).",
     })
 
-    expect((await evaluate(unrelated.traceId))[0]?.annotation.label).toBe("pending")
+    // A turn that launched nothing is judged on its own; the launch stays pending without a second record.
+    expect((await evaluate(unrelated.traceId)).map((a) => a?.annotation.label)).toEqual(["skipped"])
 
     const partial = fixture.turn({
       deliveries: launch.deliveries.slice(0, 1),
       input: "job result: pnpm test exited 0. JOB_SUCCESS",
     })
 
-    expect((await evaluate(partial.traceId))[0]?.annotation.label).toBe("pending")
+    expect((await evaluate(partial.traceId)).map((a) => a?.annotation.label)).toEqual(["skipped"])
     expect(judged).toHaveLength(0)
+    expect(
+      store.listAnnotations(fixture.sessionId).filter((a) => a.annotation.label === "pending"),
+    ).toHaveLength(1)
 
     const child = new BackgroundFixture(store, root)
     const childResult = child.turn({ output: "42 passed. TASK_SUCCESS" })
@@ -186,11 +190,11 @@ describe("opt-in background outcome checks", () => {
     const first = fixture.turn({ launches: ["job"] })
     await evaluate(first.traceId)
     const second = fixture.turn({ launches: ["task"] })
-    expect((await evaluate(second.traceId)).map((a) => a?.annotation.label)).toEqual(["pending", "pending"])
+    expect((await evaluate(second.traceId)).map((a) => a?.annotation.label)).toEqual(["pending"])
     const oneDone = fixture.turn({ deliveries: first.deliveries, input: "first completed successfully" })
-    expect((await evaluate(oneDone.traceId)).map((a) => a?.annotation.label)).toEqual(["pass", "pending"])
+    expect((await evaluate(oneDone.traceId)).map((a) => a?.annotation.label)).toEqual(["pass", "skipped"])
     const allDone = fixture.turn({ deliveries: second.deliveries, input: "second completed successfully" })
-    expect((await evaluate(allDone.traceId)).map((a) => a?.annotation.label)).toEqual(["pass"])
+    expect((await evaluate(allDone.traceId)).map((a) => a?.annotation.label)).toEqual(["pass", "skipped"])
     expect(judged).toHaveLength(2)
   })
 
@@ -213,7 +217,7 @@ describe("opt-in background outcome checks", () => {
     expect(judged[0]?.tool_input).not.toContain("delegate")
   })
 
-  it("does not resolve a pending obligation from delivery on another fork", async () => {
+  it("gives up a pending obligation whose result was delivered on another fork", async () => {
     const { fixture, evaluate, judged } = setup()
     const launch = fixture.turn({ launches: ["job"] })
     await evaluate(launch.traceId)
@@ -226,8 +230,21 @@ describe("opt-in background outcome checks", () => {
 
     expect((await evaluate(fork.traceId))[0]?.annotation.label).toBe("skipped")
     const continuation = fixture.turn({ previous: launch.ref, input: "continue waiting" })
-    expect((await evaluate(continuation.traceId))[0]?.annotation.label).toBe("pending")
+    const [abandoned] = await evaluate(continuation.traceId)
+
+    // The result is delivered once per session, so this branch would otherwise wait forever.
+    expect(abandoned?.annotation).toMatchObject({
+      label: "skipped",
+      metadata: { deferred_from: launch.traceId },
+    })
+    expect(abandoned?.annotation.explanation).toContain("another branch")
     expect(judged).toHaveLength(0)
+
+    const later = fixture.turn({ previous: continuation.ref, input: "and on" })
+
+    expect((await evaluate(later.traceId)).map((a) => a?.annotation.metadata?.["deferred_from"])).toEqual([
+      undefined,
+    ])
   })
 
   it("waits for task_message that starts a new runner, then resolves its own linked outcome", async () => {
