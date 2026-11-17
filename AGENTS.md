@@ -68,11 +68,14 @@ given `--force`).
 Under `bin/oi`, `/reload` restarts on your edited sources in the same
 session, and falls back to the last `pnpm build` if they fail to start.
 
-Housekeeping: scenarios close their own Rex sessions and sandboxes. After an
-interrupted run, check `rex ls` for leftover `oi-e2e-*` sessions and kill
-them. For exploring a TUI by hand, use Rex (the `rex` skill), not tmux;
-outside a Rex terminal the CLI is at
-`/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex`.
+Housekeeping: scenarios share the persistent Rex session named exactly `oi e2e`
+across workers and concurrent runs. Each terminal has its own tab; cleanup closes
+only its owned pane, never the shared session. After an interrupted run, inspect
+`rex session inspect 'oi e2e' --json` and close only panes belonging to that run
+by full ID; other suites may still be running. Do not kill `oi e2e` or sweep
+`oi-e2e-*` resources. See `packages/e2e/README.md` for lock recovery. For exploring
+a TUI by hand, use Rex (the `rex` skill), not tmux; outside a Rex terminal the CLI
+is at `/Applications/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex`.
 Create your own session, and close it when done.
 
 ## Commits and releases

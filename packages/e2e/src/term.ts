@@ -1,7 +1,7 @@
 /**
  * Drive a program in a real terminal. Scenarios use the `Terminal`
  * interface; `RexTerminal` implements it with the Rex CLI (a headless Rex
- * session per scenario, 80×24, closed afterwards). A second implementation
+ * session shared by all runs, with owned panes closed afterwards). A second implementation
  * (node-pty plus a headless xterm) would let the same scenarios run where
  * Rex is not installed, such as GitHub Actions.
  */
@@ -9,6 +9,7 @@ import { execFile } from "node:child_process"
 import * as fs from "node:fs"
 import { setTimeout as sleep } from "node:timers/promises"
 import { Option, Schema } from "effect"
+import { sharedRexSession } from "./rex-session.ts"
 
 export interface Terminal {
   /** Type text exactly as given. */
@@ -104,8 +105,7 @@ export const findRex = async (): Promise<string | undefined> => {
 
 const Created = Schema.fromJsonString(
   Schema.Struct({
-    session_id: Schema.String,
-    initial_windows: Schema.Array(Schema.Struct({ block_ids: Schema.Array(Schema.String) })),
+    block_ids: Schema.Array(Schema.String),
   }),
 )
 
@@ -132,21 +132,38 @@ export class RexTerminal implements Terminal {
     this.block = block
   }
 
-  /** Start `argv` in a new headless Rex session labelled `label`, in `cwd`. */
+  /** Start `argv` in an owned tab labelled `label`, in the shared `oi e2e` session. */
   static async start(label: string, cwd: string, argv: ReadonlyArray<string>): Promise<RexTerminal> {
     const rex = await findRex()
 
     if (rex === undefined) throw new Error("Rex is not installed; terminal scenarios need it.")
 
+    const session = await sharedRexSession((args) => exec(rex, args))
+
     const created = decodeCreated(
-      await exec(rex, ["new", label, "--keep-open", "--shell", "none", "-c", cwd, "--json", "--", ...argv]),
+      await exec(rex, [
+        "window",
+        "new",
+        "-s",
+        session,
+        label,
+        "--focus=false",
+        "--keep-open",
+        "--shell",
+        "none",
+        "-c",
+        cwd,
+        "--json",
+        "--",
+        ...argv,
+      ]),
     )
 
-    const block = created.initial_windows[0]?.block_ids[0]
+    const block = created.block_ids[0]
 
-    if (block === undefined) throw new Error(`Rex created session ${created.session_id} without a terminal.`)
+    if (block === undefined) throw new Error(`Rex created a tab in ${session} without a terminal.`)
 
-    return new RexTerminal(rex, created.session_id, block)
+    return new RexTerminal(rex, session, block)
   }
 
   private target(): Array<string> {
@@ -219,7 +236,9 @@ export class RexTerminal implements Terminal {
     if (this.closed) return
 
     this.closed = true
-    await exec(this.rex, ["kill", this.session]).catch(() => undefined)
+    // Close the exact pane we created, never the session or even a tab that
+    // might now contain another test's pane. Rex retains the empty session.
+    await exec(this.rex, ["block", "close", "-s", this.session, this.block]).catch(() => undefined)
   }
 }
 

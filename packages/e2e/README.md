@@ -16,8 +16,10 @@ OI_E2E_MODELS=replay pnpm e2e             # from recordings: no keys, no model c
 
 Scenario files run side by side, four at a time (`OI_E2E_WORKERS`), and the
 scenarios in a file run in order. Each has its own sandbox, model proxy and
-Rex sessions, so they share nothing by default. One that does touch
-something outside its sandbox says so with `exclusive`: the scenarios that
+Rex tabs/panes. Every terminal, across workers, worktrees and concurrent suite
+processes on this machine, uses the one persistent Rex session named exactly
+`oi e2e`. Sandboxes and model state remain isolated. One that does touch
+something else outside its sandbox says so with `exclusive`: the scenarios that
 rebuild or run the repo's `packages/cli/dist` are `exclusive: "bundle"`, and
 take turns across files. The runner prints each scenario's duration, and the
 total at the end.
@@ -41,10 +43,14 @@ workload tokens/latency. See [design and live evidence](../../docs/experiments/d
   `~/.config/oi-agent`, even with `--yolo`. `scenarios/sandbox.e2e.ts`
   checks this. It also hides your own agent instructions and skills
   (`~/.claude`, `~/.agents`, `~/.config/AGENTS.md`), so oi sees only the
-  fixture's. Elsewhere they are not hidden: run on a machine without them.
+  fixture's. Source reads of this checkout are explicitly allowed, including
+  worktrees under `~/.oi-agent`, without exposing real session/config data.
+  Elsewhere they are not hidden: run on a machine without them.
 - **Terminals** (`src/term.ts`): `tui()` starts the interactive CLI in a
-  headless Rex session (80×24) to type into and read. Every Rex session is
-  closed when the scenario ends.
+  separate tab in the shared `oi e2e` session to type into and read. Each
+  terminal records its full pane ID; cleanup closes only that pane, even if
+  another pane was moved into its tab. The shared session stays, including
+  when empty. New tabs do not steal the active tab's focus.
 - **`run()`** for `oi run`, `oi export` and anything else without a terminal.
 - **Span queries** (`src/spans.ts`): turns, tool calls with their input,
   output and approval, the model and effort of each call, the system prompt,
@@ -57,6 +63,39 @@ workload tokens/latency. See [design and live evidence](../../docs/experiments/d
 When a scenario fails, its error includes an outline of every session (turns,
 model calls, tool calls) and the last screen of each terminal. Set
 `OI_E2E_KEEP=1` to keep the sandbox of a failed scenario.
+
+## Rex ownership and interrupted runs
+
+The installed Rex CLI has no atomic get-or-create operation or unique-label
+constraint. The harness serializes exact-name discovery and windowless session
+creation with an atomic directory lock at
+`/tmp/oi-e2e-rex-session-<uid>.lock`. It is independent of checkout and `TMPDIR`,
+so independent suite processes use the same lock. Only discovery/creation is
+serialized; test terminals run concurrently in separate tabs. Full session and
+pane IDs are used thereafter, not names or tab positions. Multiple pre-existing
+sessions named `oi e2e` fail closed rather than choosing or deleting one.
+
+Normal cleanup preserves `oi e2e` and every other test's panes. After an
+interrupted run, use `rex session inspect 'oi e2e' --json` to find the interrupted
+run's `oi-e2e-<run>-<scenario>-<terminal>` tabs. Confirm their full pane IDs and
+close **only those panes** with `rex block close -s <session-id> <pane-id>`.
+Do not kill the shared session or sweep all `oi-e2e-*` resources: another suite
+may still be using them. `OI_E2E_KEEP` retains sandbox files, not terminals.
+
+Lock acquisition times out after 30 seconds. Locks are not automatically expired
+or stolen: a paused process or an outstanding session-create request could
+otherwise create a duplicate. If a creator crashes, or a creation failure cannot
+be reconciled by re-listing the session, stop all e2e processes on this machine,
+confirm no Rex create command is still outstanding, then remove the empty lock
+with `rmdir /tmp/oi-e2e-rex-session-$(id -u).lock` and retry. This does not delete
+any Rex session. An ambiguous window-create failure can leave a tab behind;
+inspect it and close only its owned panes as above rather than retrying blindly.
+
+`scenarios/rex-session.e2e.ts` exercises real Rex with two independent Node
+processes, each opening four terminals concurrently. It needs no model or
+cassette, verifies one session and distinct panes, closes one process's panes
+while continuing to drive the other's, then checks that all owned panes are gone
+and the session remains. Like other Rex tests it skips if Rex is not installed.
 
 ## Models
 

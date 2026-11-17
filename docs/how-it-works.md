@@ -588,4 +588,11 @@ independent sandboxes (`packages/e2e/src/scenario.ts`). Bounded workers
 files. The steering experiment records one JSON outcome per case/repetition,
 including whether the agent or steering detector created each evaluator,
 and attaches those rows to the scenario's Phoenix span. Ordinary Rex/proxy
-scenarios remain sequential; see `packages/e2e/README.md` for controls.
+scenarios run sequentially within a file and concurrently across files. All Rex
+terminals, including independent concurrent suite processes and worktrees, use
+one persistent session named `oi e2e`, with a separate tab/pane per terminal.
+A machine/user-wide directory lock serializes exact-name discovery and session
+creation because Rex has no atomic get-or-create. Cleanup closes only the owned
+pane IDs, never the shared session; interrupted runs require targeted pane
+cleanup, not killing the session. See `packages/e2e/README.md` for controls and
+fail-closed lock recovery.
