@@ -106,6 +106,8 @@ scenario(
       await term.line("/tasks")
       await term.waitFor(/\? Tasks · enter to choose/)
       await term.key("escape")
+      expect(jobs.state(old.job).state).toBe("running")
+      expect(jobs.state(fresh.job).state).toBe("running")
       await term.send("/attach ")
       await term.waitFor(/❯ 22222222 newer active/)
       await term.key("ctrl+u")

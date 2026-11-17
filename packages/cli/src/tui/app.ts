@@ -1728,7 +1728,8 @@ class App {
     this.program.acknowledge()
     this.lastKeyMs = Date.now()
 
-    if (data === "\u001B") {
+    // Escape in a picker goes back; only Escape at the prompt stops work.
+    if (data === "\u001B" && this.picker === undefined) {
       const entries = this.options.engine?.cancel(this.options.sessionId) ?? []
 
       this.editor.restore(
