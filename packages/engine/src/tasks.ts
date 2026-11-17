@@ -342,6 +342,7 @@ export class Tasks {
 
   /** Send a task a follow-up. It reads it after its current turn, or wakes up to. */
   message(from: Delegator, task: Task, text: string): boolean {
+    this.restore(task)
     this.store.writeInbox(task.header.id, {
       user_id: from.userId,
       text,
@@ -353,6 +354,7 @@ export class Tasks {
 
   /** A prompt typed to the task by a person looking at it, not sent by a tool call. */
   say(task: Task, userId: string, text: string): void {
+    this.restore(task)
     this.store.writeInbox(task.header.id, { user_id: userId, text })
     this.wake(task)
   }
@@ -363,6 +365,7 @@ export class Tasks {
 
     if (pendingInbox(this.store, task.header.id).length === 0) return false
 
+    this.restore(task)
     this.run(task.parentId, task.header, task.task, tool)
 
     return true
@@ -442,9 +445,55 @@ export class Tasks {
     }
   }
 
-  /** Completion must not remove the cwd needed by a later task_message or resume. */
-  tidy(_task: Task): void {
-    // Kept as a lifecycle hook for callers; worktrees and branches need explicit cleanup.
+  /** The delegator's checkout, which a task's worktree belongs to. */
+  private repository(task: Task): string | undefined {
+    const cwd = this.store.readHeader(task.parentId)?.cwd
+
+    return cwd === undefined ? undefined : git(cwd, ["rev-parse", "--show-toplevel"])
+  }
+
+  /**
+   * Remove a finished task's worktree and branch when it changed nothing:
+   * there is nothing to merge or look at, and every task would otherwise
+   * leave a checkout behind. `restore` puts it back if the task is woken.
+   */
+  tidy(task: Task): void {
+    const worktree = task.task.worktree
+    const top = this.repository(task)
+
+    if (worktree === undefined || top === undefined || !fs.existsSync(worktree.path)) return
+
+    const { commits, dirty } = this.changes(worktree)
+
+    if (commits > 0 || dirty) return
+
+    git(top, ["worktree", "remove", "--force", worktree.path], WORKTREE_TIMEOUT_MS)
+    git(top, ["branch", "-D", worktree.branch])
+  }
+
+  /** Make sure a task's directory exists before a runner starts in it, recreating a worktree that was removed. */
+  private restore(task: Task): void {
+    if (fs.existsSync(task.header.cwd)) return
+
+    const worktree = task.task.worktree
+    const top = this.repository(task)
+
+    if (worktree !== undefined && top !== undefined) {
+      git(top, ["worktree", "prune"])
+
+      // The branch is gone too when the task had changed nothing: it starts again from the same commit.
+      const args =
+        git(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${worktree.branch}`]) === undefined
+          ? ["worktree", "add", "-b", worktree.branch, worktree.path, worktree.base]
+          : ["worktree", "add", worktree.path, worktree.branch]
+
+      git(top, args, WORKTREE_TIMEOUT_MS)
+    }
+
+    if (!fs.existsSync(task.header.cwd))
+      throw new Error(
+        `Task ${task.id} cannot continue: its directory ${task.header.cwd} no longer exists. Delegate the work again.`,
+      )
   }
 
   /** Where a task's work is, for the delegating agent. */
@@ -453,7 +502,8 @@ export class Tasks {
 
     if (worktree === undefined) return undefined
 
-    if (!fs.existsSync(worktree.path)) return `worktree: missing at ${worktree.path}`
+    if (!fs.existsSync(worktree.path))
+      return "worktree: removed, since the task changed nothing (a follow-up message recreates it)"
 
     const { commits, dirty } = this.changes(worktree)
 

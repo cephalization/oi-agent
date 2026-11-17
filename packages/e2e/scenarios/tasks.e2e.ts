@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import {
+  Jobs,
   type EndedSpan,
   type EngineMetadata,
   readMetadata,
@@ -83,6 +84,10 @@ const release = (s: Scenario): void => fs.writeFileSync(path.join(s.sandbox.cwd,
 
 /** The harness turns delegation off for every other scenario. */
 const DELEGATING = new Map([["delegation", "auto"]])
+
+/** What the first delivery turn of a session told the model. */
+const readFirstDelivery = (s: Scenario, session: string): string =>
+  s.spans.turns(session).find((turn) => readMetadata(turn.root).delivers !== undefined)?.input ?? ""
 
 describe("delegated tasks", () => {
   scenario(
@@ -190,9 +195,9 @@ describe("delegated tasks", () => {
 
       expect(first?.output?.toLowerCase()).toContain("heron")
       expect(child.cwd).toBe(child.task?.worktree?.path)
-      expect(fs.existsSync(child.cwd)).toBe(true)
 
-      // The next process delivers the result, then sends the task a follow-up, which starts a new runner.
+      // The next process delivers the result. The task changed nothing, so its worktree goes with it;
+      // the follow-up then puts the worktree back and starts a new runner in it.
       expectOk(
         await s.run([
           "run",
@@ -207,9 +212,17 @@ describe("delegated tasks", () => {
       const again = await s.spans.settledTurns(child.id, 2)
       const message = s.spans.tools(parent).find((call) => call.name === "task_message")?.span
 
+      expect(readFirstDelivery(s, parent)).toContain("worktree: removed, since the task changed nothing")
       expect(again[1]?.output).toContain("HERON")
-      expect(fs.existsSync(child.cwd)).toBe(true)
-      expect(git(child.cwd, "branch", "--show-current")).toBe(child.task?.worktree?.branch)
+
+      // The follow-up's runner started in the recreated worktree. It changed nothing either,
+      // so once its result is written the worktree and branch are gone again.
+      const jobs = new Jobs(path.dirname(runners))
+      const cwds = fs.readdirSync(runners).map((job) => jobs.read(parent, job)?.cwd)
+
+      expect(cwds).toEqual([child.cwd, child.cwd])
+      expect(fs.existsSync(child.cwd)).toBe(false)
+      expect(git(s.sandbox.cwd, "branch", "--list", child.task?.worktree?.branch ?? "")).toBe("")
       expect(readMetadata(again[1]!.root).origin).toEqual({
         session_id: parent,
         trace_id: message?.context.trace_id,

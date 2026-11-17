@@ -152,7 +152,7 @@ describe("bash", () => {
 })
 
 describe("background jobs", () => {
-  it("a missing cwd throws without a later unhandled spawn error and cleans up the job", async () => {
+  it("a missing cwd is refused by name, before anything is started", () => {
     const s = setup()
 
     expect(() =>
@@ -162,11 +162,9 @@ describe("background jobs", () => {
         cwd: path.join(s.store.home, "missing"),
         tool: { trace_id: "trace", span_id: "span" },
       }),
-    ).toThrow(/Failed to start command/)
+    ).toThrow(/Failed to start command: the directory .*missing does not exist/)
 
-    // Node emits spawn's error on the next tick, after start has thrown.
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(fs.readdirSync(path.join(s.store.home, "jobs", SESSION))).toEqual([])
+    expect(fs.existsSync(path.join(s.store.home, "jobs", SESSION))).toBe(false)
   })
 
   it("job_status shows a running job's output, and waiting for its end reports it instead of delivering it", async () => {

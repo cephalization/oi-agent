@@ -81,10 +81,13 @@ describe("tasks", () => {
     expect(s.tasks.status(task).state).toBe("cancelled")
   })
 
-  it("an unchanged worktree and branch survive completion so a task message can resume", async () => {
+  it("an unchanged worktree is removed with its branch, and comes back when the task is sent a message", async () => {
     const s = setup("true")
     const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "worktree" })
     const worktree = task.task.worktree!
+
+    const branches = (): string =>
+      execFileSync("git", ["-C", s.cwd, "branch", "--list", worktree.branch], { encoding: "utf8" })
 
     expect(worktree.path).toBe(path.join(s.store.home, "worktrees", task.id))
     expect(worktree.branch).toBe(`oi/fix-the-thing-${task.id}`)
@@ -97,22 +100,42 @@ describe("tasks", () => {
 
     s.tasks.tidy(task)
 
-    // The runner left without a turn: that is a failure, and the report says where to look.
+    // The runner left without a turn: that is a failure, and there is nothing to look at.
     expect(status.state).toBe("failed")
     expect(s.tasks.report(task, status)).toContain("It left no report")
-    expect(s.tasks.report(task, status)).toContain(`worktree: ${worktree.path}`)
-    expect(fs.existsSync(worktree.path)).toBe(true)
-    expect(
-      execFileSync("git", ["-C", s.cwd, "branch", "--list", worktree.branch], { encoding: "utf8" }),
-    ).toContain(worktree.branch)
+    expect(s.tasks.report(task, status)).toContain("worktree: removed, since the task changed nothing")
+    expect(fs.existsSync(worktree.path)).toBe(false)
+    expect(branches()).toBe("")
 
     s.tasks.message(s.from, task, "Resume in the same checkout.")
 
     const again = s.tasks.find(s.parent.id, task.id)!
 
+    expect(fs.existsSync(path.join(worktree.path, "README.md"))).toBe(true)
+    expect(branches()).toContain(worktree.branch)
     expect(again.runners).toHaveLength(2)
     expect(again.job.cwd).toBe(task.header.cwd)
     await expect(s.jobs.ended(again.job)).resolves.toMatchObject({ state: "exited", code: 0 })
+  })
+
+  it("a task whose directory is gone for good refuses a message, and leaves nothing queued", () => {
+    const s = setup("sleep 30")
+
+    const task = s.tasks.delegate(
+      { ...s.from, cwd: fs.mkdtempSync(path.join(os.tmpdir(), "oi-gone-")) },
+      {
+        ...BRIEF,
+        isolation: "shared",
+      },
+    )
+
+    s.tasks.cancel(task)
+    fs.rmSync(task.header.cwd, { recursive: true })
+
+    const queued = pendingInbox(s.store, task.header.id).length
+
+    expect(() => s.tasks.message(s.from, task, "Continue.")).toThrow(/no longer exists/)
+    expect(pendingInbox(s.store, task.header.id)).toHaveLength(queued)
   })
 
   it("a worktree with work in it is kept and described", async () => {
@@ -200,6 +223,39 @@ describe("tasks", () => {
     expect(s.jobs.isReported(again.job)).toBe(true)
     expect(s.store.listInbox(s.parent.id)).toHaveLength(1)
     await s.jobs.ended(again.job)
+  })
+
+  it("task_cancel on a task that already ended says so and returns the report nobody had read", async () => {
+    const s = setup("true")
+    const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "shared" })
+
+    await s.jobs.ended(task.job)
+
+    const cancel = taskTools.find((tool) => tool.name === "task_cancel")!
+    const texts: Array<string> = []
+
+    const outcome = await Effect.runPromise(
+      cancel.run(
+        { id: task.id },
+        {
+          cwd: s.cwd,
+          emit: () => undefined,
+          sessionId: s.parent.id,
+          span: { trace_id: "e".repeat(32), span_id: "f".repeat(16) },
+          jobs: s.jobs,
+          tasks: s.tasks,
+          userId: "tony",
+          models: MODELS,
+          complete: (_delivery, text) => texts.push(text),
+        },
+      ),
+    )
+
+    expect(outcome.output).toContain("had already ended, so nothing was stopped")
+    expect(outcome.output).not.toContain("Stopped task")
+    // The same text the delivery would have carried: the model is not left with a one-line summary.
+    expect(outcome.output).toContain(s.tasks.report(task, s.tasks.status(task)))
+    expect(texts).toEqual([outcome.output])
   })
 
   it("the job tools leave a task's runner to the task tools", async () => {
