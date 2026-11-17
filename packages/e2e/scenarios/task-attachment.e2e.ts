@@ -1,7 +1,10 @@
 /**
- * Directly opening a task must attend its delegator, just as /attach does.
+ * Directly opening a task answers its approvals, as /attach does, but leaves its
+ * delegator's inbox alone until the delegator itself is opened.
  * Live only: parent and task model calls race, and their results name per-run task IDs.
  */
+import * as fs from "node:fs"
+import * as path from "node:path"
 import { readMetadata } from "@oi-agent/engine"
 import { expect } from "vite-plus/test"
 import { scenario } from "../src/scenario.ts"
@@ -62,12 +65,23 @@ scenario(
     expect(allowed).toHaveLength(1)
     expect(allowed[0]?.output).toContain("recovered-approval")
     expect(readMetadata(allowed[0]!.span).approval?.decision).toBe("allow")
-    // Wait for the runner's result before sending more work: one runner can batch several prompts.
-    await s.spans.settledTurns(parent, 3)
+    // The task's runner leaves. Its result is for the delegator, which this terminal has not
+    // opened, so no turn runs there. (Waiting for the runner also keeps the next prompt out of its batch.)
+    const runners = path.join(s.sandbox.home, "jobs", parent)
 
-    // Keep the same approval owner across detach/attach, without re-running the task or duplicating requests.
+    await s.spans.waitFor("the task's runner to exit", () =>
+      fs.readdirSync(runners).every((job) => fs.existsSync(path.join(runners, job, "exit")))
+        ? true
+        : undefined,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    expect(s.spans.turns(parent)).toHaveLength(2)
+
+    // Opening the delegator delivers it. The approval owner stays the same across detach and
+    // attach, without re-running the task or duplicating requests.
     await restarted.line("/detach")
     await restarted.waitFor(new RegExp(`session ${parent.slice(0, 13)}`))
+    await s.spans.settledTurns(parent, 3)
     await restarted.line(`/attach ${task}`)
     await restarted.waitFor(new RegExp(`task ${task} · /detach to return`))
     await restarted.line(`${callBash("echo denied-approval")} Then reply with just: done.`)

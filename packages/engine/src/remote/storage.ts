@@ -297,8 +297,6 @@ const blocker = (store: Store, sessionId: string): string | undefined => {
   // Phoenix only receives ended spans: an unfinished turn would be lost.
   if (traces.some((trace) => trace.open.length > 0)) return "it has a turn that has not finished"
 
-  if (pendingInbox(store, sessionId).length > 0) return "it has a queued prompt that has not run"
-
   // Jobs live outside the session tree, including the runners of delegated
   // tasks. Their results still need this session even between turns.
   const jobs = jobsOf(store)
@@ -308,6 +306,9 @@ const blocker = (store: Store, sessionId: string): string | undefined => {
     .some((job) => jobs.state(job).state === "running" || !jobs.isReported(job))
 
   if (outstanding) return "it has outstanding background work"
+
+  // After the jobs: one that ends between the two checks has left its result here.
+  if (pendingInbox(store, sessionId).length > 0) return "it has a queued prompt that has not run"
 
   // A task's own runner is a job of its delegator, not of the task session.
   const parentId = store.readHeader(sessionId)?.parent?.session_id

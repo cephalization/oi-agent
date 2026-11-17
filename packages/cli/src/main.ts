@@ -758,7 +758,7 @@ const interactive = async (): Promise<void> => {
 
   let first = true
   let reloading: string | undefined
-  let attended: string | undefined
+  let attended: { readonly id: string; readonly serving: boolean } | undefined
 
   // Listed in the background for /model and effort cycling; a provider that fails just has no list.
   void providers.refresh()
@@ -793,13 +793,22 @@ const interactive = async (): Promise<void> => {
     const owner =
       header?.task !== undefined && header.parent !== undefined ? header.parent.session_id : sessionId
 
-    // The runner owns a task's turns; this terminal attends its delegator for results and approvals.
-    // Keep that attendance across parent/task switches, including when the first view is a task.
-    if (attended !== owner) {
-      if (attended !== undefined) engine.leave(attended)
+    const serving = owner === sessionId
 
+    if (attended?.id !== owner && attended !== undefined) {
+      engine.leave(attended.id)
+      attended = undefined
+    }
+
+    // The runner owns a task's turns; this terminal answers its approvals. It runs the
+    // delegator's turns (results, queued prompts) only once the delegator has been opened
+    // here: a task opened directly may belong to a conversation that is busy elsewhere.
+    if (serving && attended?.serving !== true) {
       engine.attend(owner)
-      attended = owner
+      attended = { id: owner, serving: true }
+    } else if (attended === undefined) {
+      engine.watch(owner)
+      attended = { id: owner, serving: false }
     }
 
     // A delegated task has a runner of its own: this terminal watches and talks to it.

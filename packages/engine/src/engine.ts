@@ -36,7 +36,7 @@ import {
   stringAttr,
 } from "./format.ts"
 import { describeState, type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
-import { Tasks } from "./tasks.ts"
+import { type Task, Tasks } from "./tasks.ts"
 import { type Model, ModelError } from "./model.ts"
 import { Redactor } from "./redact.ts"
 import { readRules } from "./rules.ts"
@@ -455,7 +455,16 @@ export class Engine {
     this.attended.add(sessionId)
     this.jobs.adopt(sessionId)
     this.drainInbox(sessionId)
+    this.watch(sessionId)
+  }
 
+  /**
+   * Answer for a session's tasks without serving the session: the tool calls
+   * they need a person for are asked here, and nothing in its inbox is run.
+   * For a terminal that opened a task directly, whose delegator may be open,
+   * mid-turn, somewhere else.
+   */
+  watch(sessionId: string): void {
     if (this.watches.has(sessionId)) return
 
     this.watches.set(
@@ -602,13 +611,22 @@ export class Engine {
     })
   }
 
+  /** Whether a task with unread prompts got a new runner. One that cannot start reports as ended instead. */
+  private woke(task: Task): boolean {
+    try {
+      return this.tasks.wake(task)
+    } catch {
+      return false
+    }
+  }
+
   /** A background job ended and no tool call was watching: its result goes to the session's inbox. */
   private jobEnded(job: Job): void {
     const id = `job-${job.id}`
     const task = this.tasks.of(job)
 
     // A prompt reached the task as its runner was leaving: it is not finished, it needs a new runner.
-    if (task !== undefined && this.jobs.state(job).state === "exited" && this.tasks.wake(task)) {
+    if (task !== undefined && this.jobs.state(job).state === "exited" && this.woke(task)) {
       this.jobs.claim(job)
 
       return
