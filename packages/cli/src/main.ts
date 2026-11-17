@@ -909,22 +909,36 @@ const join = async (text: string): Promise<void> => {
   const tunnel = direct ? undefined : await tailcatForward(link.address, link.port)
   const base = tunnel === undefined ? `${link.address}:${link.port}` : `http://${tunnel.value}`
   const user = loadConfig().user
-  const peer = await joinSession(store, base, link.token, user).catch((error: Error) => fail(error.message))
 
-  await runApp({
-    store,
-    sessionId: peer.sessionId,
-    user,
-    label: `joined ${peer.info.host}'s session as ${peer.info.role}`,
-    notes: peer.statusAvailable
-      ? []
-      : [
-          "The host does not publish live task status. Update and restart the host, then rejoin to see running tasks.",
-        ],
-    peer,
+  const cleanup = (): void => {
+    tunnel?.stop()
+    store.close()
+  }
+
+  // `fail` exits the process, so the tunnel is stopped here and not in a `finally`.
+  const peer = await joinSession(store, base, link.token, user).catch((error: Error) => {
+    cleanup()
+
+    return fail(error.message)
   })
-  tunnel?.stop()
-  store.close()
+
+  try {
+    await runApp({
+      store,
+      sessionId: peer.sessionId,
+      user,
+      label: `joined ${peer.info.host}'s session as ${peer.info.role}`,
+      notes: peer.statusAvailable
+        ? []
+        : [
+            "The host does not publish live task status. Update and restart the host, then rejoin to see running tasks.",
+          ],
+      peer,
+    })
+  } finally {
+    peer.close()
+    cleanup()
+  }
 }
 
 /** The first line of standard input (a pasted key), without echoing anything else. */

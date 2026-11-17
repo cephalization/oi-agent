@@ -1,9 +1,9 @@
 import * as fs from "node:fs"
 import * as http from "node:http"
-import type { AddressInfo } from "node:net"
+import { type AddressInfo, createConnection } from "node:net"
 import * as os from "node:os"
 import * as path from "node:path"
-import { afterEach, describe, expect, it } from "vite-plus/test"
+import { afterEach, describe, expect, it, vi } from "vite-plus/test"
 import { loadConfig } from "../src/config.ts"
 import { Engine } from "../src/engine.ts"
 import { loadSession, pendingInbox } from "../src/fold.ts"
@@ -373,6 +373,89 @@ describe("peer sync", () => {
     await expect(joinSession(tempStore(), `http://127.0.0.1:${port}`, "token", "eve")).rejects.toThrow(error)
     await until(() => followers.size === 0)
     expect(followers.size).toBe(0)
+  })
+
+  it("ends a silent transport instead of leaving a joined chat open forever", async () => {
+    const { server, base } = await host()
+    const fetch = globalThis.fetch
+
+    const stalled = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(": connected\n\n"))
+      },
+    })
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
+      input === `${base}/v1/events` ? Promise.resolve(new Response(stalled)) : fetch(input, init),
+    )
+
+    try {
+      const { peer } = await join(base, server.tokens.driver, "ana")
+
+      await expect(
+        Promise.race([
+          peer.closed.then(() => "closed"),
+          new Promise<string>((resolve) => setTimeout(() => resolve("stuck"), 12_000)),
+        ]),
+      ).resolves.toBe("closed")
+    } finally {
+      vi.restoreAllMocks()
+    }
+  }, 15_000)
+
+  it("returns a prompt error after the connection is closed rather than rejecting", async () => {
+    const { server, base } = await host()
+    const { peer } = await join(base, server.tokens.driver, "ana")
+
+    await server.close()
+    await peer.closed
+    await expect(peer.prompt("too late")).resolves.toMatch(/host disconnected/i)
+  })
+
+  it("cancels a pending prompt when the event stream closes", async () => {
+    const { server, base } = await host()
+    const { peer } = await join(base, server.tokens.driver, "ana")
+    const fetch = globalThis.fetch
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (input !== `${base}/v1/prompt`) return fetch(input, init)
+
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("disconnected")), { once: true })
+      })
+    })
+
+    try {
+      const pending = peer.prompt("in flight")
+
+      await server.close()
+      await peer.closed
+      await expect(pending).resolves.toMatch(/host disconnected/i)
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  it("stops sharing without waiting for an unfinished HTTP request", async () => {
+    const { server } = await host()
+    const socket = createConnection(server.port, "127.0.0.1")
+
+    try {
+      await new Promise<void>((resolve) => socket.once("connect", resolve))
+      socket.write(
+        `POST /v1/prompt HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${server.tokens.driver}\r\nContent-Length: 100\r\n\r\n{`,
+      )
+      // Let the server enter its body reader before requesting shutdown.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      await expect(
+        Promise.race([
+          server.close().then(() => "closed"),
+          new Promise<string>((resolve) => setTimeout(() => resolve("stuck"), 500)),
+        ]),
+      ).resolves.toBe("closed")
+    } finally {
+      socket.destroy()
+    }
   })
 
   it("round-trips share links", () => {

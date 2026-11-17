@@ -642,6 +642,16 @@ These work best on the session you are in, because the evidence is right there.
   host updated and restarted, then a rejoin. A package update does not replace
   an already-running host. Malformed session/manifest responses and rejected event
   streams produce a descriptive join error rather than an Option decoding crash.
+  Leaving or stopping a share closes the peer server before stopping its
+  tunnel, so joined terminals receive the end of the event stream. EOF,
+  transport errors, or ten seconds without any stream data end the joined
+  chat with “Host disconnected. Left the joined chat.” The inactivity bound
+  handles tunnels that leave a local socket open after the remote host goes
+  away; normal idle hosts still send status every 500 ms. Disconnect also
+  aborts pending prompts, whose transport failures become messages rather
+  than unhandled rejections. The CLI always cleans up the forwarding tunnel,
+  including when joining or running the joined terminal fails. The synced
+  session files remain on disk; disconnect does not run the agent locally.
 
 ## Further reading
 

@@ -947,8 +947,8 @@ class App {
   private async stopShare(): Promise<void> {
     if (this.share === undefined) return this.say(["This session is not shared."])
 
-    this.share.tunnel.stop()
     await this.share.server.close()
+    this.share.tunnel.stop()
     this.share = undefined
     this.say(["Sharing stopped."])
   }
@@ -1908,7 +1908,7 @@ class App {
     const exit = await Promise.race([
       new Promise<AppExit>((resolve) => (this.finish = resolve)),
       peer?.closed.then((): AppExit => {
-        this.say(["The host ended the session."])
+        this.say(["Host disconnected. Left the joined chat."])
 
         return { next: undefined, reload: false }
       }) ?? new Promise<AppExit>(() => undefined),
@@ -1931,8 +1931,8 @@ class App {
 
     // Leaving: queued prompts stay queued for whoever serves the session next.
     engine?.interrupt(sessionId, true)
-    this.share?.tunnel.stop()
     await this.share?.server.close()
+    this.share?.tunnel.stop()
     peer?.close()
     stopExport?.()
     await phoenix?.flush()
