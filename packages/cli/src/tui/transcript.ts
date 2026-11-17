@@ -12,6 +12,7 @@ import {
   isoToNs,
   kindOf,
   loadSession,
+  numberAttr,
   OI,
   readMetadata,
   type SpanFile,
@@ -32,12 +33,6 @@ const MAX_RESULT_LINES = 6
 
 const seconds = (span: EndedSpan): string =>
   `${(Number(isoToNs(span.end_time) - isoToNs(span.start_time)) / 1e9).toFixed(1)}s`
-
-const numberAttr = (span: SpanFile, key: string): number => {
-  const value = Number(span.attributes[key] ?? 0)
-
-  return Number.isFinite(value) ? value : 0
-}
 
 const UNITS = ["", "k", "M", "B", "T"]
 

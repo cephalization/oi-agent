@@ -249,6 +249,13 @@ const decodeString = Schema.decodeUnknownOption(Schema.String)
 export const stringAttr = (span: SpanFile, key: string): string | undefined =>
   Option.getOrUndefined(decodeString(span.attributes[key]))
 
+/** A numeric attribute, or 0 when absent or not a number. */
+export const numberAttr = (span: SpanFile, key: string): number => {
+  const value = Number(span.attributes[key] ?? 0)
+
+  return Number.isFinite(value) ? value : 0
+}
+
 // --- metadata: where everything the spec cannot express lives --------------
 
 export const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })

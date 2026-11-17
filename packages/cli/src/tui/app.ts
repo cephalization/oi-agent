@@ -26,6 +26,8 @@ import {
   branchTo,
   listRuleVersions,
   loadSession,
+  renderMetrics,
+  sessionMetrics,
   loadEvals,
   type ModelDefault,
   type PeerConnection,
@@ -1483,6 +1485,11 @@ class App {
     if (name === "/unshare") return this.stopShare()
 
     if (name === "/export") return this.exportNow()
+
+    if (name === "/metrics")
+      return this.say(
+        renderMetrics(sessionMetrics(this.options.store, this.options.sessionId), this.screen.columns - 2),
+      )
 
     if (name === "/evals") {
       const evals = loadEvals(this.cwd()).map(

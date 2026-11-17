@@ -6,13 +6,13 @@
  */
 import { INTERRUPTED_RESULT, kindOf, OI, stringAttr } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
-import { scenario } from "../src/scenario.ts"
+import { expectOk, scenario } from "../src/scenario.ts"
 
 describe("crash and resume", () => {
   scenario(
     "a SIGKILL mid-tool leaves an interrupted turn that the next turn folds in",
     { needs: ["rex"], approvals: "allow" },
-    async ({ tui, spans }) => {
+    async ({ tui, run, spans }) => {
       const term = await tui()
 
       await term.waitFor(/Every step is an OpenInference span/)
@@ -44,6 +44,13 @@ describe("crash and resume", () => {
         },
         30_000,
       )
+
+      // Its time can still be accounted for: up to the last thing the crashed process recorded.
+      const metrics = await run(["metrics", session])
+
+      expectOk(metrics)
+      expect(metrics.stdout).toMatch(/Run exactly `sleep 25.*\(interrupted\)/)
+      expect(metrics.stdout).toMatch(/sleep 25 \(unfinished\)/)
 
       const resumed = await tui(["resume", session])
 

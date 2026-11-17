@@ -77,6 +77,11 @@ export const COMMANDS: ReadonlyArray<Command> = [
     hostOnly: true,
   },
   { name: "/unshare", summary: "stop sharing", hostOnly: true },
+  {
+    name: "/metrics",
+    summary: "where this session's time went: turns, model and tool time, slowest calls",
+    hostOnly: false,
+  },
   { name: "/evals", summary: "list the evaluators that review each turn", hostOnly: false },
   {
     name: "/verdicts",
