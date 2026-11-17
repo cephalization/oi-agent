@@ -40,6 +40,8 @@ export interface OpenAISettings {
   /** Reasoning effort to request; `undefined` sends none. */
   readonly effort: Effort | undefined
   readonly maxTokens: number
+  /** Offer OpenAI's own web search tool on Responses calls that have tools. */
+  readonly web?: boolean
   /** The bearer token for a request; `undefined` sends no authorization (a local server). */
   readonly token: () => Promise<string | undefined>
   /** What to tell the user when the credentials are rejected. */
@@ -259,6 +261,8 @@ const ResponsesEvent = Schema.Struct({
   type: Schema.String,
   delta: Nullable(Schema.String),
   output_index: Nullable(Schema.Finite),
+  /** On `response.output_item.done`: the finished item. */
+  item: Nullable(Schema.Json),
   response: Nullable(Schema.Json),
   /** Server-sent `error` events carry the message here. */
   message: Nullable(Schema.String),
@@ -308,17 +312,20 @@ const responsesFields = (settings: OpenAISettings, call: ModelCall): Array<[stri
     ["store", false],
   ]
 
-  if (call.tools.length > 0)
-    body.push([
-      "tools",
-      call.tools.map((tool) => ({
-        type: "function",
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-        strict: false,
-      })),
-    ])
+  if (call.tools.length > 0) {
+    const tools: Array<Json> = call.tools.map((tool) => ({
+      type: "function",
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      strict: false,
+    }))
+
+    // It runs on OpenAI's servers inside the call; its `web_search_call` items are replayed like any other.
+    if (settings.web === true) tools.push({ type: "web_search" })
+
+    body.push(["tools", tools])
+  }
 
   if (settings.effort !== undefined) {
     body.push(["reasoning", { effort: settings.effort, summary: "auto" }])
@@ -374,11 +381,39 @@ const runChat = async (
   return { response: JSON.stringify(accumulator.completion()), transport: "http" }
 }
 
+/** The output items of one response as they finish streaming, by position. */
+type StreamedItems = Map<number, Json>
+
+const ResponseObject = Schema.Record(Schema.String, Schema.Json)
+const decodeResponseObject = Schema.decodeUnknownOption(ResponseObject)
+const isEmptyList = Schema.is(Schema.Tuple([]))
+
+/**
+ * The final response body. The ChatGPT backend leaves `output` empty in its
+ * last event when the response used web search, having already streamed
+ * every item; the stored response is then put together from those.
+ */
+const finalResponse = (response: Json, items: StreamedItems): string =>
+  JSON.stringify(
+    Option.match(decodeResponseObject(response), {
+      onNone: () => response,
+      onSome: (body) =>
+        items.size > 0 && isEmptyList(body["output"])
+          ? { ...body, output: [...items.entries()].sort(([a], [b]) => a - b).map(([, item]) => item) }
+          : body,
+    }),
+  )
+
 /**
  * Apply one Responses stream event, from either transport. Returns the final
  * response body once the response is complete, and `undefined` until then.
  */
-const responsesEvent = (settings: OpenAISettings, data: string, hooks: ModelHooks): string | undefined => {
+const responsesEvent = (
+  settings: OpenAISettings,
+  data: string,
+  hooks: ModelHooks,
+  items: StreamedItems,
+): string | undefined => {
   const event = Option.getOrUndefined(decodeEvent(data))
 
   if (event === undefined) return undefined
@@ -394,11 +429,15 @@ const responsesEvent = (settings: OpenAISettings, data: string, hooks: ModelHook
   if (event.type === "response.function_call_arguments.delta")
     hooks.onDelta({ k: "tool_input", i: index, d: delta })
 
+  if (event.type === "response.output_item.done" && event.item !== undefined && event.item !== null)
+    items.set(index, event.item)
+
   if (
     (event.type === "response.completed" || event.type === "response.incomplete") &&
-    event.response !== undefined
+    event.response !== undefined &&
+    event.response !== null
   )
-    return JSON.stringify(event.response)
+    return finalResponse(event.response, items)
 
   if (event.type === "response.failed") {
     const reason = Option.getOrUndefined(decodeFailed(event.response))?.error?.message
@@ -426,9 +465,10 @@ const runResponsesHttp = async (
   signal: AbortSignal,
 ): Promise<string> => {
   const response = await post(settings, "responses", body, signal)
+  const items: StreamedItems = new Map()
 
   for await (const data of events(response.body ?? new ReadableStream())) {
-    const done = responsesEvent(settings, data, hooks)
+    const done = responsesEvent(settings, data, hooks, items)
 
     if (done !== undefined) return done
   }
@@ -463,8 +503,10 @@ const runResponsesSocket = async (
   hooks: ModelHooks,
   signal: AbortSignal,
 ): Promise<string> => {
+  const items: StreamedItems = new Map()
+
   for await (const data of sockets.request(conversationKey(call), socketPayload(fields), signal)) {
-    const done = responsesEvent(settings, data, hooks)
+    const done = responsesEvent(settings, data, hooks, items)
 
     if (done !== undefined) return done
   }

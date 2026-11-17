@@ -56,10 +56,34 @@ export interface ModelSettings {
   readonly maxTokens: number
   readonly apiKey: string
   readonly baseUrl?: string
+  /** Offer Anthropic's own web search and web fetch tools on calls that have tools. */
+  readonly web?: boolean
 }
 
 /** Models whose policy refusals can be retried server-side on another model. */
 const SUPPORTS_FALLBACK = /^claude-(?:opus-5|sonnet-5-5|fable-5|mythos-5)/
+
+/** Models that take the web tools which filter results before the model reads them. */
+const FILTERS_WEB_RESULTS = /^claude-(?:fable|mythos|opus-(?:[5-9]|4-[678])|sonnet-(?:[5-9]|4-6))/
+
+type ServerTool = Extract<Anthropic.Beta.BetaToolUnion, { name: "web_search" | "web_fetch" }>
+
+/**
+ * Anthropic's web tools. They run on Anthropic's servers inside the model
+ * call: nothing is fetched from this machine and there is nothing to approve,
+ * and their calls and results come back as blocks of the response, which is
+ * stored and replayed like any other.
+ */
+const webTools = (model: string): Array<ServerTool> =>
+  FILTERS_WEB_RESULTS.test(model)
+    ? [
+        { type: "web_search_20260209", name: "web_search" },
+        { type: "web_fetch_20260209", name: "web_fetch" },
+      ]
+    : [
+        { type: "web_search_20250305", name: "web_search" },
+        { type: "web_fetch_20250910", name: "web_fetch" },
+      ]
 
 /** The body of an API error response: `{ error: { message } }`. */
 const ErrorBody = Schema.Struct({ error: Schema.Struct({ message: Schema.String }) })
@@ -123,17 +147,22 @@ export const anthropicModel = (settings: ModelSettings): Layer.Layer<Model> => {
   const client = clientFor(settings)
 
   const paramsFor = (call: ModelCall): StreamParams => {
+    const tools: Array<Anthropic.Beta.BetaToolUnion> = call.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      // SAFETY: tool parameters are hand-written JSON Schema objects in tools.ts.
+      input_schema: tool.parameters as Anthropic.Beta.BetaTool.InputSchema,
+      eager_input_streaming: true,
+    }))
+
+    // A call without tools (a summary, a judge) gets none of the provider's either.
+    if (settings.web === true && call.tools.length > 0) tools.push(...webTools(settings.model))
+
     const params: StreamParams = {
       model: settings.model,
       max_tokens: settings.maxTokens,
       system: call.system,
-      tools: call.tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        // SAFETY: tool parameters are hand-written JSON Schema objects in tools.ts.
-        input_schema: tool.parameters as Anthropic.Beta.BetaTool.InputSchema,
-        eager_input_streaming: true,
-      })),
+      tools,
       messages: replayable(call.messages),
       thinking: { type: "adaptive", display: "summarized" },
       output_config: { effort: settings.effort },

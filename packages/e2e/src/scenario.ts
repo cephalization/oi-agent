@@ -243,7 +243,11 @@ export const scenario = (
           phoenixEndpoint: phoenix ? PHOENIX_ENDPOINT : "",
           phoenixProject: PHOENIX_PROJECT,
           // Scenarios say exactly which tools they expect: only those about delegation let the agent delegate.
-          extra: new Map<string, Schema.Json>([["delegation", "off"], ...(options.config ?? [])]),
+          extra: new Map<string, Schema.Json>([
+            ["delegation", "off"],
+            ["web", "off"],
+            ...(options.config ?? []),
+          ]),
         },
         // A developer's decision key must not add auto mode to unrelated TUI tests,
         // or turn replay into real decision calls. Only the live service scenario opts in.

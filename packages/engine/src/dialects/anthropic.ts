@@ -1,5 +1,5 @@
 /** The Anthropic Messages dialect: the engine's original, and the default for spans that predate dialects. */
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 import {
   type Dialect,
   effortIn,
@@ -86,6 +86,45 @@ const resultText = (content: Json | undefined): string => {
     .join("")
 }
 
+/** The most of a fetched page that carries over to another provider. */
+const FETCHED_CHARS = 20_000
+
+/** The blocks Anthropic's own web tools leave in a response, as far as another provider can use them. */
+const ServerBlock = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("server_tool_use"), name: Schema.String, input: Schema.Json }),
+  Schema.Struct({
+    type: Schema.Literal("web_search_tool_result"),
+    content: Schema.Array(Schema.Struct({ title: Schema.String, url: Schema.String })),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("web_fetch_tool_result"),
+    content: Schema.Struct({
+      content: Schema.Struct({
+        source: Schema.Struct({ type: Schema.Literal("text"), data: Schema.String }),
+      }),
+    }),
+  }),
+])
+
+const decodeServerBlock = Schema.decodeUnknownOption(ServerBlock)
+
+/**
+ * A web tool's call or result as text. Another provider cannot read these
+ * blocks, and without them the conversation would lose what was found.
+ */
+const serverText = (part: Json): string | undefined =>
+  Option.match(decodeServerBlock(part), {
+    onNone: () => undefined,
+    onSome: (block) => {
+      if (block.type === "server_tool_use") return `[${block.name}: ${JSON.stringify(block.input)}]`
+
+      if (block.type === "web_search_tool_result")
+        return block.content.map((result) => `${result.title} — ${result.url}`).join("\n")
+
+      return block.content.content.source.data.slice(0, FETCHED_CHARS)
+    },
+  })
+
 const toTranscript: Dialect["toTranscript"] = (messages) => {
   const entries: Array<TranscriptEntry> = []
 
@@ -106,6 +145,9 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
 
     for (const part of message.content) {
       const block = asBlock(part)
+      const server = serverText(part)
+
+      if (server !== undefined) texts.push(server)
 
       if (block === undefined) continue
 
@@ -121,7 +163,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
       } else if ("text" in block) {
         texts.push(block.text)
       }
-      // Thinking and other provider-specific blocks do not carry over.
+      // Thinking and other provider-specific blocks do not carry over; web tool blocks did, as text, above.
     }
 
     const text = texts.join("\n")

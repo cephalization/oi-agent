@@ -42,11 +42,16 @@ keychain. Run `oi setup` to change them.
 
 Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
-`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
+`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `OI_AGENT_WEB`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`. `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
 OpenAI and ChatGPT models are called over a WebSocket so the prompt cache is
 reused between calls; `OI_AGENT_OPENAI_TRANSPORT=http` uses plain HTTP instead.
+
+On Anthropic, OpenAI and ChatGPT models the agent can search the web, and on
+Anthropic also read a page, with the provider's own tools. They run on the
+provider's side, need no approval, and are billed by the provider. Set
+`"web": "off"` (or `OI_AGENT_WEB=off`) to stop offering them.
 
 | Command                        | What it does                                                              |
 | ------------------------------ | ------------------------------------------------------------------------- |
@@ -541,6 +546,27 @@ These work best on the session you are in, because the evidence is right there.
   explicit new prompt or rejoin. The latest withdrawn prompt from this user
   returns to the editor; Up/Down recall the earlier ones. Quitting/reloading
   remains different: it preserves queued prompts and background work.
+- **"How do you search or read the web?"** oi has no web tools of its own.
+  With `"web": "auto"` (the default) a request that has tools also offers the
+  provider's: Anthropic's web search and web fetch (`webTools` in
+  `source/engine/src/model.ts`) and OpenAI's web search (`responsesFields`
+  in `source/engine/src/openai.ts`), for an OpenAI API key and a ChatGPT
+  plan alike. Other OpenAI-compatible servers get none, and the agent uses
+  `curl` in `bash` there, with the usual approval. These tools run on the
+  provider's servers inside the model call: nothing is requested from this
+  machine, there is no `TOOL` span and nothing to approve, and a local
+  address is out of their reach. The call and what it found are blocks of
+  the response (`server_tool_use` and `web_search_tool_result` from
+  Anthropic, `web_search_call` from OpenAI) in the `LLM` span's
+  `output.value`, and the fold replays them like any other. When the model
+  changes to another provider, `toTranscript` in
+  `source/engine/src/dialects/anthropic.ts` keeps Anthropic's searches and
+  fetched pages as text (`[web_search: {"query":…}]`, then `title — url`
+  lines); OpenAI's search items do not carry over, only the answer written
+  from them. The ChatGPT backend leaves `output` empty in its last stream
+  event when a response searched, so `finalResponse` rebuilds the stored
+  response from the items it streamed. Providers bill searches separately.
+  `"web": "off"` or `OI_AGENT_WEB=off` stops offering the tools.
 - **"What will Enter do?"** The line under the prompt says, from the
   conversation's own state (`enterHint` in `source/cli/src/tui/app.ts`):
   idle, Enter starts a new turn, and says so even while tasks and background
