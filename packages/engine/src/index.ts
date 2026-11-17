@@ -12,6 +12,8 @@ export * from "./ids.ts"
 
 export * from "./jobs.ts"
 
+export * from "./metrics.ts"
+
 export * from "./model.ts"
 
 export * from "./oi.ts"

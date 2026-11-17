@@ -31,6 +31,8 @@ import {
   llmDetector,
   loadConfig,
   loadSession,
+  renderMetrics,
+  sessionMetrics,
   modelDetector,
   modelDistiller,
   type ModelLayer,
@@ -68,6 +70,9 @@ Usage:
                              at the terminal (how a delegated task is run)
   oi sessions                List sessions
   oi show <session>          Print a session's turns
+  oi metrics [session]       Where a session's time went: per turn, model and
+                             tool time, the slowest tool calls (default: the
+                             most recent session; --json for all of it)
   oi export [session]        Send sessions to the configured Phoenix server
   oi setup                   Choose a model, store keys, connect Phoenix
   oi auth login [provider]   Store a provider's API key in the keychain (default
@@ -87,6 +92,7 @@ Options:
       --yolo                 Run tools that change the machine without asking
       --no-wait              With \`oi run\`: exit after the answer, without waiting
                              for background jobs it started
+      --json                 With \`oi metrics\`: print the numbers as JSON
       --check                Load every module and exit (what /reload checks first)
   -h, --help                 Show this help
 `
@@ -102,6 +108,7 @@ const { values, positionals } = parseArgs({
     yolo: { type: "boolean", default: false },
     check: { type: "boolean", default: false },
     "no-wait": { type: "boolean", default: false },
+    json: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 })
@@ -665,6 +672,21 @@ const show = (idOrPrefix: string): void => {
   }
 }
 
+const metrics = (idOrPrefix: string | undefined): void => {
+  const id =
+    idOrPrefix === undefined
+      ? (store.listSessionIds().at(-1) ?? fail("No sessions yet."))
+      : (store.resolveSession(idOrPrefix) ?? fail(`No session matches "${idOrPrefix}".`))
+
+  const measured = sessionMetrics(store, id)
+
+  process.stdout.write(
+    values.json
+      ? `${JSON.stringify(measured, null, 2)}\n`
+      : `${[`session ${id}`, "", ...renderMetrics(measured, process.stdout.columns ?? 100)].join("\n")}\n`,
+  )
+}
+
 const exporter = (): PhoenixExporter => {
   const { phoenix } = loadConfig()
 
@@ -965,6 +987,8 @@ if (values.help) {
   sessions()
 } else if (command === "show") {
   show(rest[0] ?? fail("Usage: oi show <session>"))
+} else if (command === "metrics") {
+  metrics(rest[0])
 } else if (command === "export") {
   await exportSessions(rest[0])
 } else if (command === "auth" && rest[0] === "login") {

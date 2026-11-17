@@ -100,6 +100,7 @@ creation and crash recovery.
 | Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
 | Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
 | Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `judge.ts`, `detectors.ts`          |
+| Where a session's time went (`/metrics`)         | `source/engine/src/metrics.ts`                                       |
 | Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
 | Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
 | Sharing a session with other people              | `source/engine/src/peer/`                                            |
@@ -112,6 +113,26 @@ creation and crash recovery.
 ## Things worth showing someone
 
 These work best on the session you are in, because the evidence is right there.
+
+- **"Where did the time go?"** `/metrics` (or `oi metrics [session]`, with
+  `--json` for scripts). Nothing was recorded for it: every span file has a
+  start and an end time, and `sessionMetrics` in
+  `source/engine/src/metrics.ts` adds them up. A turn's wall time is its
+  root `AGENT` span; its model time is the sum of its `LLM` spans and its
+  tool time the sum of its `TOOL` spans (calls that ran side by side both
+  count, so tools can exceed the wall time). Traces that are not turns
+  (evaluators, learning, steering detection) run after a turn and are
+  reported apart, as judge time. A span still open in a running turn counts
+  up to now; one left open by a crash counts up to the last thing its trace
+  recorded, and the turn is marked interrupted. Tool time is grouped by
+  tool, and for `bash` by what the command ran: the command is split into
+  steps (`commandSteps`), and the step that took the time is a build or
+  test runner if there is one (`pnpm e2e`, `git commit`), else the last
+  step that is not setup, waiting or reading a log. Nothing about any one
+  repository is built in. A task's work is in its own session, so tasks
+  are listed separately with their own totals. In Phoenix the same sums
+  are a query over the session's spans: latency by `openinference.span.kind`,
+  grouped by trace.
 
 - **"What happens to a slow command?"** Every `bash` call is a job
   (`source/engine/src/jobs.ts`): its output goes to a log file and a small
