@@ -140,3 +140,7 @@ trace linked to it, not a long-lived child. Span files keep the relations in
 links yet. The OTLP projection (`linksOf` in `export/otlp.ts`) also writes
 each one as a real link, with an `oi_agent.relation` attribute naming the
 metadata field it restates, so nothing is lost when a backend does keep them.
+
+Escape cancellation is an append-only `session.cancel` CHAIN span with
+`metadata.cancelled_inbox` listing withdrawn inbox IDs (gap 4). The fold
+excludes these entries without deleting or rewriting the original prompts.

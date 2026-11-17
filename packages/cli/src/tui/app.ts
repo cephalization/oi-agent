@@ -64,7 +64,7 @@ import {
   type Suggestion,
 } from "./commands.ts"
 import { approvalAction } from "./approvals.ts"
-import { Editor } from "./editor.ts"
+import { Editor, normalizeKeys } from "./editor.ts"
 import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
@@ -562,7 +562,9 @@ class App {
     if (!this.transcript.running) {
       const background = this.work.length === 0 ? "" : " · background work keeps running"
 
-      return `enter starts a new turn${background}`
+      return this.work.length > 0
+        ? `enter starts a new turn${background} · esc stop all`
+        : "enter starts a new turn · shift+enter newline · ↑↓ history · tab/⇧tab modes"
     }
 
     // A turn this terminal only watches: another process runs it, and cannot be steered from here.
@@ -1701,9 +1703,22 @@ class App {
     else this.program.report("blocked", `${request.tool} ${JSON.stringify(request.input)}`, "permission")
   }
 
-  private input(data: string): void {
+  private input(raw: string): void {
+    const data = raw.includes("\u001B[200~") ? raw : normalizeKeys(raw)
+
     this.program.acknowledge()
     this.lastKeyMs = Date.now()
+
+    if (data === "\u001B") {
+      const entries = this.options.engine?.cancel(this.options.sessionId) ?? []
+
+      this.editor.restore(
+        entries.filter((entry) => entry.user_id === this.options.user).map((entry) => entry.text),
+      )
+      this.approvals.length = 0
+      this.watchPrompts()
+      this.program.report("idle")
+    }
 
     if (this.question !== undefined) return this.answerQuestion(data)
 
@@ -1748,7 +1763,7 @@ class App {
 
     if (action.type === "submit") this.submit(action.text)
 
-    if (action.type === "interrupt") this.options.engine?.interrupt(this.options.sessionId)
+    if (action.type === "interrupt") this.dismissed = this.editor.text
 
     if (action.type === "exit") {
       if (!this.transcript.running) return this.done()
@@ -1838,7 +1853,7 @@ class App {
     process.stdin.resume()
     process.stdin.on("data", onData)
     process.stdout.on("resize", onResize)
-    process.stdout.write(control.bracketedPasteOn)
+    process.stdout.write(control.bracketedPasteOn + control.modifiedKeysOn)
     this.program.report("idle")
     this.draw()
     this.options.onStart?.()
@@ -1865,7 +1880,7 @@ class App {
     process.stdin.setRawMode(false)
     process.stdin.pause()
     this.screen.clear()
-    process.stdout.write(control.bracketedPasteOff)
+    process.stdout.write(control.modifiedKeysOff + control.bracketedPasteOff)
     this.program.clear()
     unsubscribe()
     stopApprovals?.()

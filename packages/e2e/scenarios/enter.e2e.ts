@@ -9,7 +9,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { kindOf, OI, pendingInbox, readMetadata, renderSteer, stringAttr } from "@oi-agent/engine"
+import { jobsOf, kindOf, OI, pendingInbox, readMetadata, renderSteer, stringAttr } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
 import { type Scenario, scenario } from "../src/scenario.ts"
 import type { Terminal } from "../src/term.ts"
@@ -48,6 +48,87 @@ const requests = (s: Scenario, session: string, turn: number): string =>
     .join("\n")
 
 describe("what Enter does", () => {
+  scenario(
+    "Shift+Enter inserts a newline and the idle hint lists hotkeys",
+    { needs: ["rex"], config: new Map([["steering", "off"]]) },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(/enter starts a new turn · shift\+enter newline/)
+      await term.send("Reply with exactly")
+      await term.key("shift+enter")
+      await term.send("the word pong")
+      const session = s.spans.onlySession()
+
+      expect(s.spans.turns(session)).toHaveLength(0)
+      await term.key("enter")
+      const [turn] = await s.spans.settledTurns(session, 1)
+
+      expect(turn?.input).toBe("Reply with exactly\nthe word pong")
+      expect(turn?.state).toBe("complete")
+    },
+  )
+
+  scenario(
+    "Escape stops idle background jobs without dispatching a result turn",
+    { needs: ["rex"], approvals: "allow", config: new Map([["steering", "off"]]) },
+    async (s) => {
+      const term = await s.tui()
+
+      await term.waitFor(IDLE)
+      await term.line(
+        `Call the bash tool now with command \`${GATED}\` and background true. Then reply with just: started.`,
+      )
+      const session = s.spans.onlySession()
+
+      await s.spans.settledTurns(session, 1)
+      await term.waitFor(/background work keeps running · esc stop all/)
+      const jobs = jobsOf(s.spans.store)
+      const running = jobs.running(session)
+
+      expect(running).toHaveLength(1)
+      await term.key("escape")
+      await s.spans.waitFor("the job to be killed", () =>
+        running.every((job) => jobs.state(job).state === "killed") ? true : undefined,
+      )
+      await term.waitFor(/enter starts a new turn · shift\+enter newline/)
+      expect(s.spans.turns(session)).toHaveLength(1)
+      await term.line("Reply with exactly the word: pong")
+      const turns = await s.spans.settledTurns(session, 2)
+
+      expect(turns[1]?.input).toBe("Reply with exactly the word: pong")
+    },
+  )
+
+  scenario(
+    "Escape withdraws queued prompts and restores them through history",
+    { needs: ["rex"], approvals: "allow", config: new Map([["steering", "off"]]) },
+    async (s) => {
+      const term = await s.tui()
+      const session = await startGatedTurn(s, term, "Then reply with just: done.")
+
+      await term.key("ctrl+t")
+      await term.waitFor(QUEUES)
+      await term.line("Reply with exactly the word: older")
+      await term.line("Reply with exactly the word: latest")
+      await term.waitFor(/⧗ queued for the next turn: Reply with exactly the word: latest/)
+      await term.key("escape")
+      await s.spans.settledTurns(session, 1)
+      await term.waitFor(/› Reply with exactly the word: latest/)
+      expect(pendingInbox(s.spans.store, session)).toEqual([])
+      expect(s.spans.turns(session)).toHaveLength(1)
+      await term.key("up")
+      await term.waitFor(/› Reply with exactly the word: older/)
+      await term.key("down")
+      await term.waitFor(/› Reply with exactly the word: latest/)
+      await term.key("enter")
+      const turns = await s.spans.settledTurns(session, 2)
+
+      expect(turns[1]?.input).toBe("Reply with exactly the word: latest")
+      expect(s.spans.turns(session)).toHaveLength(2)
+    },
+  )
+
   scenario(
     "idle, Enter starts a new turn, and still does while background work runs",
     { needs: ["rex"], approvals: "allow" },

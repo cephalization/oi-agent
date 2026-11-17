@@ -27,6 +27,8 @@ export const control = {
   /** Synchronized output: the terminal paints the whole frame at once. */
   beginFrame: `${ESC}?2026h`,
   endFrame: `${ESC}?2026l`,
+  modifiedKeysOn: `${ESC}>1u`,
+  modifiedKeysOff: `${ESC}<u`,
   bracketedPasteOn: `${ESC}?2004h`,
   bracketedPasteOff: `${ESC}?2004l`,
 }

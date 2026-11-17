@@ -13,6 +13,25 @@ const KEYS = /\u001B\[[0-9;]*[A-Za-z~]|\u001B[\s\S]|[\s\S]/gu
 const PASTE_START = "\u001B[200~"
 const PASTE_END = "\u001B[201~"
 
+/** Keep existing shortcuts working when the terminal uses CSI-u modified keys. */
+export const normalizeKeys = (data: string): string => {
+  const keys = new Map([
+    ["\u001B[27u", "\u001B"],
+    ["\u001B[9;2u", "\u001B[Z"],
+    ["\u001B[127;3u", "\u001B\u007F"],
+    ["\u001B[13;3u", "\u001B\r"],
+  ])
+
+  for (const letter of "abcdefghijklmnopqrstuvwxyz")
+    keys.set(`\u001B[${letter.charCodeAt(0)};5u`, String.fromCharCode(letter.charCodeAt(0) - 96))
+
+  let normalized = data
+
+  for (const [key, value] of keys) normalized = normalized.replaceAll(key, value)
+
+  return normalized
+}
+
 export class Editor {
   private buffer = ""
   private position = 0
@@ -39,6 +58,23 @@ export class Editor {
   set(text: string): void {
     this.buffer = text
     this.position = text.length
+  }
+
+  /** Restore the latest withdrawn prompt; Up reaches the earlier ones. */
+  restore(entries: ReadonlyArray<string>): void {
+    if (entries.length === 0) return
+
+    if (this.buffer !== "" && !this.history.includes(this.buffer)) this.history.push(this.buffer)
+
+    for (const entry of entries) {
+      if (!this.history.includes(entry)) this.history.push(entry)
+    }
+
+    const latest = entries.at(-1) ?? ""
+
+    this.historyIndex = this.history.lastIndexOf(latest)
+    this.draft = ""
+    this.set(latest)
   }
 
   private insert(text: string): void {
@@ -89,6 +125,8 @@ export class Editor {
     const handlers = new Map<string, () => EditorAction | void>([
       ["\r", () => this.submit()],
       ["\n", () => this.insert("\n")],
+      ["\u001B[13;2u", () => this.insert("\n")],
+      ["\u001B[27;2;13~", () => this.insert("\n")],
       ["\u001B\r", () => this.insert("\n")],
       ["\u007F", () => this.remove(this.position - 1, this.position)],
       ["\b", () => this.remove(this.position - 1, this.position)],
@@ -106,6 +144,7 @@ export class Editor {
       ["\u001B[B", () => this.recall(1)],
       ["\u001B[3~", () => this.remove(this.position, this.position + 1)],
       ["\u001B", () => ({ type: "interrupt" })],
+      ["\u001B[27u", () => ({ type: "interrupt" })],
       ["\u0003", () => (this.buffer === "" ? { type: "exit" } : this.remove(0, this.buffer.length))],
       ["\u0004", () => (this.buffer === "" ? { type: "exit" } : undefined)],
     ])
@@ -121,7 +160,9 @@ export class Editor {
   }
 
   /** Feed raw terminal input. Returns what the application should do. */
-  feed(data: string): EditorAction {
+  feed(raw: string): EditorAction {
+    const data = this.pasting || raw.includes(PASTE_START) ? raw : normalizeKeys(raw)
+
     if (this.pasting || data.includes(PASTE_START)) {
       const start = data.indexOf(PASTE_START)
       const end = data.indexOf(PASTE_END)

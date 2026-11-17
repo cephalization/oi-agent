@@ -311,6 +311,55 @@ describe("messages their turn never read", () => {
   })
 })
 
+describe("Escape cancellation", () => {
+  it("does not deliver stopped background jobs, even after another prompt", async () => {
+    const s = setup(() => say("ok"))
+
+    const job = s.engine.jobs.start({
+      sessionId: s.sessionId,
+      cwd: s.store.readHeader(s.sessionId)!.cwd,
+      command: "sleep 30",
+      tool: { trace_id: "a".repeat(32), span_id: "b".repeat(16) },
+    })
+
+    s.engine.jobs.toBackground(job, "requested")
+    s.engine.cancel(s.sessionId)
+    await s.engine.jobs.ended(job)
+    await s.engine.submit(s.sessionId, { text: "new prompt", userId: "tony" })
+    await s.engine.settled(s.sessionId)
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual(["new prompt"])
+    expect(pendingInbox(s.store, s.sessionId)).toEqual([])
+    s.engine.close()
+  })
+
+  it("cancels already scheduled prompts durably, without dispatching them", async () => {
+    const s = setup((_call, step) => (step === 0 ? bash("sleep 30") : say("new reply")))
+    const turn = s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    await until(() => s.calls.length === 1)
+    s.engine.queue(s.sessionId, { text: "one", userId: "tony" })
+    s.engine.queue(s.sessionId, { text: "two", userId: "tony" })
+    s.engine.drainInbox(s.sessionId)
+    const restored = s.engine.cancel(s.sessionId)
+
+    expect(restored.map((entry) => entry.text)).toEqual(["one", "two"])
+    expect(pendingInbox(new Store(s.store.home), s.sessionId)).toEqual([])
+    // An explicit new prompt must not resurrect the old promises, even when
+    // cancellation's interrupt has not finished yet.
+    const next = s.engine.submit(s.sessionId, { text: "new prompt", userId: "tony" })
+
+    await turn
+    await next
+    await s.engine.settled(s.sessionId)
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual([
+      "first",
+      "new prompt",
+    ])
+    expect(s.calls).toHaveLength(2)
+    s.engine.close()
+  })
+})
+
 describe("queueing for the next turn", () => {
   it("leaves the running turn alone and runs what was queued after it, in order", async () => {
     const s = setup((call, step) => (step === 0 ? bash("sleep 0.3; echo slept") : say(`reply ${step}`)))

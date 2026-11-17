@@ -10,7 +10,7 @@ import {
   onEnter,
 } from "../src/tui/commands.ts"
 import { approvalAction } from "../src/tui/approvals.ts"
-import { Editor } from "../src/tui/editor.ts"
+import { Editor, normalizeKeys } from "../src/tui/editor.ts"
 import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "../src/tui/modes.ts"
 import { type AnnotationFile, EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
 import { Screen } from "../src/tui/screen.ts"
@@ -53,11 +53,40 @@ describe("editor", () => {
     expect(editor.text).toBe("")
   })
 
+  it.each(["\u001B[13;2u", "\u001B[27;2;13~"])("inserts a newline for Shift+Enter (%s)", (key) => {
+    const editor = new Editor()
+
+    editor.feed("first")
+    expect(editor.feed(key).type).toBe("redraw")
+    editor.feed("second")
+    expect(editor.feed("\r")).toEqual({ type: "submit", text: "first\nsecond" })
+  })
+
   it("keeps pasted newlines instead of submitting", () => {
     const editor = new Editor()
 
     expect(editor.feed("\u001B[200~line one\rline two\u001B[201~").type).toBe("redraw")
     expect(editor.text).toBe("line one\nline two")
+  })
+
+  it("normalizes modified-key shortcuts without changing Shift+Enter", () => {
+    expect(normalizeKeys("\u001B[116;5u")).toBe("\u0014")
+    expect(normalizeKeys("\u001B[9;2u")).toBe("\u001B[Z")
+    expect(normalizeKeys("\u001B[27u")).toBe("\u001B")
+    expect(normalizeKeys("\u001B[13;2u")).toBe("\u001B[13;2u")
+  })
+
+  it("restores the latest queued prompt with earlier messages reachable using arrows", () => {
+    const editor = new Editor()
+
+    editor.feed("older\r")
+    editor.feed("latest\r")
+    editor.restore(["older", "latest"])
+    expect(editor.text).toBe("latest")
+    editor.feed("\u001B[A")
+    expect(editor.text).toBe("older")
+    editor.feed("\u001B[B")
+    expect(editor.text).toBe("latest")
   })
 
   it("interrupts on escape and exits on ctrl+c only when empty", () => {

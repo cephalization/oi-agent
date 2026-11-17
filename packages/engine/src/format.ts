@@ -332,6 +332,8 @@ export const EngineMetadata = Schema.Struct({
   device: Schema.optionalKey(Schema.String),
   /** Process that owns an in-flight span, for liveness checks. */
   pid: Schema.optionalKey(Schema.Int),
+  /** On session.cancel CHAIN spans: withdrawn inbox entries, never dispatched. */
+  cancelled_inbox: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Inbox entry this turn consumed. */
   inbox_id: Schema.optionalKey(Schema.String),
   /**
