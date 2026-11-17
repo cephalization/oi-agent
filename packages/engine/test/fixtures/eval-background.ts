@@ -61,6 +61,8 @@ export class BackgroundFixture {
         [OI.METADATA]: writeMetadata(undefined, {
           previous: options.previous === undefined ? this.previous : options.previous,
           delivers: (options.deliveries ?? []).map((delivery) => ({ ...delivery, inbox_id: delivery.id })),
+          // As a real turn does: its root lists what its tool calls observed.
+          observed_results: (options.observed ?? []).map((delivery) => delivery.id),
         }),
       },
     }
