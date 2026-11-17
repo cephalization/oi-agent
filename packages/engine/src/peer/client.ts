@@ -5,6 +5,8 @@ import type { Store } from "../store.ts"
 import { Manifest, SessionInfo, type SessionState, WireEvent } from "./protocol.ts"
 
 export interface PeerConnection {
+  /** Older hosts can sync conversation files without publishing live task status. */
+  readonly statusAvailable: boolean
   readonly state: () => SessionState
   readonly info: SessionInfo
   readonly sessionId: string
@@ -69,13 +71,43 @@ export const joinSession = async (
 
   if (!infoResponse.ok) throw new Error(`The host refused the connection (HTTP ${infoResponse.status}).`)
 
-  const info = Option.getOrThrow(decodeInfo(await infoResponse.json()))
+  const info = Option.getOrUndefined(decodeInfo(await infoResponse.json().catch(() => undefined)))
+
+  if (info === undefined)
+    throw new Error(
+      "The host returned an invalid session description. Update and restart the host, then rejoin.",
+    )
+
   const sessionId = info.header.id
   const controller = new AbortController()
   // Follow events before copying files, so nothing that ends in between is missed.
   const events = await fetch(`${baseUrl}/v1/events`, { headers, signal: controller.signal })
-  const manifest = Option.getOrThrow(decodeManifest(await (await get("/v1/manifest")).json()))
-  let state = manifest.state
+
+  if (!events.ok) {
+    controller.abort()
+
+    throw new Error(`The host refused the event stream (HTTP ${events.status}).`)
+  }
+
+  const manifestResponse = await get("/v1/manifest")
+  const manifest = Option.getOrUndefined(decodeManifest(await manifestResponse.json().catch(() => undefined)))
+
+  if (!manifestResponse.ok || manifest === undefined) {
+    controller.abort()
+
+    throw new Error(
+      `The host returned an invalid session manifest (HTTP ${manifestResponse.status}). Update and restart the host, then rejoin.`,
+    )
+  }
+
+  let state: SessionState = manifest.state ?? {
+    busy: false,
+    steerable: false,
+    waiting: [],
+    held: 0,
+    work: [],
+  }
+
   const have = new Set(store.manifest(sessionId))
   const open = new Map<string, WireEvent>()
 
@@ -123,6 +155,7 @@ export const joinSession = async (
   }
 
   return {
+    statusAvailable: manifest.state !== undefined,
     state: () => state,
     info,
     sessionId,

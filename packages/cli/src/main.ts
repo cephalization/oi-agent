@@ -745,6 +745,7 @@ const attached = async (
     user: engine.config.user,
     label: `task ${task.id} · /detach to return`,
     peer: {
+      statusAvailable: true,
       state: () => ({
         busy: false,
         steerable: false,
@@ -908,13 +909,18 @@ const join = async (text: string): Promise<void> => {
   const tunnel = direct ? undefined : await tailcatForward(link.address, link.port)
   const base = tunnel === undefined ? `${link.address}:${link.port}` : `http://${tunnel.value}`
   const user = loadConfig().user
-  const peer = await joinSession(store, base, link.token, user)
+  const peer = await joinSession(store, base, link.token, user).catch((error: Error) => fail(error.message))
 
   await runApp({
     store,
     sessionId: peer.sessionId,
     user,
     label: `joined ${peer.info.host}'s session as ${peer.info.role}`,
+    notes: peer.statusAvailable
+      ? []
+      : [
+          "The host does not publish live task status. Update and restart the host, then rejoin to see running tasks.",
+        ],
     peer,
   })
   tunnel?.stop()

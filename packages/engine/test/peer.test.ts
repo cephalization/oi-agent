@@ -1,4 +1,6 @@
 import * as fs from "node:fs"
+import * as http from "node:http"
+import type { AddressInfo } from "node:net"
 import * as os from "node:os"
 import * as path from "node:path"
 import { afterEach, describe, expect, it } from "vite-plus/test"
@@ -82,6 +84,7 @@ describe("peer sync", () => {
     expect(events).toContain("span_open")
     expect(events).toContain("span_end")
     expect(peer.info.role).toBe("viewer")
+    expect(peer.statusAvailable).toBe(true)
     // Nothing is left in flight on the peer once the host's spans have ended.
     expect(
       store.listTraceIds(sessionId).flatMap((traceId) => store.readTrace(sessionId, traceId).open),
@@ -265,6 +268,111 @@ describe("peer sync", () => {
         expect(response.status).toBe(404)
       }
     }
+  })
+
+  it("joins a legacy host without status snapshots for both roles", async () => {
+    const store = tempStore()
+    const header = store.createSession("/tmp")
+    const followers = new Set<http.ServerResponse>()
+
+    const server = http.createServer((request, response) => {
+      const role = request.headers.authorization === "Bearer driver" ? "driver" : "viewer"
+
+      response.setHeader("content-type", "application/json")
+
+      if (request.url === "/v1/session")
+        return void response.end(JSON.stringify({ header, role, host: "old host" }))
+
+      if (request.url === "/v1/manifest")
+        return void response.end(JSON.stringify({ paths: ["session.json"], open: [] }))
+
+      if (request.url?.startsWith("/v1/file")) return void response.end(JSON.stringify(header))
+
+      if (request.url === "/v1/events") {
+        response.setHeader("content-type", "text/event-stream")
+        response.write(": connected\n\n")
+        followers.add(response)
+        request.on("close", () => followers.delete(response))
+
+        return
+      }
+
+      response.statusCode = role === "viewer" ? 403 : 202
+      response.end("{}")
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const address = server.address()
+
+    // SAFETY: this server listens on a TCP port, not a named pipe.
+    const port = (address as AddressInfo).port
+
+    cleanup.push(async () => {
+      for (const follower of followers) follower.end()
+
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+
+    for (const role of ["driver", "viewer"]) {
+      const { peer, store: copy } = await join(`http://127.0.0.1:${port}`, role, role)
+
+      expect(copy.readHeader(header.id)).toEqual(header)
+      expect(peer.statusAvailable).toBe(false)
+      expect(peer.state().work).toEqual([])
+      expect(await peer.prompt("hello")).toBe(
+        role === "viewer" ? "The host rejected the prompt (HTTP 403)." : undefined,
+      )
+    }
+  })
+
+  it.each([
+    { route: "/v1/session", status: 200, body: "{}", error: "invalid session description" },
+    { route: "/v1/session", status: 200, body: "not json", error: "invalid session description" },
+    { route: "/v1/manifest", status: 200, body: "{}", error: "invalid session manifest" },
+    { route: "/v1/manifest", status: 503, body: "{}", error: "HTTP 503" },
+    {
+      route: "/v1/manifest",
+      status: 200,
+      body: '{"paths":[],"open":[],"state":{}}',
+      error: "invalid session manifest",
+    },
+    { route: "/v1/events", status: 403, body: "{}", error: "event stream (HTTP 403)" },
+  ])("explains invalid host responses: $route $status $body", async ({ route, status, body, error }) => {
+    const header = tempStore().createSession("/tmp")
+    const followers = new Set<http.ServerResponse>()
+
+    const server = http.createServer((request, response) => {
+      response.setHeader("content-type", "application/json")
+
+      if (request.url === route) {
+        response.statusCode = status
+        response.end(body)
+
+        return
+      }
+
+      if (request.url === "/v1/session")
+        return void response.end(JSON.stringify({ header, role: "viewer", host: "host" }))
+
+      response.setHeader("content-type", "text/event-stream")
+      response.write(": connected\n\n")
+      followers.add(response)
+      request.on("close", () => followers.delete(response))
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    // SAFETY: this server listens on a TCP port, never a named pipe.
+    const port = (server.address() as AddressInfo).port
+
+    cleanup.push(async () => {
+      for (const follower of followers) follower.end()
+
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+
+    await expect(joinSession(tempStore(), `http://127.0.0.1:${port}`, "token", "eve")).rejects.toThrow(error)
+    await until(() => followers.size === 0)
+    expect(followers.size).toBe(0)
   })
 
   it("round-trips share links", () => {
