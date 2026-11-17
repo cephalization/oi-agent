@@ -647,10 +647,15 @@ These work best on the session you are in, because the evidence is right there.
   transport errors, or ten seconds without any stream data end the joined
   chat with “Host disconnected. Left the joined chat.” The inactivity bound
   handles tunnels that leave a local socket open after the remote host goes
-  away; normal idle hosts still send status every 500 ms. Disconnect also
+  away; normal idle hosts still send status every 500 ms. A host too old to
+  publish status is silent while idle, so the bound is not applied to it: that
+  joined chat ends on EOF or a transport error only. Disconnect also
   aborts pending prompts, whose transport failures become messages rather
   than unhandled rejections. The CLI always cleans up the forwarding tunnel,
-  including when joining or running the joined terminal fails. The synced
+  including when joining or running the joined terminal fails. tailcat can
+  ignore SIGTERM for minutes once the other end is gone, which would keep
+  `oi join` from exiting, so a tunnel still running a second after it was
+  asked to stop is killed (`peer/tailcat.ts`). The synced
   session files remain on disk; disconnect does not run the agent locally.
 
 ## Further reading
