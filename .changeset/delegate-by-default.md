@@ -9,4 +9,6 @@ oi now delegates by default. The conversation stays open for thinking and planni
 - A tool call a subagent needs approved is asked in your terminal, labelled with the task.
 - `/tasks` lists them, `/attach <task>` opens one to watch and type to, `/detach` returns. You can also ask the agent to steer or cancel a task.
 - Tasks keep running when you quit or `/reload`; what finished meanwhile is delivered when you return.
+- A task that ends without changing anything removes its worktree and branch; one with work in it keeps them until you merge or remove them. A follow-up message to a finished task continues it where it was.
+- `oi -s <task session>` opens a task directly; tool calls it needs approved are asked there too.
 - New config: `cheap_model` (the model for mechanical tasks), `max_tasks` (how many run at once, default 4), and `"delegation": "off"` to keep all work in the conversation.
