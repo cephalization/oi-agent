@@ -185,7 +185,10 @@ These work best on the session you are in, because the evidence is right there.
   the terminal to the task's session without making this process its
   writer: `Store.follow` polls the session's files and emits the events a
   writer in this process would, and what you type goes to the task's inbox
-  (`Tasks.say`). The delegating session stays attended, so results and
+  (`Tasks.say`). A span's stream file is removed when the span ends, so a
+  follower can miss the end of a reply, or a quick one entirely; when an
+  `LLM` span ends it emits whatever reply text it had not yet shown, read
+  from the span's output message attributes. The delegating session stays attended, so results and
   approval requests still arrive. Opening a task directly with
   `oi -s <task-session>` answers its approval requests too
   (`Engine.watch`), but does not serve the delegating session: results and
