@@ -120,7 +120,8 @@ These work best on the session you are in, because the evidence is right there.
   `source/engine/src/metrics.ts` adds them up. A turn's wall time is its
   root `AGENT` span; its model time is the sum of its `LLM` spans and its
   tool time the sum of its `TOOL` spans (calls that ran side by side both
-  count, so tools can exceed the wall time). Traces that are not turns
+  count, so tools can exceed the wall time; a tool's span also covers the
+  time it waited for your approval). Traces that are not turns
   (evaluators, learning, steering detection) run after a turn and are
   reported apart, as judge time. A span still open in a running turn counts
   up to now; one left open by a crash counts up to the last thing its trace
@@ -241,8 +242,10 @@ These work best on the session you are in, because the evidence is right there.
   prompt is a plain inbox entry (`Engine.queue`): the running turn never
   sees it, it runs after, in the order sent, and it survives quitting:
   leaving a session stops its turn without starting what is queued
-  (`interrupt(sessionId, true)`), and the queue runs when the session is
-  next opened. A turn only takes messages sent while it runs, so one that
+  (`interrupt(sessionId, true)`: the session is marked as left, so nothing
+  already read from its inbox starts either), and the queue runs when the
+  session is next opened. A `/compact` or `/handoff` reads nothing said to
+  it, so Enter queues while one runs. A turn only takes messages sent while it runs, so one that
   an earlier turn never read is not also picked up by the turn before its
   own. What is waiting is listed above the status line, read back from
   the inbox.
@@ -525,7 +528,7 @@ These work best on the session you are in, because the evidence is right there.
   the launcher starts the bundled build on the same session, with a note
   saying why; a child killed by a signal is not restarted. After any abnormal
   exit the launcher puts the terminal's settings back. The protocol is tested
-  against fake CLIs in `packages/cli/test/launcher.test.ts`. `/reload` waits for a running turn. Continuing a turn that a restart
+  against fake CLIs in `packages/cli/test/launcher.test.ts`. `/reload` refuses while a turn is running (press esc first), as `/new` and `/resume` do. Continuing a turn that a restart
   cut short is not built yet: the next turn folds it in as interrupted.
 - **"Why are calls to OpenAI sent over a WebSocket?"** For the prompt cache.
   OpenAI finds a cached prefix only on the machine that wrote it, and plain

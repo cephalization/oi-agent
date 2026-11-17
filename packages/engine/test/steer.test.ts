@@ -222,12 +222,75 @@ describe("messages their turn never read", () => {
     expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual(["first"])
     expect(pendingInbox(s.store, s.sessionId).map((entry) => entry.text)).toEqual(["queued before leaving"])
 
-    s.engine.drainInbox(s.sessionId)
+    s.engine.rejoin(s.sessionId)
     await s.engine.settled(s.sessionId)
     expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual([
       "first",
       "queued before leaving",
     ])
+    s.engine.close()
+  })
+
+  it("stay queued on leaving even when the inbox had already been read into the queue", async () => {
+    const s = setup((_call, step) => (step === 0 ? bash("sleep 5") : say("ran after coming back")))
+    const turn = s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    await until(() => s.calls.length === 1)
+    s.engine.queue(s.sessionId, { text: "one", userId: "tony" })
+    s.engine.queue(s.sessionId, { text: "two", userId: "tony" })
+    // As a background job ending mid-turn does: both are now promises behind the running turn.
+    s.engine.drainInbox(s.sessionId)
+    s.engine.interrupt(s.sessionId, true)
+    await turn
+    await s.engine.idle(s.sessionId)
+    // A result arriving after the person has gone starts nothing either.
+    s.engine.drainInbox(s.sessionId)
+    await s.engine.idle(s.sessionId)
+
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual(["first"])
+    expect(pendingInbox(s.store, s.sessionId).map((entry) => entry.text)).toEqual(["one", "two"])
+
+    s.engine.rejoin(s.sessionId)
+    await s.engine.settled(s.sessionId)
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual([
+      "first",
+      "one",
+      "two",
+    ])
+    expect(pendingInbox(s.store, s.sessionId)).toEqual([])
+    s.engine.close()
+  })
+
+  it("stay queued when the session is left between turns, with nothing running to stop", async () => {
+    const s = setup(() => say("done"), 200)
+    const turn = s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    await until(() => s.calls.length === 1)
+    s.engine.queue(s.sessionId, { text: "queued", userId: "tony" })
+    await turn
+    // The turn has ended and its queue has been read; the person goes before the next one starts.
+    s.engine.interrupt(s.sessionId, true)
+    await s.engine.idle(s.sessionId)
+
+    const inputs = loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)
+    const waiting = pendingInbox(s.store, s.sessionId).map((entry) => entry.text)
+
+    // Either it had started (and was stopped) or it is still waiting: it is never both gone and unrun.
+    expect([...inputs, ...waiting]).toEqual(["first", "queued"])
+    s.engine.close()
+  })
+
+  it("is not offered to a /compact, which reads nothing said to it", async () => {
+    const s = setup(() => say("summary"), 300)
+
+    await s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    const compacting = s.engine.submit(s.sessionId, { text: "", userId: "tony", operation: "compact" })
+
+    await until(() => s.engine.busy(s.sessionId))
+    expect(s.engine.steerable(s.sessionId)).toBe(false)
+    expect(s.engine.steer(s.sessionId, { text: "too late", userId: "tony" })).toBeUndefined()
+    await compacting
     s.engine.close()
   })
 

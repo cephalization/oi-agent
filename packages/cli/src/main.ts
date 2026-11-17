@@ -409,12 +409,20 @@ const targetFor = async (text: string, phoenix: Phoenix | undefined): Promise<Ta
   }
 }
 
+/**
+ * The session someone last worked in: the most recently active one on disk
+ * that has a turn. Not the newest directory, which is often a delegated
+ * task's session or one that was opened and closed without a prompt.
+ */
+const latestSession = (): string | undefined =>
+  summarizeSessions(store).find((session) => session.storage === "local" && session.turns > 0)?.id
+
 const initialTarget = async (engine: Engine, phoenix: Phoenix | undefined): Promise<Target> => {
   const named = command === "resume" ? (rest[0] ?? fail("Usage: oi resume <session|url>")) : values.session
 
   if (named !== undefined) return targetFor(named, phoenix)
 
-  const latest = values.continue ? store.listSessionIds().at(-1) : undefined
+  const latest = values.continue ? latestSession() : undefined
 
   return { identifier: latest ?? engine.createSession(process.cwd()).id }
 }
@@ -675,7 +683,7 @@ const show = (idOrPrefix: string): void => {
 const metrics = (idOrPrefix: string | undefined): void => {
   const id =
     idOrPrefix === undefined
-      ? (store.listSessionIds().at(-1) ?? fail("No sessions yet."))
+      ? (latestSession() ?? fail("No sessions yet."))
       : (store.resolveSession(idOrPrefix) ?? fail(`No session matches "${idOrPrefix}".`))
 
   const measured = sessionMetrics(store, id)
@@ -825,9 +833,10 @@ const interactive = async (): Promise<void> => {
     // The runner owns a task's turns; this terminal answers its approvals. It runs the
     // delegator's turns (results, queued prompts) only once the delegator has been opened
     // here: a task opened directly may belong to a conversation that is busy elsewhere.
-    if (serving && attended?.serving === true) {
-      // Back at a session this process already serves: what was queued while away runs now.
-      engine.drainInbox(owner)
+    if (attended?.serving === true) {
+      // Back at a session this process already serves, or at one of its tasks, which leaves
+      // the session served: what was queued while away runs now.
+      engine.rejoin(owner)
     } else if (serving) {
       engine.attend(owner)
       attended = { id: owner, serving: true }

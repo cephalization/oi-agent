@@ -137,7 +137,12 @@ const NO_HOOKS: TurnHooks = { pendingFeedback: () => [], afterTurn: () => Promis
 
 interface Running {
   readonly fiber: Fiber.Fiber<TurnResult, ModelError>
+  /** A `/compact` or `/handoff`: it makes one model call and reads nothing said to it. */
+  readonly operation: boolean
 }
+
+/** What a turn that waited in the queue comes to when its session was left before its place came. */
+const LEFT: TurnOutcome = { ok: false, interrupted: true, message: "interrupted" }
 
 /** Settings that can change while the engine runs. */
 export interface ModelChoice {
@@ -171,8 +176,8 @@ export class Engine {
   private readonly approvalListeners = new Set<(request: ApprovalRequest) => void>()
   /** Sessions someone is here for: their inbox runs as it fills. */
   private readonly attended = new Set<string>()
-  /** Sessions whose running turn was stopped because their person is going. */
-  private readonly leavingSessions = new Set<string>()
+  /** Sessions their person has left: nothing waiting in them starts until someone is back. */
+  private readonly away = new Set<string>()
   /** Inbox prompts already in a session's queue. */
   private readonly queuedPrompts = new Set<string>()
   /** Sessions with a delivery turn already in the queue. */
@@ -385,11 +390,12 @@ export class Engine {
    * started as the turn ends. It runs when the session is next served.
    */
   interrupt(sessionId: string, leaving: boolean = false): void {
+    // Before the check below: with no turn running, one may still be waiting behind evaluators.
+    if (leaving) this.away.add(sessionId)
+
     const running = this.running.get(sessionId)
 
     if (running === undefined) return
-
-    if (leaving) this.leavingSessions.add(sessionId)
 
     Effect.runFork(Fiber.interrupt(running.fiber))
   }
@@ -428,6 +434,13 @@ export class Engine {
     return this.enqueue(
       sessionId,
       async () => {
+        // Read from the inbox before the session was left: it stays there for whoever serves it next.
+        if (prompt.inboxId !== undefined && this.away.has(sessionId)) {
+          this.queuedPrompts.delete(prompt.inboxId)
+
+          return LEFT
+        }
+
         // Seed pickup belongs to the engine queue, not to a UI's startup order.
         const handoff = await this.pickupHandoff(sessionId)
 
@@ -460,6 +473,11 @@ export class Engine {
     return this.running.has(sessionId)
   }
 
+  /** Whether the turn running here reads what is said to it: a `/compact` or `/handoff` does not. */
+  steerable(sessionId: string): boolean {
+    return this.running.get(sessionId)?.operation === false
+  }
+
   /**
    * Say something to the turn that is running: it reads it before its next
    * model call, after the tool calls in flight. Returns false, having done
@@ -467,7 +485,7 @@ export class Engine {
    * message, the message runs as the next turn instead.
    */
   steer(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile | undefined {
-    if (!this.running.has(sessionId)) return undefined
+    if (!this.steerable(sessionId)) return undefined
 
     return this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text, steers: true })
   }
@@ -493,6 +511,7 @@ export class Engine {
    * attends a session wait in its inbox until someone does.
    */
   attend(sessionId: string): void {
+    this.away.delete(sessionId)
     this.attended.add(sessionId)
     this.jobs.adopt(sessionId)
     this.drainInbox(sessionId)
@@ -547,12 +566,21 @@ export class Engine {
     }
   }
 
+  /** Back at a session this process still serves: what waited while it was left runs now. */
+  rejoin(sessionId: string): void {
+    this.away.delete(sessionId)
+    this.drainInbox(sessionId)
+  }
+
   /**
    * Queue what is waiting in a session's inbox: each prompt from a peer as a
    * turn of its own, and every result of background work together in one.
    * Safe to call at any time, and again after a crash.
    */
   drainInbox(sessionId: string, now: boolean = false): void {
+    // Left with `interrupt(sessionId, true)`: nothing starts here until someone is back.
+    if (this.away.has(sessionId)) return
+
     for (const entry of pendingInbox(this.store, sessionId)) {
       if (entry.delivers !== undefined) {
         // `now`: the person asked for their results, whatever they are in the middle of.
@@ -589,6 +617,8 @@ export class Engine {
       sessionId,
       async () => {
         this.queuedDeliveries.delete(sessionId)
+
+        if (this.away.has(sessionId)) return undefined
 
         const results = pendingInbox(this.store, sessionId).filter((entry) => entry.delivers !== undefined)
 
@@ -798,14 +828,14 @@ export class Engine {
 
     const fiber = Effect.runFork(turn)
 
-    this.running.set(sessionId, { fiber })
+    this.running.set(sessionId, { fiber, operation: prompt.operation !== undefined })
 
     const exit = await Effect.runPromise(Fiber.await(fiber))
 
     this.running.delete(sessionId)
 
     // What was queued behind this turn, and anything meant for it that it did not get to read.
-    if (this.attended.has(sessionId) && !this.leavingSessions.delete(sessionId)) this.drainInbox(sessionId)
+    if (this.attended.has(sessionId)) this.drainInbox(sessionId)
 
     if (Exit.isSuccess(exit)) return { ok: true, result: exit.value }
 
