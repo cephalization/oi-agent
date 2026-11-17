@@ -209,8 +209,15 @@ These work best on the session you are in, because the evidence is right there.
   The system prompt differs by role (`source/engine/src/prompt.ts`): a
   session with the delegate tools is told to prefer delegating and how to
   write a brief; a subagent is told what to report and where it is working.
-- **"What do /attach and the status panel read?"** The same files. The panel
-  above the status line is `Engine.background`: the session's running jobs,
+- **"What do /tasks, /attach and the status panel read?"** The same files.
+  `/tasks` opens a keyboard menu like `/model`; selecting a task opens
+  its conversation just like `/attach <id>`, and `/detach` returns. The picker
+  and `/attach` suggestions put running and approval-waiting tasks first,
+  then sort each group by the immutable task session header's `created_at`
+  (newest first, task id ascending to break ties). Follow-ups do not change
+  creation order. Finished, failed and cancelled tasks remain selectable;
+  labels include the title, state and worktree branch/directory.
+  The panel above the status line is `Engine.background`: the session's running jobs,
   and for each task the tool call open in its session. `/attach` switches
   the terminal to the task's session without making this process its
   writer: `Store.follow` polls the session's files and emits the events a

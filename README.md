@@ -262,9 +262,13 @@ keep talking while it runs.
 - **A task that needs you asks here.** A tool call a subagent needs approved
   shows the usual prompt in your terminal, labelled with the task, and the
   subagent waits.
-- **`/tasks`** lists every task with its state, branch and directory.
-  **`/attach <task>`** opens one: you watch it work and what you type goes to
-  it. **`/detach`** returns. You can also tell the agent to steer or stop a
+- **`/tasks`** opens a keyboard picker: ↑↓ (or Tab/Shift+Tab) move, Enter
+  opens the task's conversation, and Esc cancels. Running tasks, including
+  those waiting for approval, come first; each group is newest-created first.
+  Finished, failed and cancelled tasks stay available for viewing. The picker
+  shows each task's state and branch/directory. **`/attach <task>`** still
+  opens one directly: you watch it work and what you type goes to it.
+  **`/detach`** returns. You can also tell the agent to steer or stop a
   task ("tell the test task to skip replay", "cancel it").
 - **Tasks outlive the terminal.** Quit or `/reload` and they keep running;
   what finished while you were away is delivered when you come back.

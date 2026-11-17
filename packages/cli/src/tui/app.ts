@@ -68,6 +68,7 @@ import { Editor, normalizeKeys } from "./editor.ts"
 import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
+import { orderTasks } from "./tasks.ts"
 
 /** The approval mode, as the status line shows it. */
 const APPROVAL_LABELS = new Map<ApprovalMode, string>([
@@ -710,8 +711,18 @@ class App {
     if (picker !== undefined) {
       const title = `${style.cyan("?")} ${picker.title} ${style.gray("· enter to choose, esc to go back")}`
 
+      const detail = picker.items[picker.selected]?.detail
+
+      const details =
+        detail === undefined
+          ? []
+          : detail
+              .split("\n")
+              .flatMap((line) => wrap(line, this.screen.columns - 2))
+              .map((line) => style.gray(line))
+
       this.screen.render({
-        lines: [...lines, title, ...this.menuLines(picker.items, picker.selected)],
+        lines: [...lines, title, ...this.menuLines(picker.items, picker.selected), ...details],
         cursor: { line: lines.length, column: 1 },
       })
 
@@ -761,30 +772,38 @@ class App {
   private taskSuggestions(): Array<Suggestion> {
     const { engine, sessionId } = this.options
 
-    return (engine?.tasks.list(sessionId) ?? []).toReversed().map((task) => ({
-      value: task.id,
-      label: `${task.id} ${task.task.title}`,
-      hint: engine?.tasks.describe(engine.tasks.status(task)) ?? "",
-    }))
-  }
+    if (engine === undefined) return []
 
-  /** Every task delegated from this session, newest last, with where it works. */
-  private taskLines(): Array<string> {
-    const { engine, sessionId } = this.options
-    const tasks = engine?.tasks.list(sessionId) ?? []
+    const entries = engine.tasks.list(sessionId).map((task) => ({ task, status: engine.tasks.status(task) }))
 
-    if (engine === undefined || tasks.length === 0) return ["No tasks have been delegated from this session."]
-
-    return tasks.flatMap((task) => {
+    return orderTasks(entries).map(({ task, status }) => {
       const worktree = task.task.worktree
 
-      return [
-        `${task.id} "${task.task.title}" · ${engine.tasks.describe(engine.tasks.status(task))}`,
+      const location =
         worktree === undefined
-          ? `  session ${task.header.id.slice(0, 13)} · shares this directory`
-          : `  session ${task.header.id.slice(0, 13)} · ${worktree.branch} in ${worktree.path}`,
-      ]
+          ? `shares this directory: ${task.header.cwd}`
+          : `${worktree.branch} in ${worktree.path}`
+
+      const description = engine.tasks.describe(status)
+
+      return {
+        value: task.id,
+        label: `${task.id} ${task.task.title}`,
+        hint: description,
+        detail: `${task.id} "${task.task.title}" · ${description}\nsession ${task.header.id} · ${location}`,
+      }
     })
+  }
+
+  /** Browse every task, including finished ones, using the shared keyboard picker. */
+  private async pickTask(): Promise<void> {
+    const items = this.taskSuggestions()
+
+    if (items.length === 0) return this.say(["No tasks have been delegated from this session."])
+
+    const id = await this.pick("Tasks", items)
+
+    if (id !== undefined) this.attach(id)
   }
 
   /** Deliver waiting results now, whatever is being typed, and say what is still running. */
@@ -1557,7 +1576,7 @@ class App {
 
     if (name === "/inbox") return this.inbox()
 
-    if (name === "/tasks") return this.say(this.taskLines())
+    if (name === "/tasks") return this.pickTask()
 
     if (name === "/attach") return this.attach(argument)
 
