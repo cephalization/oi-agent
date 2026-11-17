@@ -1,5 +1,11 @@
 # oi-agent
 
+## 0.10.1
+
+### Patch Changes
+
+- [#74](https://github.com/cephalization/oi-agent/pull/74) [`fed5ad7`](https://github.com/cephalization/oi-agent/commit/fed5ad7c34b214517ffe31a867c74b5a901fd6d8) Thanks [@cephalization](https://github.com/cephalization)! - Shared-session drivers can steer a running turn or use Ctrl+T to queue the next turn, just like the host. Drivers and read-only viewers now see all participants' pending messages with sender names, background commands, task progress and waiting results. Tool approvals remain with the host, and viewer links remain read-only.
+
 ## 0.10.0
 
 ### Minor Changes
