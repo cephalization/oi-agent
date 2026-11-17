@@ -6,10 +6,10 @@
  * step asks the fold what to send next, so what the model sees is always
  * exactly what is on disk.
  */
-import { Context, Effect, Layer, Schema } from "effect"
+import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
-import { sessionIdForTrace } from "./ids.ts"
+import { nsToIso, sessionIdForTrace } from "./ids.ts"
 import { contextFor, pendingInbox, steerPoint } from "./fold.ts"
 import {
   type AnnotationFile,
@@ -257,6 +257,7 @@ const toolStep = (
   return Effect.gen(function* () {
     const span = yield* currentDiskSpan
 
+    span.patchMetadata({ execution_started_at: null })
     span.flush()
 
     if (tool === undefined) return yield* new ToolFailed({ message: `Unknown tool: ${use.name}` })
@@ -293,6 +294,9 @@ const toolStep = (
       if (approval.decision === "deny")
         return yield* new ToolFailed({ message: "The user declined to run this tool call." })
     }
+
+    span.patchMetadata({ execution_started_at: nsToIso(yield* Clock.currentTimeNanos) })
+    span.flush()
 
     // Only tools that can change the machine are observed; a read-only tool is declared to change nothing.
     const before = tool.mutates ? observeWorkspace(env.cwd) : undefined

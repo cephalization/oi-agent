@@ -2,13 +2,14 @@
  * Where a session's time went, computed from its span files alone: every
  * span records when it started and ended, so nothing here is bookkeeping.
  *
- * A turn's time is split into model time (its `LLM` spans) and tool time
- * (its `TOOL` spans). Traces that are not turns (evaluators, learning,
+ * A turn's time is split into model time (its `LLM` spans) and tool execution
+ * time (its `TOOL` spans after approval). Traces that are not turns (evaluators, learning,
  * steering detection) run after a turn and are reported apart, as judge time.
  */
 import { Option, Schema } from "effect"
 import { loadSession, type TurnState } from "./fold.ts"
 import { kindOf, numberAttr, OI, readMetadata, type SpanFile, stringAttr } from "./format.ts"
+import { executionDurationMs } from "./timing.ts"
 import { isoToNs } from "./ids.ts"
 import type { Store, TraceFiles } from "./store.ts"
 
@@ -21,6 +22,7 @@ export interface TurnMetrics {
   readonly started_at: string
   readonly wall_ms: number
   readonly model_ms: number
+  /** Execution only; approval latency remains in wall_ms and raw TOOL span latency. */
   readonly tool_ms: number
   readonly model_calls: number
   readonly tool_calls: number
@@ -56,6 +58,7 @@ export interface TaskMetrics {
   readonly title: string
   readonly wall_ms: number
   readonly model_ms: number
+  /** Execution only; approval latency remains in wall_ms and raw TOOL span latency. */
   readonly tool_ms: number
   readonly tokens_in: number
   readonly tokens_out: number
@@ -67,6 +70,7 @@ export interface Totals {
   /** The sum of the turns: time oi was working. */
   readonly wall_ms: number
   readonly model_ms: number
+  /** Execution only; approval latency remains in wall_ms and raw TOOL span latency. */
   readonly tool_ms: number
   /** Evaluators, learning and steering detection: after the turns, not part of them. */
   readonly judge_ms: number
@@ -123,12 +127,12 @@ const durations = (trace: TraceFiles, state: TurnState | undefined, nowMs: numbe
   return [
     ...trace.ended.map((span) => ({
       span,
-      ms: msOf(span.end_time) - msOf(span.start_time),
+      ms: executionDurationMs(span, msOf(span.end_time)),
       unfinished: false,
     })),
     ...trace.open.map((entry) => ({
       span: entry.span,
-      ms: Math.max(0, until - msOf(entry.span.start_time)),
+      ms: executionDurationMs(entry.span, until),
       unfinished: true,
     })),
   ]
@@ -312,6 +316,7 @@ const describeCall = (span: SpanFile): Pick<ToolCallMetrics, "tool" | "kind" | "
 
 interface Usage {
   readonly model_ms: number
+  /** Execution only; approval latency remains in wall_ms and raw TOOL span latency. */
   readonly tool_ms: number
   readonly model_calls: number
   readonly tool_calls: number

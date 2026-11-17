@@ -9,6 +9,7 @@ import {
   shownInTerminal,
   branchTo,
   type EndedSpan,
+  executionDurationMs,
   isoToNs,
   kindOf,
   loadSession,
@@ -33,7 +34,7 @@ interface ActiveTool {
 const MAX_RESULT_LINES = 6
 
 const seconds = (span: EndedSpan): string =>
-  `${(Number(isoToNs(span.end_time) - isoToNs(span.start_time)) / 1e9).toFixed(1)}s`
+  `${(executionDurationMs(span, Number(isoToNs(span.end_time) / 1_000_000n)) / 1000).toFixed(1)}s`
 
 const UNITS = ["", "k", "M", "B", "T"]
 
