@@ -10,7 +10,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
 import { sessionIdForTrace } from "./ids.ts"
-import { contextFor } from "./fold.ts"
+import { contextFor, pendingInbox } from "./fold.ts"
 import {
   type AnnotationFile,
   type EngineMetadata,
@@ -300,8 +300,17 @@ const toolStep = (
       cwd: env.cwd,
       emit: (chunk) => span.delta({ k: "stdout", i: 0, d: env.redactor.scrub(chunk) }),
       complete: (delivery, text) => {
+        const written = env.store.listInbox(env.sessionId).some((entry) => entry.id === delivery.inbox_id)
+
+        // Delivered or observed before: asking about an old job again is not a second result.
+        if (
+          observed.some((entry) => entry.inbox_id === delivery.inbox_id) ||
+          (written && !pendingInbox(env.store, env.sessionId).some((entry) => entry.id === delivery.inbox_id))
+        )
+          return
+
         // Inbox first: if interrupted before this TOOL ends, ordinary delivery recovers the result.
-        if (!env.store.listInbox(env.sessionId).some((entry) => entry.id === delivery.inbox_id))
+        if (!written)
           env.store.writeInbox(
             env.sessionId,
             { user_id: "oi", text: env.redactor.scrub(text), delivers: delivery },

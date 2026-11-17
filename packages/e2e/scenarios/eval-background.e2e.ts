@@ -111,8 +111,15 @@ const cleanGate = async (s: Scenario): Promise<void> => {
 }
 
 const resolved = (s: Scenario, session: string, label: "pass" | "fail"): void => {
-  const results = verdicts(s, session)
+  // The outcome check's own results. The turn that observed the result is also judged in its own right.
+  const results = verdicts(s, session).filter(
+    (file) => file.annotation.metadata?.["deferred_from"] !== undefined,
+  )
+
   expect(results.map((file) => file.annotation.label)).toEqual(["pending", label])
+  expect(results.map((file) => file.annotation.identifier)).toEqual(
+    results.map(() => `oi-agent:deferred:${s.spans.turns(session)[0]?.trace_id}`),
+  )
   expect(results[1]?.annotation.metadata?.["deferred_from"]).toBe(s.spans.turns(session)[0]?.trace_id)
   expect(results[1]?.annotation.metadata?.["pending"]).toBe(false)
   const calls = judgeCalls(s, session)
