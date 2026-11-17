@@ -1,5 +1,19 @@
 # oi-agent
 
+## 0.11.0
+
+### Minor Changes
+
+- [#63](https://github.com/cephalization/oi-agent/pull/63) [`5aae11e`](https://github.com/cephalization/oi-agent/commit/5aae11effbf29f6b2469c0801f628bb029f50f22) Thanks [@cephalization](https://github.com/cephalization)! - The agent can now search the web on Anthropic, OpenAI and ChatGPT models, and read a page on Anthropic models, using the provider's own web tools. They run on the provider's servers, so nothing is fetched from your machine and no approval is asked; the provider bills searches separately. Set `"web": "off"` in the config, or `OI_AGENT_WEB=off`, to stop offering them. Other OpenAI-compatible servers are unchanged.
+
+### Patch Changes
+
+- [#78](https://github.com/cephalization/oi-agent/pull/78) [`6e47297`](https://github.com/cephalization/oi-agent/commit/6e47297a6152938fea8917b1b493621de2166aea) Thanks [@cephalization](https://github.com/cephalization)! - Fix `oi join` crashing against hosts started on an older version. Drivers and viewers can still follow the conversation; a startup note explains when the host must be updated and restarted to publish live task status. Invalid host responses now produce descriptive errors. Protect existing and newly started task visibility without granting task control or tool approvals.
+
+- [#76](https://github.com/cephalization/oi-agent/pull/76) [`14258ca`](https://github.com/cephalization/oi-agent/commit/14258caf64242f922301685d3562a758af62b40f) Thanks [@cephalization](https://github.com/cephalization)! - Exit joined chats with a clear host-disconnected message when sharing ends or the transport stops responding. Close the host event stream before stopping its tunnel, and cancel pending prompts on disconnect instead of hanging or reporting an unhandled fetch error. `oi join` now returns to the shell after a disconnect over a tunnel, where it used to wait on a tunnel process that would not stop. Joining a host too old to publish live status keeps working while that host is idle.
+
+- [#77](https://github.com/cephalization/oi-agent/pull/77) [`e5b3af6`](https://github.com/cephalization/oi-agent/commit/e5b3af6d089e557ef728f3c7acba9a6a88dbdf04) Thanks [@cephalization](https://github.com/cephalization)! - Make the README a shorter introduction and consolidate detailed usage and contributor documentation in the bundled guide. Keep links between bundled documents working offline.
+
 ## 0.10.1
 
 ### Patch Changes
