@@ -247,9 +247,9 @@ keep talking while it runs.
 - **A subagent is another oi agent with its own session.** It sees only its
   brief. A task that changes files gets its own git worktree and branch
   (under the oi home, never inside your project), so tasks running side by
-  side, and your checkout, do not collide. Its worktree and branch stay
-  after it ends, even if unchanged, so follow-ups can resume in place.
-  Remove them explicitly when you no longer need the task.
+  side, and your checkout, do not collide. A task that ends without changing
+  anything takes its worktree and branch with it (a follow-up recreates
+  them); one with work in it stays until you merge or remove it.
 - **Running work is listed above the status line**: each task and background
   command, how long it has run, and what it is doing now.
 - **Results come back by themselves.** When a task or command finishes, the

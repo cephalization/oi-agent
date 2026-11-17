@@ -42,9 +42,10 @@ and all four facts must also appear in tool outputs. Later terse delivery
 acknowledgements do not erase an earlier consolidated report. This catches
 missing or unsupported reports, not every possible misleading natural-language
 claim. It is not an LLM truthfulness judge. Task deliveries must name the
-spawned task IDs. Completion/evidence must pass every sample; choice has a
-separate per-case 2/3 bar, so easy cases cannot hide a failure to split work.
-Off must make zero delegate calls.
+spawned task IDs. Completion/evidence must pass every sample. The three
+"no delegation" cases each have a 2/3 choice bar. The split rate of the
+independent case is reported, not asserted (see "Split rate: a score, not a
+gate" at the end). Off must make zero delegate calls.
 
 Results JSON persists outside disposable sandboxes in `OI_E2E_RESULTS_DIR`
 (default `$TMPDIR/oi-e2e-results`), with parent reports, exact tool inputs and
@@ -225,7 +226,26 @@ and an interactive responsiveness measurement would better test the benefit
 of splitting. The confined follow-up closes the earlier environment-verification
 gap, but not the policy question.
 
-No runtime, prompt, assertion or default-policy change is included. The initial
-implementation was consolidated as `1f12dbe`; this documentation follow-up's PR
-is deferred pending consolidation onto the user's existing `try/delegation`
-branch.
+No runtime, prompt or default-policy change is included.
+
+## Split rate: a score, not a gate
+
+Decided when the branch was reviewed for merging (2026-11-16), after a third
+confined run again scored 1/3 on the split case with 24/24 correct, evidenced
+completions. The split rate is no longer asserted; the run prints it and the
+results file records it.
+
+The reason is that the gate contradicted the policy it was testing. The
+delegation section of the system prompt tells the agent to do small things
+itself, and counting lines in two short logs is small: an agent that does
+both in the conversation is following its instructions, and did so at about
+half the tokens of the samples that split. A hard 2/3 bar on this case made
+`pnpm e2e:scored` fail on correct behaviour, every run, which trains people
+to ignore the command. The bars that guard against a real cost (delegating a
+quick edit, a dirty checkout or warm dependencies) are unchanged, as are the
+completion, evidence and delivery checks on every sample.
+
+What would settle the open decision above is a case where splitting has a
+measurable benefit: investigations long enough that running them side by side
+beats the startup cost, or a measure of how soon the conversation answers
+while work runs. That case should be added with a bar of its own.

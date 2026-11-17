@@ -160,9 +160,12 @@ These work best on the session you are in, because the evidence is right there.
   (`linksOf` in `source/engine/src/export/otlp.ts`).
   With `isolation: "worktree"` the task works in `git worktree` at
   `<home>/worktrees/<task>` on branch `oi/<title>-<task>`, started from the
-  delegator's commit. Its worktree and branch stay even when it changed
-  nothing: a finished task can still receive a follow-up or be resumed.
-  Cleanup is explicit, not part of delivering its result. `task_message`
+  delegator's commit. When a task ends having changed nothing (no commit, no
+  uncommitted change), its worktree and branch are removed as its result is
+  written (`Tasks.tidy`): there is nothing to merge or look at. One with
+  work in it stays until you remove it. A follow-up to a task whose worktree
+  is gone recreates it first, on its branch if that still exists and from
+  the same starting commit otherwise (`Tasks.restore`). `task_message`
   writes another prompt to the task's inbox and starts a new runner if the
   last one has left, so a follow-up continues with
   everything the task knew. `task_cancel` kills the runner's process group
@@ -184,10 +187,13 @@ These work best on the session you are in, because the evidence is right there.
   writer in this process would, and what you type goes to the task's inbox
   (`Tasks.say`). The delegating session stays attended, so results and
   approval requests still arrive. Opening a task directly with
-  `oi -s <task-session>` also attends its delegating session for results and
-  approvals; the terminal does not run the task's turns locally. Switching
-  between the parent and its tasks retains that attendance, while switching
-  to unrelated work releases it. Unanswered task approvals remain available
+  `oi -s <task-session>` answers its approval requests too
+  (`Engine.watch`), but does not serve the delegating session: results and
+  queued prompts wait in that session's inbox until it is opened, here with
+  `/detach` or anywhere else, because it may be open and mid-turn in another
+  terminal. The terminal never runs the task's turns locally. Switching
+  between the parent and its tasks keeps the same owner, while switching to
+  unrelated work releases it. Unanswered task approvals remain available
   when the terminal is reopened.
 - **"Why did my result not interrupt me?"** Results are held while you are
   in the middle of something. The terminal sets `Engine.calm`, which
@@ -254,7 +260,13 @@ These work best on the session you are in, because the evidence is right there.
   obligation is recovered from spans and annotations, and judged once all
   directly launched background results have durable delivery links on the
   active branch. Partial deliveries remain pending; separate launch turns keep
-  independent obligations. Polling a finished job or cancelling a job/task also
+  independent obligations. Waiting is recorded once, on the launch turn:
+  turns in between are evaluated as usual and add no further `pending`
+  record. Each outcome result names its launch turn (`deferred_from`, and
+  `oi-agent:deferred:<trace>` as the annotation identifier, so several on
+  one turn stay distinct in Phoenix). A result that was delivered on another
+  branch of the session can never arrive on this one: that obligation ends
+  as `skipped`, saying so. Polling a finished job or cancelling a job/task also
   persists completion on the observing TOOL span before claiming the result,
   so pending checks resolve without a duplicate automatic delivery. A task
   follow-up that starts a new runner creates its own launch obligation;
