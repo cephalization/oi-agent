@@ -50,7 +50,8 @@ scenario(
     await host.waitFor(/enter starts a new turn/)
     await host.line("/share local")
     const screen = await host.waitFor(/View \(read-only\)/)
-    const link = parseShareLink(/oi join (oi-share:\S+)/.exec(screen)![1]!)!
+    const links = [...screen.matchAll(/oi join (oi-share:\S+)/g)].map((match) => parseShareLink(match[1]!)!)
+    const link = links[0]!
 
     const proxy = http.createServer((request, response) => {
       if (request.url === "/v1/events") {
@@ -61,7 +62,7 @@ scenario(
       }
 
       void fetch(`${link.address}:${link.port}${request.url}`, {
-        headers: { authorization: `Bearer ${link.token}` },
+        headers: { authorization: request.headers.authorization ?? "" },
       }).then(async (upstream) => {
         response.writeHead(upstream.status, { "content-type": "application/json" })
         response.end(Buffer.from(await upstream.arrayBuffer()))
@@ -73,13 +74,23 @@ scenario(
     const address = proxy.address() as AddressInfo
 
     try {
-      const peer = await s.tui(["join", formatShareLink({ ...link, port: address.port })], {
-        env: new Map([["OI_AGENT_HOME", path.join(s.sandbox.root, "peer")]]),
-      })
+      const peers = []
 
-      await peer.waitFor(/joined .*session as/)
-      expect(await peer.exited(15_000)).toBe(0)
-      expect(await peer.screen()).toMatch(/Host disconnected.*joined chat/i)
+      expect(links).toHaveLength(2)
+
+      for (const [index, shared] of links.entries()) {
+        const peer = await s.tui(["join", formatShareLink({ ...shared, port: address.port })], {
+          env: new Map([["OI_AGENT_HOME", path.join(s.sandbox.root, `peer-${index}`)]]),
+        })
+
+        await peer.waitFor(index === 0 ? /session as driver/ : /session as viewer/)
+        peers.push(peer)
+      }
+
+      for (const peer of peers) {
+        expect(await peer.exited(15_000)).toBe(0)
+        expect(await peer.screen()).toMatch(/Host disconnected.*joined chat/i)
+      }
     } finally {
       proxy.closeAllConnections()
       await new Promise<void>((resolve) => proxy.close(() => resolve()))
