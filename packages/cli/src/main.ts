@@ -825,7 +825,10 @@ const interactive = async (): Promise<void> => {
     // The runner owns a task's turns; this terminal answers its approvals. It runs the
     // delegator's turns (results, queued prompts) only once the delegator has been opened
     // here: a task opened directly may belong to a conversation that is busy elsewhere.
-    if (serving && attended?.serving !== true) {
+    if (serving && attended?.serving === true) {
+      // Back at a session this process already serves: what was queued while away runs now.
+      engine.drainInbox(owner)
+    } else if (serving) {
       engine.attend(owner)
       attended = { id: owner, serving: true }
     } else if (attended === undefined) {

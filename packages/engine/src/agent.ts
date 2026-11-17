@@ -427,13 +427,25 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
 
     const steered: Array<Steered> = []
 
+    // Messages their own turn never read are already queued as turns of their own, this one
+    // perhaps among them. Only what is said from here on is said to this turn.
+    const earlier = new Set(
+      pendingInbox(env.store, env.sessionId).flatMap((entry) => (entry.steers === true ? [entry.id] : [])),
+    )
+
     /**
      * Hand the model what its person said while it worked. The record goes on
      * the root span, which the fold reads to build the next request, so the
      * message is in that request whether or not this process survives to send it.
      */
     const steer = (): boolean => {
-      const waiting = pendingInbox(env.store, env.sessionId).filter((entry) => entry.steers === true)
+      // On the last step there is no model call left to say it to: it stays pending, and runs next.
+      if (steps >= MAX_STEPS) return false
+
+      const waiting = pendingInbox(env.store, env.sessionId).filter(
+        (entry) => entry.steers === true && !earlier.has(entry.id),
+      )
+
       const after = waiting.length === 0 ? undefined : steerPoint(env.store, env.sessionId, traceId)
 
       if (after === undefined) return false

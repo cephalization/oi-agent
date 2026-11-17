@@ -199,7 +199,7 @@ const toolResultsFor = (trace: TraceFiles, call: LastCall): Array<ToolResult> =>
 
 /** A message sent to a running turn, as the model reads it. Deterministic, so replays match. */
 export const renderSteer = (entry: Pick<Steered, "user_id" | "text">): string =>
-  `<steering from="${entry.user_id}">\nSent while you were working on the above. Take it into account now, without starting over.\n\n${entry.text}\n</steering>`
+  `<steering from="${entry.user_id.replaceAll('"', "'")}">\nSent while you were working on the above. Take it into account now, without starting over.\n\n${entry.text}\n</steering>`
 
 /** The `LLM` span a message to a running turn would follow: the turn's latest finished model call. */
 export const steerPoint = (store: Store, sessionId: string, traceId: string): string | undefined =>
