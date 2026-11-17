@@ -221,7 +221,9 @@ These work best on the session you are in, because the evidence is right there.
   write a brief; a subagent is told what to report and where it is working.
 - **"What do /tasks, /attach and the status panel read?"** The same files.
   `/tasks` opens a keyboard menu like `/model`; selecting a task opens
-  its conversation just like `/attach <id>`, and `/detach` returns. The picker
+  its conversation just like `/attach <id>`, and `/detach` returns. Escape
+  dismisses the picker without stopping tasks; at the prompt it stops work.
+  The picker
   and `/attach` suggestions put running and approval-waiting tasks first,
   then sort each group by the immutable task session header's `created_at`
   (newest first, task id ascending to break ties). Follow-ups do not change
