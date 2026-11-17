@@ -61,6 +61,7 @@ const sbString = (value: string): string => JSON.stringify(value)
 const profile = (root: string): string => {
   const home = os.homedir()
   const realRoot = fs.realpathSync(root)
+  const source = fs.realpathSync(REPO_ROOT)
 
   const writable = [
     realRoot,
@@ -80,12 +81,25 @@ const profile = (root: string): string => {
     path.join(home, ".config/AGENTS.md"),
   ]
 
+  const sourceParents: Array<string> = []
+
+  for (let dir = path.dirname(source); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    if (hidden.some((hiddenDir) => dir === hiddenDir || dir.startsWith(`${hiddenDir}${path.sep}`)))
+      sourceParents.push(dir)
+  }
+
+  const parentPaths = sourceParents.map((dir) => `(literal ${sbString(dir)})`).join(" ")
+  const ancestorData = sourceParents.length === 0 ? "" : `(deny file-read-data ${parentPaths})`
+
   return [
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
     `(allow file-write* ${writable.map((dir) => `(subpath ${sbString(dir)})`).join(" ")})`,
-    `(deny file-read* ${hidden.map((dir) => `(subpath ${sbString(dir)})`).join(" ")})`,
+    // Delegated worktrees can live inside ~/.oi-agent. Permit source reads
+    // and ancestor metadata for Node's realpath, but not ancestor listings.
+    `(deny file-read* (require-all (require-any ${hidden.map((dir) => `(subpath ${sbString(dir)})`).join(" ")}) (require-not (require-any (subpath ${sbString(source)}) ${parentPaths}))))`,
+    ancestorData,
     "",
   ].join("\n")
 }
