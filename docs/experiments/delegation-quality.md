@@ -12,7 +12,7 @@ with `OI_E2E_SAMPLES`. This is live-only (no cassette); replay skips both
 scenarios with `needs live models`. Neither the ordinary suite nor the
 existing scripted task scenarios are changed.
 
-**Escape hatch:** set `"delegation": "off"` in
+**To turn delegation off:** set `"delegation": "off"` in
 `~/.config/oi-agent/config.json` to keep work in the conversation.
 
 ## What is scored

@@ -30,9 +30,9 @@ session, and run `oi setup` to change your provider or settings.
 
 - **Work with your models.** Use Anthropic, OpenAI, a ChatGPT plan or local
   models, and switch providers during a session.
-- **Keep working while tasks run.** Background commands and optional subagents
-  report back when finished. Delegation is experimental; turn it off with
-  `"delegation": "off"` in config if you prefer work in one conversation.
+- **Keep working while tasks run.** Background commands and subagents report
+  back when finished. Set `"delegation": "off"` in config if you prefer work
+  in one conversation.
 - **Teach it your preferences.** Durable corrections can become checks on
   later work, with feedback and reversible learned rules.
 - **Pick up and share work.** Resume from disk or Phoenix, compact context,
