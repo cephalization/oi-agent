@@ -46,7 +46,10 @@ const metered = (apiKey: string, modelId: string, report: UsageReporter): Langua
         const result = await doGenerate()
 
         report({
+          system: "anthropic",
+          vendor: "anthropic",
           provider: "anthropic",
+          billing: "api",
           model: result.response?.modelId ?? modelId,
           prompt: JSON.stringify(params.prompt),
           completion: JSON.stringify(result.content),

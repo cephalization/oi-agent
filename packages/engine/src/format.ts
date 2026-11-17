@@ -274,6 +274,11 @@ export const Workspace = Schema.Struct({
 
 export type Workspace = typeof Workspace.Type
 
+/** How a model call is paid for: out of a subscription's allowance, or per token. */
+export const Billing = Schema.Literals(["plan", "api"])
+
+export type Billing = typeof Billing.Type
+
 /**
  * Engine-specific state rides in the OpenInference `metadata` attribute (a
  * JSON string) under one key, so it never collides with user metadata.
@@ -362,6 +367,8 @@ export const EngineMetadata = Schema.Struct({
   api: Schema.optionalKey(Api),
   /** On an `LLM` span: the configured provider that served it. */
   provider: Schema.optionalKey(Schema.String),
+  /** How the call was paid for: `plan` is a subscription's allowance, not billed per token. */
+  billing: Schema.optionalKey(Billing),
   /** On a turn's root span: the directory and checkout it ran in. */
   workspace: Schema.optionalKey(Workspace),
   /** Version of the learned-rules prompt section in effect. */

@@ -64,8 +64,8 @@ export interface Dialect {
   readonly userMessage: (parts: ReadonlyArray<string>) => Json
   readonly toTranscript: (messages: ReadonlyArray<Json>) => Transcript
   readonly fromTranscript: (transcript: Transcript) => Array<Json>
-  /** OpenInference attributes for the request; `provider` is `llm.provider`. */
-  readonly requestAttributes: (raw: string, provider: string) => Attrs
+  /** OpenInference attributes for the request; `vendor` is `llm.provider`, who served it. */
+  readonly requestAttributes: (raw: string, vendor: string) => Attrs
   readonly responseAttributes: (raw: string) => Attrs
   /** The reasoning effort a stored request body asked for, if it names one this harness knows. */
   readonly effort: (raw: string) => Effort | undefined

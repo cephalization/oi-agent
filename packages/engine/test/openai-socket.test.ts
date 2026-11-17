@@ -108,6 +108,8 @@ const start = async (behaviour: Behaviour) => {
 const model = (base: string): Layer.Layer<Model> => {
   const settings: OpenAISettings = {
     provider: "local",
+    vendor: "local",
+    billing: "api",
     api: "responses",
     transport: "websocket",
     baseUrl: base,

@@ -155,8 +155,8 @@ const modelStep = (env: TurnEnv, traceId: string) =>
       },
       {
         onRequest: (body) => {
-          span.assign(model.dialect.requestAttributes(body, model.provider))
-          span.patchMetadata({ api: model.dialect.api, provider: model.provider })
+          span.assign(model.dialect.requestAttributes(body, model.vendor))
+          span.patchMetadata({ api: model.dialect.api, provider: model.provider, billing: model.billing })
           span.flush()
         },
         onDelta: (delta) => span.delta(delta),
@@ -211,8 +211,8 @@ const compactContext = (env: TurnEnv, input: TurnInput) =>
         },
         {
           onRequest: (body) => {
-            span.assign(model.dialect.requestAttributes(body, model.provider))
-            span.patchMetadata({ api: model.dialect.api, provider: model.provider })
+            span.assign(model.dialect.requestAttributes(body, model.vendor))
+            span.patchMetadata({ api: model.dialect.api, provider: model.provider, billing: model.billing })
             span.flush()
           },
           onDelta: (delta) => span.delta(delta),

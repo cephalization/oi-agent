@@ -1,7 +1,36 @@
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { describe, expect, it } from "vite-plus/test"
-import { describeModels, listOpenAIModels, parseModelIds, providerIdFrom } from "../src/index.ts"
+import {
+  billingOf,
+  BUILTIN_PROVIDERS,
+  describeModels,
+  listOpenAIModels,
+  parseModelIds,
+  providerIdFrom,
+  vendorOf,
+} from "../src/index.ts"
+
+describe("who serves a provider's calls, and how they are paid for", () => {
+  const builtin = (id: string) => BUILTIN_PROVIDERS.find((provider) => provider.id === id)!
+
+  it("names OpenAI for both the API key and the ChatGPT plan, which differ only in billing", () => {
+    expect(vendorOf(builtin("openai"))).toBe("openai")
+    expect(vendorOf(builtin("chatgpt"))).toBe("openai")
+    expect(vendorOf(builtin("anthropic"))).toBe("anthropic")
+    expect(billingOf(builtin("openai"))).toBe("api")
+    expect(billingOf(builtin("chatgpt"))).toBe("plan")
+    expect(billingOf(builtin("anthropic"))).toBe("api")
+  })
+
+  it("uses a compatible server's declared vendor, and its id when it declares none", () => {
+    const local = { id: "ollama", name: "Ollama", kind: "openai-compatible" as const }
+
+    expect(vendorOf(local)).toBe("ollama")
+    expect(vendorOf({ ...local, id: "fast", vendor: "groq" })).toBe("groq")
+    expect(billingOf(local)).toBe("api")
+  })
+})
 
 describe("compatible servers", () => {
   it("makes a provider id from a display name", () => {

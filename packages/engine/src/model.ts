@@ -10,7 +10,7 @@ import { Context, Effect, Layer, Option, Schema } from "effect"
 import { type Effort, EFFORTS } from "./config.ts"
 import type { Dialect } from "./dialect.ts"
 import { anthropicMessages, openaiChat, openaiResponses } from "./dialects/index.ts"
-import type { StreamDelta } from "./format.ts"
+import type { Billing, StreamDelta } from "./format.ts"
 import type { ToolSpec } from "./tools.ts"
 import type { Json } from "./wire.ts"
 
@@ -39,8 +39,11 @@ export class Model extends Context.Service<
     readonly run: (call: ModelCall, hooks: ModelHooks) => Effect.Effect<string, ModelError>
     /** The wire format this model's requests and responses are in. */
     readonly dialect: Dialect
-    /** The configured provider, recorded as `llm.provider`. */
+    /** The configured provider's id, recorded as `metadata.provider`. */
     readonly provider: string
+    /** Who serves the call, recorded as `llm.provider`. */
+    readonly vendor: string
+    readonly billing: Billing
   }
 >()("oi-agent/Model") {}
 
@@ -162,7 +165,13 @@ export const anthropicModel = (settings: ModelSettings): Layer.Layer<Model> => {
       catch: describe,
     })
 
-  return Layer.succeed(Model, { run, dialect: anthropicMessages, provider: "anthropic" })
+  return Layer.succeed(Model, {
+    run,
+    dialect: anthropicMessages,
+    provider: "anthropic",
+    vendor: "anthropic",
+    billing: "api",
+  })
 }
 
 /** The request body a real model of this dialect would have sent. */
@@ -214,6 +223,8 @@ export const scriptedModel = (
   return Layer.succeed(Model, {
     dialect,
     provider: "scripted",
+    vendor: "scripted",
+    billing: "api",
     run: (call, hooks) =>
       Effect.gen(function* () {
         hooks.onRequest(JSON.stringify(scriptedRequest(call, dialect)))

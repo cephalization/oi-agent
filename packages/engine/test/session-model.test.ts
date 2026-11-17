@@ -4,6 +4,7 @@ import { approveAll, runTurn, type TurnEnv } from "../src/agent.ts"
 import type { Dialect } from "../src/dialect.ts"
 import { anthropicMessages, openaiChat, openaiResponses } from "../src/dialects/index.ts"
 import { lastModelOf } from "../src/fold.ts"
+import { kindOf, OI, readMetadata } from "../src/format.ts"
 import { Model } from "../src/model.ts"
 import type { Json } from "../src/wire.ts"
 import { tempEnv } from "./helpers.ts"
@@ -13,6 +14,9 @@ const servedBy = (provider: string, dialect: Dialect, request: Json, response: J
   Layer.succeed(Model, {
     dialect,
     provider,
+    // As the built-in providers are: the ChatGPT plan reaches OpenAI, and is not billed per token.
+    vendor: provider === "chatgpt" ? "openai" : provider,
+    billing: provider === "chatgpt" ? "plan" : "api",
     run: (_call, hooks) =>
       Effect.sync(() => {
         hooks.onRequest(JSON.stringify(request))
@@ -69,6 +73,29 @@ describe("a session's last model", () => {
       model: "gpt-b",
       effort: "low",
     })
+  })
+
+  it("records who served each call in llm.provider, and oi's provider id and the billing in metadata", async () => {
+    const env = tempEnv()
+
+    await turn(env, "one", anthropic)
+    await turn(env, "two", responses)
+
+    const calls = env.store
+      .listTraceIds(env.sessionId)
+      .flatMap((traceId) => env.store.readTrace(env.sessionId, traceId).ended)
+      .filter((span) => kindOf(span) === "LLM")
+      .map((span) => ({
+        system: span.attributes[OI.LLM_SYSTEM],
+        vendor: span.attributes[OI.LLM_PROVIDER],
+        provider: readMetadata(span).provider,
+        billing: readMetadata(span).billing,
+      }))
+
+    expect(calls).toEqual([
+      { system: "anthropic", vendor: "anthropic", provider: "anthropic", billing: "api" },
+      { system: "openai", vendor: "openai", provider: "chatgpt", billing: "plan" },
+    ])
   })
 })
 

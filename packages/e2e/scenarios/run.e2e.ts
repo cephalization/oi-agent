@@ -2,7 +2,7 @@
  * `oi run`: one prompt, no terminal. The cheapest check that a turn works
  * end to end and is recorded as the expected span tree.
  */
-import { kindOf } from "@oi-agent/engine"
+import { kindOf, OI, readMetadata, stringAttr } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
 import { expectOk, MODELS, scenario } from "../src/scenario.ts"
 
@@ -24,6 +24,19 @@ describe("oi run", () => {
     expect(kinds).toContain("AGENT")
     expect(kinds).toContain("LLM")
     expect(spans.lastModel(session)?.model).toBe(MODELS.main)
+
+    // The provider id is oi's name for a way of reaching models. Live, the default is the ChatGPT
+    // plan sign-in: OpenAI serves it and the plan pays. Replayed, it is OpenAI's API by key.
+    const provider = MODELS.main.split("/")[0]
+    const llm = spans.ofKind(session, "LLM")[0]
+
+    expect(["chatgpt", "openai"]).toContain(provider)
+    expect(llm === undefined ? undefined : stringAttr(llm, OI.LLM_PROVIDER)).toBe("openai")
+    expect(llm === undefined ? undefined : stringAttr(llm, OI.LLM_SYSTEM)).toBe("openai")
+    expect(llm === undefined ? undefined : readMetadata(llm)).toMatchObject({
+      provider,
+      billing: provider === "chatgpt" ? "plan" : "api",
+    })
   })
 
   scenario("reads a file with a tool and answers from it", {}, async ({ run, spans }) => {

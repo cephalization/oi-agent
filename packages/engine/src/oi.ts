@@ -100,11 +100,11 @@ const flattenMessage = (prefix: string, start: number, role: string, content: Js
   return parts > 0 || calls > 0 ? index + 1 : index
 }
 
-export const requestAttributes = (body: RequestBody, raw: string): Attrs => {
+export const requestAttributes = (body: RequestBody, raw: string, vendor: string): Attrs => {
   const out: Attrs = new Map([
     [OI.SPAN_KIND, "LLM"],
     [OI.LLM_SYSTEM, "anthropic"],
-    [OI.LLM_PROVIDER, "anthropic"],
+    [OI.LLM_PROVIDER, vendor],
     [OI.LLM_MODEL, body.model],
     [OI.INPUT_VALUE, raw],
     [OI.INPUT_MIME, "application/json"],

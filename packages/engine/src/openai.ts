@@ -14,6 +14,7 @@ import { createHash } from "node:crypto"
 import { Effect, Layer, Option, Schema } from "effect"
 import type { Effort } from "./config.ts"
 import type { Dialect } from "./dialect.ts"
+import type { Billing } from "./format.ts"
 import { openaiChat, openaiResponses } from "./dialects/index.ts"
 import { Model, type ModelCall, ModelError, type ModelHooks, type ModelOption } from "./model.ts"
 import { ResponsesSockets, SocketInterrupted, SocketUnavailable } from "./openai-socket.ts"
@@ -27,8 +28,11 @@ export type OpenAITransport = "http" | "websocket"
 export const NETWORK_PROTOCOL = "network.protocol.name"
 
 export interface OpenAISettings {
-  /** Provider id, for `llm.provider` and messages. */
+  /** Provider id, for `metadata.provider` and messages. */
   readonly provider: string
+  /** Who serves the call, for `llm.provider`. */
+  readonly vendor: string
+  readonly billing: Billing
   readonly api: OpenAIApi
   /** For example `https://api.openai.com/v1`. */
   readonly baseUrl: string
@@ -519,6 +523,8 @@ export const openaiModel = (settings: OpenAISettings): Layer.Layer<Model> => {
   return Layer.succeed(Model, {
     dialect: DIALECTS.get(settings.api) ?? openaiChat,
     provider: settings.provider,
+    vendor: settings.vendor,
+    billing: settings.billing,
     run: (call, hooks) =>
       Effect.tryPromise({
         try: (signal) =>
