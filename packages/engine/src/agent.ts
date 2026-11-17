@@ -10,12 +10,13 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
 import { sessionIdForTrace } from "./ids.ts"
-import { contextFor, pendingInbox } from "./fold.ts"
+import { contextFor, pendingInbox, steerPoint } from "./fold.ts"
 import {
   type AnnotationFile,
   type EngineMetadata,
   OI,
   type SessionSpanRef,
+  type Steered,
   type TaskHeader,
   writeMetadata,
 } from "./format.ts"
@@ -424,6 +425,28 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       return { traceId, output, stopReason: "compacted", steps: 1 }
     }
 
+    const steered: Array<Steered> = []
+
+    /**
+     * Hand the model what its person said while it worked. The record goes on
+     * the root span, which the fold reads to build the next request, so the
+     * message is in that request whether or not this process survives to send it.
+     */
+    const steer = (): boolean => {
+      const waiting = pendingInbox(env.store, env.sessionId).filter((entry) => entry.steers === true)
+      const after = waiting.length === 0 ? undefined : steerPoint(env.store, env.sessionId, traceId)
+
+      if (after === undefined) return false
+
+      steered.push(
+        ...waiting.map((entry) => ({ inbox_id: entry.id, after, user_id: entry.user_id, text: entry.text })),
+      )
+      root.patchMetadata({ steered })
+      root.flush()
+
+      return true
+    }
+
     while (steps < MAX_STEPS) {
       steps += 1
       response = yield* modelStep(env, traceId)
@@ -442,11 +465,15 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
             discard: true,
           },
         )
+        steer()
         continue
       }
 
       // A paused server-side tool resumes when the conversation is sent back as is.
-      if (!response.paused) break
+      if (response.paused) continue
+
+      // The model thinks it is done, but something was said meanwhile: the turn goes on with it.
+      if (!steer()) break
     }
 
     const output = response.text

@@ -186,7 +186,7 @@ an API key (hidden as you type, kept in the keychain), signing in with a
 ChatGPT plan in the browser, or adding a server by name, base URL, optional
 key and a comma-separated list of models. A server's models go straight into
 `/model`, with the name and output limit the server reports for each. Switching provider mid-session works: the conversation carries over
-as text, tool calls and tool results. With the menu closed, Tab cycles approval modes (ask, auto when configured,
+as text, tool calls and tool results. The line under the prompt says what Enter will do: start a new turn when the conversation is idle (also while tasks and background commands run), and while a turn is running either steer it (the agent reads your message before its next step) or, after ctrl+t, queue it for the next turn. Messages that are waiting are listed above the status line. With the menu closed, Tab cycles approval modes (ask, auto when configured,
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,

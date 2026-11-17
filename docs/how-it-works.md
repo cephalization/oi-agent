@@ -24,7 +24,7 @@ So "what is the agent's state?" has a literal answer: a folder.
     <start-ns>-<span-id>.open.json             a span still running
     <start-ns>-<span-id>.stream.jsonl          text streaming into a running span
   annotations/<id>.json                        evaluator verdicts
-  inbox/<id>.json                              prompts from people sharing the session, and results of background work
+  inbox/<id>.json                              prompts that no turn has started yet (queued, said to a running turn, or from people sharing the session), and results of background work
 ```
 
 Beside the sessions, and never synced, are the logs of shell commands that
@@ -219,6 +219,28 @@ These work best on the session you are in, because the evidence is right there.
   between the parent and its tasks keeps the same owner, while switching to
   unrelated work releases it. Unanswered task approvals remain available
   when the terminal is reopened.
+- **"What will Enter do?"** The line under the prompt says, from the
+  conversation's own state (`enterHint` in `source/cli/src/tui/app.ts`):
+  idle, Enter starts a new turn, and says so even while tasks and background
+  commands run, because they do not occupy the conversation. While a turn
+  runs, Enter **steers** it, and ctrl+t switches to **queueing** for the
+  next turn and back. Both are files in `inbox/`, so neither lives only in
+  the terminal. A steering message has `steers: true`
+  (`Engine.steer`). The running turn looks for one after each round of tool
+  calls, and again when the model stops without asking for a tool, in which
+  case the turn goes on instead of ending (`steer` in the loop,
+  `source/engine/src/agent.ts`). It records the message on its root span as
+  `metadata.oi_agent.steered = [{ inbox_id, after, user_id, text }]`, where
+  `after` is the `LLM` span whose reply and tool results the message follows.
+  `contextFor` adds it, wrapped by `renderSteer`, as a user message after
+  those results when it builds the next request, so the request is the same
+  if another process builds it after a crash; later calls of the turn carry
+  it in their stored request body. If the turn ends before reading it, the
+  entry is still pending, and the inbox drain that follows every turn runs
+  it as an ordinary next turn; the terminal says that happened. A queued
+  prompt is a plain inbox entry (`Engine.queue`): the running turn never
+  sees it, it runs after, in the order sent, and it survives quitting. What
+  is waiting is listed above the status line, read back from the inbox.
 - **"Why did my result not interrupt me?"** Results are held while you are
   in the middle of something. The terminal sets `Engine.calm`, which
   `drainInbox` asks before queueing a delivery turn: an empty prompt, no

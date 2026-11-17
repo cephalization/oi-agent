@@ -16,6 +16,7 @@ import {
   OI,
   readMetadata,
   type SpanFile,
+  type Steered,
   type Store,
   type StoreEvent,
   stringAttr,
@@ -76,6 +77,7 @@ export class Transcript {
   private decisionOutput = 0
   private startedMs = 0
   private active = 0
+  private readonly shownSteers = new Set<string>()
   private bytes = 0
   private passes = 0
   private verdictTrace = ""
@@ -144,6 +146,26 @@ export class Transcript {
     return lines
       .flatMap((line) => wrap(line, this.screen.columns - 1))
       .map((line) => this.markdown.line(line))
+  }
+
+  /** What was said to a turn while it ran, shown where the model was given it. */
+  steered(entries: ReadonlyArray<Steered>): void {
+    for (const entry of entries) {
+      if (this.shownSteers.has(entry.inbox_id)) continue
+
+      this.shownSteers.add(entry.inbox_id)
+      this.flushText()
+
+      const who = entry.user_id === this.self ? "" : style.yellow(`${entry.user_id} `)
+      const [first = "", ...rest] = entry.text.split("\n")
+
+      this.screen.commit([
+        "",
+        `${style.cyan("↳")} ${who}${style.bold(first)} ${style.gray("(steered the running turn)")}`,
+        ...rest.map((line) => `  ${style.bold(line)}`),
+        "",
+      ])
+    }
   }
 
   private prompt(span: SpanFile): void {
@@ -392,6 +414,7 @@ export class Transcript {
       this.turns.add(turn.trace_id)
       this.bytes = readMetadata(turn.root).session_bytes ?? this.bytes
       this.prompt(turn.root)
+      this.steered(readMetadata(turn.root).steered ?? [])
       this.screen.commit(this.prose((turn.output ?? "").split("\n")))
       this.markdown.reset()
 

@@ -17,6 +17,7 @@ import {
   readMetadata,
   type SessionHeader,
   type SpanFile,
+  type Steered,
   stringAttr,
 } from "./format.ts"
 import { isoToNs } from "./ids.ts"
@@ -116,6 +117,7 @@ export const pendingInbox = (store: Store, sessionId: string): Array<InboxFile> 
         metadata.inbox_id,
         ...(metadata.delivers ?? []).map((entry) => entry.inbox_id),
         ...(metadata.observed_results ?? []),
+        ...(metadata.steered ?? []).map((entry) => entry.inbox_id),
       ]
     }),
   )
@@ -195,6 +197,14 @@ const toolResultsFor = (trace: TraceFiles, call: LastCall): Array<ToolResult> =>
     }
   })
 
+/** A message sent to a running turn, as the model reads it. Deterministic, so replays match. */
+export const renderSteer = (entry: Pick<Steered, "user_id" | "text">): string =>
+  `<steering from="${entry.user_id}">\nSent while you were working on the above. Take it into account now, without starting over.\n\n${entry.text}\n</steering>`
+
+/** The `LLM` span a message to a running turn would follow: the turn's latest finished model call. */
+export const steerPoint = (store: Store, sessionId: string, traceId: string): string | undefined =>
+  lastModelCall(store.readTrace(sessionId, traceId))?.span.context.span_id
+
 /** Eval feedback rendered for the model. Deterministic, so replays match. */
 export const renderFeedback = (annotations: ReadonlyArray<AnnotationFile>): string => {
   const lines = annotations.map(({ annotation }) => {
@@ -248,6 +258,13 @@ export const contextFor = (
 
   if (call !== undefined) {
     const native = call.dialect.continueWith(call.messages, call.rawResponse, toolResultsFor(trace, call))
+
+    // Later calls of the turn carry these in their stored request; only the last call's are still to be said.
+    const steered = (readMetadata(rootOf(trace)?.root ?? call.span).steered ?? []).filter(
+      (entry) => entry.after === call.span.context.span_id,
+    )
+
+    if (steered.length > 0) native.push(call.dialect.userMessage(steered.map(renderSteer)))
 
     return translate(call.dialect, dialect, native)
   }

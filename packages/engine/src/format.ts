@@ -177,6 +177,11 @@ export const InboxFile = Schema.Struct({
   delivers: Schema.optionalKey(Delivery),
   /** Set when another session sent this prompt (a brief, a follow-up): the `TOOL` span that sent it. */
   origin: Schema.optionalKey(SessionSpanRef),
+  /**
+   * Meant for the turn that was running when it was sent, not for a turn of
+   * its own. If that turn ends first, it runs as an ordinary prompt.
+   */
+  steers: Schema.optionalKey(Schema.Boolean),
 })
 
 export type InboxFile = typeof InboxFile.Type
@@ -281,6 +286,17 @@ export const Workspace = Schema.Struct({
 
 export type Workspace = typeof Workspace.Type
 
+/** A message given to a turn that was already running. */
+export const Steered = Schema.Struct({
+  inbox_id: Schema.String,
+  /** The `LLM` span whose reply (and tool results) the message follows. */
+  after: Schema.String,
+  user_id: Schema.String,
+  text: Schema.String,
+})
+
+export type Steered = typeof Steered.Type
+
 /** How a model call is paid for: out of a subscription's allowance, or per token. */
 export const Billing = Schema.Literals(["plan", "api"])
 
@@ -326,6 +342,12 @@ export const EngineMetadata = Schema.Struct({
   delivers: Schema.optionalKey(Schema.Array(Schema.Struct({ ...Delivery.fields, inbox_id: Schema.String }))),
   /** On a turn root: inbox results consumed by ended child TOOL spans, indexed without reading model histories. */
   observed_results: Schema.optionalKey(Schema.Array(Schema.String)),
+  /**
+   * On a turn's root span: what its person said while it ran, and where in
+   * the turn each message was given to the model: after the tool results of
+   * the `LLM` span `after`, or after its reply when that asked for no tools.
+   */
+  steered: Schema.optionalKey(Schema.Array(Steered)),
   /** On a turn's root span: the `TOOL` span, in another session, that sent this turn's prompt. */
   origin: Schema.optionalKey(SessionSpanRef),
   /** On a `TOOL` span that delegated or steered a task: the task and its session. */

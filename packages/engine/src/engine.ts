@@ -444,6 +444,36 @@ export class Engine {
     )
   }
 
+  /** Whether a turn of this session is running in this process right now. */
+  busy(sessionId: string): boolean {
+    return this.running.has(sessionId)
+  }
+
+  /**
+   * Say something to the turn that is running: it reads it before its next
+   * model call, after the tool calls in flight. Returns false, having done
+   * nothing, when no turn is running. If the turn ends before it reads the
+   * message, the message runs as the next turn instead.
+   */
+  steer(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile | undefined {
+    if (!this.running.has(sessionId)) return undefined
+
+    return this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text, steers: true })
+  }
+
+  /**
+   * Leave a prompt for after the running turn. It is on disk from here on, so
+   * it is not lost with this process: whoever serves the session next runs it.
+   */
+  queue(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile {
+    const entry = this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text })
+
+    // A running turn drains the inbox when it ends, which keeps prompts in the order they were sent.
+    if (!this.running.has(sessionId)) this.drainInbox(sessionId)
+
+    return entry
+  }
+
   // --- inbox and background work ------------------------------------------
 
   /**
@@ -519,6 +549,9 @@ export class Engine {
 
         continue
       }
+
+      // The running turn may still take it; when that turn ends, this runs again.
+      if (entry.steers === true && this.running.has(sessionId)) continue
 
       if (this.queuedPrompts.has(entry.id)) continue
 
@@ -759,6 +792,9 @@ export class Engine {
     const exit = await Effect.runPromise(Fiber.await(fiber))
 
     this.running.delete(sessionId)
+
+    // What was queued behind this turn, and anything meant for it that it did not get to read.
+    if (this.attended.has(sessionId)) this.drainInbox(sessionId)
 
     if (Exit.isSuccess(exit)) return { ok: true, result: exit.value }
 
