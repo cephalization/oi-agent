@@ -2,10 +2,11 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import * as http from "node:http"
 import type { AddressInfo } from "node:net"
 import { Option, Schema } from "effect"
+import { pendingInbox } from "../fold.ts"
 import type { Engine } from "../engine.ts"
 import type { StoreEvent } from "../store.ts"
 import type { Json } from "../wire.ts"
-import { type Manifest, PromptRequest, type Role, type SessionInfo } from "./protocol.ts"
+import { type Manifest, PromptRequest, type Role, type SessionInfo, type SessionState } from "./protocol.ts"
 
 export interface ShareTokens {
   /** Can watch. */
@@ -57,7 +58,18 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
     return same(token, tokens.viewer) ? "viewer" : undefined
   }
 
+  const state = (): SessionState => ({
+    busy: engine.busy(sessionId),
+    steerable: engine.steerable(sessionId),
+    waiting: pendingInbox(engine.store, sessionId).filter(
+      (entry) => entry.delivers === undefined && entry.origin === undefined,
+    ),
+    held: engine.waitingResults(sessionId).length,
+    work: engine.background(sessionId),
+  })
+
   const manifest = (): Manifest => ({
+    state: state(),
     paths: engine.store.manifest(sessionId),
     open: engine.store
       .listTraceIds(sessionId)
@@ -86,9 +98,9 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
     if (body === undefined || body.text.trim() === "")
       return json(response, 400, { error: "expected { text }" })
 
-    const entry = engine.store.writeInbox(sessionId, { user_id: name, text: body.text })
-
-    engine.drainInbox(sessionId)
+    const input = { userId: name, text: body.text }
+    const steered = body.mode === "queue" ? undefined : engine.steer(sessionId, input)
+    const entry = steered ?? engine.queue(sessionId, input)
     json(response, 202, { inbox_id: entry.id })
   }
 
@@ -142,6 +154,16 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
     for (const response of followers.keys()) response.write(frame)
   })
 
+  // Child sessions and job files do not emit parent Store events. Refresh their
+  // derived status for both roles, including changes while the parent is idle.
+  const ticker = setInterval(() => {
+    if (followers.size === 0) return
+
+    const frame = `data: ${JSON.stringify({ type: "state", session_id: sessionId, state: state() })}\n\n`
+
+    for (const response of followers.keys()) response.write(frame)
+  }, 500)
+
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
 
   // SAFETY: a listening TCP server's address is always an AddressInfo, never a pipe name.
@@ -152,6 +174,7 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
     tokens,
     peers: () => [...followers.values()],
     close: async () => {
+      clearInterval(ticker)
       unsubscribe()
 
       for (const response of followers.keys()) response.end()

@@ -556,7 +556,15 @@ class App {
 
     if (detachTo !== undefined) return "enter sends to the task, which reads it when its current turn ends"
 
-    if (peer !== undefined) return "enter sends to the host, to run after the turn in progress"
+    if (peer !== undefined) {
+      if (!peer.state().busy) return "enter starts a new turn on the host"
+
+      if (!peer.state().steerable) return "enter queues for the next turn"
+
+      return this.whileRunning === "steer"
+        ? "enter steers the running turn · ctrl+t to queue for the next turn instead"
+        : "enter queues for the next turn · ctrl+t to steer the running turn instead"
+    }
 
     if (engine === undefined) return ""
 
@@ -580,7 +588,7 @@ class App {
       : "enter queues for the next turn · ctrl+t to steer the running turn instead"
   }
 
-  /** Prompts sent from here that are still waiting: said to the running turn, or queued behind it. */
+  /** Prompts from all participants that are still waiting: said to the running turn, or queued behind it. */
   private waitingLines(): Array<string> {
     const columns = this.screen.columns
 
@@ -590,7 +598,9 @@ class App {
           ? "↳ steering, when the turn's current step ends: "
           : "⧗ queued for the next turn: "
 
-      return `${style.yellow(label)}${clip(entry.text.replaceAll(/\s+/g, " "), Math.max(columns - label.length - 1, 8))}`
+      const sender = ` (${entry.user_id})`
+
+      return `${style.yellow(label)}${clip(entry.text.replaceAll(/\s+/g, " "), Math.max(columns - label.length - sender.length - 1, 8))}${style.gray(sender)}`
     })
 
     return this.waiting.length > WAITING_ROWS
@@ -598,15 +608,15 @@ class App {
       : lines
   }
 
-  /** Read again which prompts sent from here are waiting, and say what became of the ones meant for a running turn. */
+  /** Read again which shared prompts are waiting, and say what became of the ones meant for a running turn. */
   private watchPrompts(): void {
-    const { store, sessionId, user, engine } = this.options
+    const { store, sessionId, peer } = this.options
 
-    if (engine === undefined) return
-
-    this.waiting = pendingInbox(store, sessionId).filter(
-      (entry) => entry.delivers === undefined && entry.origin === undefined && entry.user_id === user,
-    )
+    this.waiting =
+      peer?.state().waiting ??
+      pendingInbox(store, sessionId).filter(
+        (entry) => entry.delivers === undefined && entry.origin === undefined,
+      )
 
     if (this.steers.size === 0) return
 
@@ -634,7 +644,15 @@ class App {
 
   /** Look at background work again, and let waiting results through if the moment is calm. */
   private watchBackground(): boolean {
-    const { engine, sessionId } = this.options
+    const { engine, sessionId, peer } = this.options
+
+    if (peer !== undefined) {
+      this.work = [...peer.state().work]
+      this.held = peer.state().held
+      this.watchPrompts()
+
+      return true
+    }
 
     if (engine === undefined) return false
 
@@ -1660,6 +1678,8 @@ class App {
       return
     }
 
+    if (peer?.info.role === "viewer") return
+
     if (engine !== undefined && engine.busy(sessionId)) {
       const steered =
         this.whileRunning === "steer" ? engine.steer(sessionId, { text, userId: user }) : undefined
@@ -1686,7 +1706,7 @@ class App {
     }
 
     this.program.report("working", text)
-    void peer?.prompt(text).then((error) => {
+    void peer?.prompt(text, this.whileRunning).then((error) => {
       if (error !== undefined) {
         this.program.report("error", error)
         this.say([error])
@@ -1818,6 +1838,8 @@ class App {
       ])
 
     this.editor.seedHistory(this.transcript.replay(store, sessionId))
+    this.watchPrompts()
+    this.watchBackground()
 
     const unsubscribe = store.subscribe((event) => {
       if (event.session_id !== sessionId) return

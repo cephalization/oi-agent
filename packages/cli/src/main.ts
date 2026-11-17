@@ -42,6 +42,7 @@ import {
   parseEffort,
   parsePhoenixLink,
   parseShareLink,
+  pendingInbox,
   PhoenixClient,
   PhoenixExporter,
   phoenixJudge,
@@ -744,6 +745,15 @@ const attached = async (
     user: engine.config.user,
     label: `task ${task.id} · /detach to return`,
     peer: {
+      state: () => ({
+        busy: false,
+        steerable: false,
+        waiting: pendingInbox(store, header.id).filter(
+          (entry) => entry.delivers === undefined && entry.origin === undefined,
+        ),
+        held: engine.waitingResults(header.id).length,
+        work: engine.background(header.id),
+      }),
       info: { header, role: "driver", host: engine.config.user },
       sessionId: header.id,
       prompt: (text) => {

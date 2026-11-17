@@ -619,7 +619,19 @@ These work best on the session you are in, because the evidence is right there.
   `billing` is how to tell them apart.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
-  Finished spans never change, so there is nothing to merge.
+  Finished spans never change, so there is nothing to merge. Drivers send
+  `{ text, mode }` to `/v1/prompt`: the default `steer` calls `Engine.steer`
+  when the turn accepts input, otherwise `Engine.queue`; explicit `queue`
+  always waits for a new turn. Ctrl+T selects the mode on host and driver.
+  Viewers cannot submit or control work, and tool approvals stay host-owned.
+  Both roles receive an authenticated, read-only derived status snapshot in
+  the manifest and every 500 ms on the event stream: all senders' pending
+  messages, busy/steerable flags, waiting result count and `Engine.background`
+  rows. This also covers task approval/progress changes in child sessions and
+  job files that do not emit events in the parent Store. The client keeps only
+  the latest transient snapshot; conversation state still comes from spans.
+  The TUI shows sender names and the same queue and background rows to hosts,
+  drivers and viewers, including when joining in the middle of a turn.
 
 ## Further reading
 
