@@ -60,6 +60,9 @@ Follow along in `source/engine/src/agent.ts`.
    (`toolStep`, and `source/engine/src/tools.ts`). Tools that change the
    machine wait for approval first, with `metadata.oi_agent.awaiting_approval`
    set on the in-flight span until the decision is recorded beside it.
+   `metadata.oi_agent.execution_started_at` is null until execution begins,
+   then records the timestamp after approval and before workspace observation
+   and tool execution. Denied calls never begin execution.
    Output is scrubbed of secrets
    (`source/engine/src/redact.ts`) before it is written. The commands
    `bash` runs see `OI_AGENT=1`. A command still running after two minutes
@@ -119,10 +122,15 @@ These work best on the session you are in, because the evidence is right there.
   start and an end time, and `sessionMetrics` in
   `source/engine/src/metrics.ts` adds them up. A turn's wall time is its
   root `AGENT` span; its model time is the sum of its `LLM` spans and its
-  tool time the sum of its `TOOL` spans (calls that ran side by side both
-  count, so tools can exceed the wall time; a tool's span also covers the
-  time it waited for your approval). Traces that are not turns
-  (evaluators, learning, steering detection) run after a turn and are
+  tool time the sum of tool execution durations, from
+  `metadata.oi_agent.execution_started_at` to the end (calls that ran side
+  by side both count, so tools can exceed wall time). Approval wait, including
+  automatic decision latency, is excluded from tool time and the terminal
+  tool duration; waiting or denied calls contribute zero. The `TOOL` span
+  itself still covers approval plus execution, preserving decision children
+  and end-to-end latency in Phoenix. Older spans without this boundary retain
+  their inclusive duration because execution time cannot be recovered. Traces
+  that are not turns (evaluators, learning, steering detection) run after a turn and are
   reported apart, as judge time. A span still open in a running turn counts
   up to now; one left open by a crash counts up to the last thing its trace
   recorded, and the turn is marked interrupted. Tool time is grouped by
@@ -132,8 +140,8 @@ These work best on the session you are in, because the evidence is right there.
   step that is not setup, waiting or reading a log. Nothing about any one
   repository is built in. A task's work is in its own session, so tasks
   are listed separately with their own totals. In Phoenix the same sums
-  are a query over the session's spans: latency by `openinference.span.kind`,
-  grouped by trace.
+  can be derived from the session's spans; raw `TOOL` latency includes
+  approval, so use the execution boundary to reproduce execution totals.
 
 - **"What happens to a slow command?"** Every `bash` call is a job
   (`source/engine/src/jobs.ts`): its output goes to a log file and a small

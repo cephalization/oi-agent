@@ -4,7 +4,7 @@
  * here asks a model about time; the numbers are checked against the span
  * files the run wrote.
  */
-import { kindOf, type SessionMetrics } from "@oi-agent/engine"
+import { kindOf, readMetadata, type SessionMetrics } from "@oi-agent/engine"
 import { describe, expect } from "vite-plus/test"
 import { expectOk, scenario } from "../src/scenario.ts"
 import { callBash } from "../src/steps.ts"
@@ -35,13 +35,17 @@ describe("metrics", () => {
       const ms = (kind: string): number =>
         spans
           .filter((span) => kindOf(span) === kind)
-          .reduce((sum, span) => sum + (Date.parse(span.end_time) - Date.parse(span.start_time)), 0)
+          .reduce((sum, span) => {
+            const from = kind === "TOOL" ? readMetadata(span).execution_started_at : span.start_time
+
+            return sum + (from === null ? 0 : Date.parse(span.end_time) - Date.parse(from ?? span.start_time))
+          }, 0)
 
       expect(metrics.turns).toHaveLength(1)
       expect(metrics.turns[0]?.state).toBe("complete")
       expect(metrics.turns[0]?.prompt).toContain("Call the bash tool now")
 
-      // The same durations the span files give, to the millisecond rounding of a timestamp.
+      // Tool execution starts after approval; model latency still uses the full span.
       expect(Math.abs((metrics.turns[0]?.tool_ms ?? 0) - ms("TOOL"))).toBeLessThan(5)
       expect(Math.abs((metrics.turns[0]?.model_ms ?? 0) - ms("LLM"))).toBeLessThan(5)
       expect(metrics.turns[0]?.tool_ms).toBeGreaterThanOrEqual(2000)

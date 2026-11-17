@@ -375,6 +375,8 @@ export const EngineMetadata = Schema.Struct({
   evidence: Schema.optionalKey(ToolEvidence),
   /** A tool call whose result is an error. */
   is_error: Schema.optionalKey(Schema.Boolean),
+  /** TOOL execution boundary, after approval; null means execution has not started. Absent in older spans. */
+  execution_started_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** A tool call that is waiting for the host to allow or deny it. */
   awaiting_approval: Schema.optionalKey(Schema.Boolean),
   approval: Schema.optionalKey(
