@@ -365,7 +365,9 @@ describe("delegated tasks", () => {
 
       expect(during[1]?.output?.toLowerCase()).toContain("pong")
       await term.line("/tasks")
-      await term.waitFor(new RegExp(`${task.id} "wait for go" · running for`))
+      await term.waitFor(/\? Tasks · enter to choose/)
+      await term.waitFor(new RegExp(`❯ ${task.id} wait for go`))
+      await term.key("escape")
 
       // Attached, the terminal shows the task's own session: its brief, and the call it is waiting in.
       await term.line(`/attach ${task.id}`)

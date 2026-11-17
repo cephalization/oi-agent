@@ -49,7 +49,7 @@ export const COMMANDS: ReadonlyArray<Command> = [
     summary: "deliver the results that are waiting, and list what is still running",
     hostOnly: true,
   },
-  { name: "/tasks", summary: "list the tasks delegated from this session", hostOnly: true },
+  { name: "/tasks", summary: "pick a task to open its conversation", hostOnly: true },
   {
     name: "/attach",
     summary: "open a delegated task: watch it work and type to it (/detach to come back)",
@@ -137,6 +137,8 @@ export interface Suggestion {
   readonly value: string
   readonly label: string
   readonly hint: string
+  /** Full metadata shown below the picker for the selected item. */
+  readonly detail?: string
   /** Extra text the filter matches against, beyond value and label. */
   readonly keywords?: string
 }
