@@ -1,5 +1,21 @@
 # oi-agent
 
+## 0.10.0
+
+### Minor Changes
+
+- [#70](https://github.com/cephalization/oi-agent/pull/70) [`7664fdd`](https://github.com/cephalization/oi-agent/commit/7664fdd2fe3be40d1d0e0256b8f10d092cfcf3bb) Thanks [@cephalization](https://github.com/cephalization)! - Open `/tasks` as a keyboard picker to view any task's conversation. Running and approval-waiting tasks appear first, newest-created first within each group; completed and stopped tasks remain available. Direct `/attach <id>` and `/detach` still work.
+
+### Patch Changes
+
+- [#66](https://github.com/cephalization/oi-agent/pull/66) [`a0531ae`](https://github.com/cephalization/oi-agent/commit/a0531aea4b966b14ff0c2f5f18bc11957d978e49) Thanks [@cephalization](https://github.com/cephalization)! - Exclude time waiting for tool approval (including automatic safety decisions) from displayed tool durations and tool execution metrics. Denied calls count as zero execution time; turn wall time and full tool span latency still include approval. Historical spans without an execution boundary retain their original inclusive timing.
+
+- [#65](https://github.com/cephalization/oi-agent/pull/65) [`af95dcd`](https://github.com/cephalization/oi-agent/commit/af95dcd3931d6f450125f0ec1b999fd196d934f6) Thanks [@cephalization](https://github.com/cephalization)! - Fix reasoning effort cycling for newer ChatGPT models, including GPT-6. Use the provider's advertised effort levels for selection and requests, and preserve xhigh and max as distinct levels.
+
+- [#67](https://github.com/cephalization/oi-agent/pull/67) [`f194e64`](https://github.com/cephalization/oi-agent/commit/f194e6454e1115d4913b9050a9662df8d5a075f5) Thanks [@cephalization](https://github.com/cephalization)! - Make Shift+Enter insert a newline, show prompt hotkeys, and make Escape stop the current turn and all background tasks without sending queued prompts. Restore the latest queued prompt for editing, with earlier prompts available through Up/Down history.
+
+- [#69](https://github.com/cephalization/oi-agent/pull/69) [`2a8d31a`](https://github.com/cephalization/oi-agent/commit/2a8d31af6d4a6cd4fac6d126553f900b46ca3d78) Thanks [@cephalization](https://github.com/cephalization)! - Ask the agent to give a brief consolidated summary when a batch of background commands and delegated tasks finishes, including earlier results, failures, limitations and remaining decisions or next steps, rather than reporting only the last result.
+
 ## 0.9.0
 
 ### Minor Changes
