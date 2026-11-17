@@ -206,6 +206,14 @@ These work best on the session you are in, because the evidence is right there.
   someone attends it, shows it through the usual approval prompt and writes
   the decision back (`ApprovalDesk`, `relayApprovals`). The decision is
   recorded on the subagent's `TOOL` span as always.
+  The shared system prompt (`source/engine/src/prompt.ts`) asks for a brief
+  consolidated rollup once all background jobs and delegated tasks in the
+  session have finished, including earlier results delivered in separate
+  turns, not just the last result. It covers done/failed work, important
+  limitations, and outstanding decisions or next steps. While work remains,
+  the agent should say what is still running, not claim everything is done
+  or poll just to wait. This guidance also applies with delegation off and
+  in headless runs; it is prompt guidance, not an engine completion check.
   The system prompt differs by role (`source/engine/src/prompt.ts`): a
   session with the delegate tools is told to prefer delegating and how to
   write a brief; a subagent is told what to report and where it is working.
