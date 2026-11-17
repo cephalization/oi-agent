@@ -21,7 +21,19 @@ fs.rmSync(out, { recursive: true, force: true })
 
 fs.mkdirSync(out, { recursive: true })
 
-for (const [from, to] of documents) fs.copyFileSync(path.join(root, from), path.join(out, to))
+// Keep links between bundled documents local despite GUIDE.md's different path.
+for (const [from, to] of documents) {
+  let content = fs.readFileSync(path.join(root, from), "utf8")
+
+  for (const [target, bundled] of documents) {
+    const relative = path.relative(path.dirname(from), target)
+
+    content = content.replaceAll(`](${relative})`, `](${bundled})`)
+    content = content.replaceAll(`](${relative}#`, `](${bundled}#`)
+  }
+
+  fs.writeFileSync(path.join(out, to), content)
+}
 
 for (const name of ["engine", "cli"]) {
   fs.cpSync(path.join(root, "packages", name, "src"), path.join(out, "source", name, "src"), {
