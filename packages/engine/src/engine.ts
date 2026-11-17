@@ -171,6 +171,8 @@ export class Engine {
   private readonly approvalListeners = new Set<(request: ApprovalRequest) => void>()
   /** Sessions someone is here for: their inbox runs as it fills. */
   private readonly attended = new Set<string>()
+  /** Sessions whose running turn was stopped because their person is going. */
+  private readonly leavingSessions = new Set<string>()
   /** Inbox prompts already in a session's queue. */
   private readonly queuedPrompts = new Set<string>()
   /** Sessions with a delivery turn already in the queue. */
@@ -377,10 +379,19 @@ export class Engine {
   }
 
   /** Stop the turn a session is running. The spans it wrote stay on disk. */
-  interrupt(sessionId: string): void {
+  /**
+   * Stop the running turn. `leaving`: whoever was at the session is going
+   * (quitting, switching, reloading), so what waits in its inbox is not
+   * started as the turn ends. It runs when the session is next served.
+   */
+  interrupt(sessionId: string, leaving: boolean = false): void {
     const running = this.running.get(sessionId)
 
-    if (running !== undefined) Effect.runFork(Fiber.interrupt(running.fiber))
+    if (running === undefined) return
+
+    if (leaving) this.leavingSessions.add(sessionId)
+
+    Effect.runFork(Fiber.interrupt(running.fiber))
   }
 
   /**
@@ -794,7 +805,7 @@ export class Engine {
     this.running.delete(sessionId)
 
     // What was queued behind this turn, and anything meant for it that it did not get to read.
-    if (this.attended.has(sessionId)) this.drainInbox(sessionId)
+    if (this.attended.has(sessionId) && !this.leavingSessions.delete(sessionId)) this.drainInbox(sessionId)
 
     if (Exit.isSuccess(exit)) return { ok: true, result: exit.value }
 

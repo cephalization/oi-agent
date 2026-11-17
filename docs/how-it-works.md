@@ -239,8 +239,13 @@ These work best on the session you are in, because the evidence is right there.
   entry is still pending, and the inbox drain that follows every turn runs
   it as an ordinary next turn; the terminal says that happened. A queued
   prompt is a plain inbox entry (`Engine.queue`): the running turn never
-  sees it, it runs after, in the order sent, and it survives quitting. What
-  is waiting is listed above the status line, read back from the inbox.
+  sees it, it runs after, in the order sent, and it survives quitting:
+  leaving a session stops its turn without starting what is queued
+  (`interrupt(sessionId, true)`), and the queue runs when the session is
+  next opened. A turn only takes messages sent while it runs, so one that
+  an earlier turn never read is not also picked up by the turn before its
+  own. What is waiting is listed above the status line, read back from
+  the inbox.
 - **"Why did my result not interrupt me?"** Results are held while you are
   in the middle of something. The terminal sets `Engine.calm`, which
   `drainInbox` asks before queueing a delivery turn: an empty prompt, no

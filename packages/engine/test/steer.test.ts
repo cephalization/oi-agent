@@ -181,6 +181,73 @@ describe("steering a running turn", () => {
   })
 })
 
+describe("messages their turn never read", () => {
+  it("each run once as a turn of its own, and none is taken by the turn of another", async () => {
+    // Every turn calls a tool, so each has a point where it would take a waiting message.
+    const s = setup((call) => (sent(call).includes("tool_result") ? say("ok") : bash("echo hi")))
+
+    await s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+    await s.engine.settled(s.sessionId)
+
+    // Two messages, both written as their turn was ending.
+    s.store.writeInbox(s.sessionId, { user_id: "tony", text: "late one", steers: true })
+    s.store.writeInbox(s.sessionId, { user_id: "tony", text: "late two", steers: true })
+    s.engine.drainInbox(s.sessionId)
+    await s.engine.settled(s.sessionId)
+
+    const turns = loadSession(s.store, s.sessionId).turns
+
+    expect(turns.map((turn) => turn.input)).toEqual(["first", "late one", "late two"])
+    expect(turns.map((turn) => readMetadata(turn.root).steered)).toEqual([undefined, undefined, undefined])
+
+    // "late two" reached the model once: as its own prompt, not also inside the turn before it.
+    const withTwo = s.calls.filter((call) => sent(call).includes("late two"))
+
+    expect(sent(withTwo[0]).split("late two")).toHaveLength(2)
+    expect(pendingInbox(s.store, s.sessionId)).toEqual([])
+    s.engine.close()
+  })
+
+  it("stay queued when the turn is stopped because its person is leaving, and run when the session is served again", async () => {
+    const s = setup((_call, step) => (step === 0 ? bash("sleep 5") : say("ran after coming back")))
+    const turn = s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    await until(() => s.calls.length === 1)
+    s.engine.queue(s.sessionId, { text: "queued before leaving", userId: "tony" })
+    s.engine.interrupt(s.sessionId, true)
+    await turn
+    await s.engine.idle(s.sessionId)
+
+    // Nothing started it on the way out.
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual(["first"])
+    expect(pendingInbox(s.store, s.sessionId).map((entry) => entry.text)).toEqual(["queued before leaving"])
+
+    s.engine.drainInbox(s.sessionId)
+    await s.engine.settled(s.sessionId)
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual([
+      "first",
+      "queued before leaving",
+    ])
+    s.engine.close()
+  })
+
+  it("run after a turn that was only interrupted", async () => {
+    const s = setup((_call, step) => (step === 0 ? bash("sleep 5") : say("carried on")))
+    const turn = s.engine.submit(s.sessionId, { text: "first", userId: "tony" })
+
+    await until(() => s.calls.length === 1)
+    s.engine.steer(s.sessionId, { text: "said just before esc", userId: "tony" })
+    s.engine.interrupt(s.sessionId)
+    await turn
+    await s.engine.settled(s.sessionId)
+    expect(loadSession(s.store, s.sessionId).turns.map((entry) => entry.input)).toEqual([
+      "first",
+      "said just before esc",
+    ])
+    s.engine.close()
+  })
+})
+
 describe("queueing for the next turn", () => {
   it("leaves the running turn alone and runs what was queued after it, in order", async () => {
     const s = setup((call, step) => (step === 0 ? bash("sleep 0.3; echo slept") : say(`reply ${step}`)))

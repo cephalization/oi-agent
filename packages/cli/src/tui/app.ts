@@ -565,6 +565,10 @@ class App {
       return `enter starts a new turn${background}`
     }
 
+    // A turn this terminal only watches: another process runs it, and cannot be steered from here.
+    if (!engine.busy(this.options.sessionId))
+      return "enter starts a new turn here · another process is running one in this session"
+
     return this.whileRunning === "steer"
       ? "enter steers the running turn · ctrl+t to queue for the next turn instead"
       : "enter queues for the next turn · ctrl+t to steer the running turn instead"
@@ -1791,8 +1795,14 @@ class App {
         if (span !== undefined) this.transcript.steered(readMetadata(span).steered ?? [])
       }
 
-      // Reading the inbox means reading every turn's root: only when something of ours may be waiting.
-      if (event.type === "inbox" || this.waiting.length > 0 || this.steers.size > 0) this.watchPrompts()
+      // Reading the inbox means reading every turn's root, so only when it can have changed: a
+      // prompt arrives, a turn starts or ends, or a model call starts (which is where a steer is read).
+      if (
+        event.type === "inbox" ||
+        ((event.type === "span_open" || event.type === "span_end") &&
+          (event.span.parent_id === null || (event.type === "span_open" && kindOf(event.span) === "LLM")))
+      )
+        this.watchPrompts()
 
       this.draw()
     })
@@ -1859,7 +1869,8 @@ class App {
 
     if (engine !== undefined && calm !== undefined) engine.calm = calm
 
-    engine?.interrupt(sessionId)
+    // Leaving: queued prompts stay queued for whoever serves the session next.
+    engine?.interrupt(sessionId, true)
     this.share?.tunnel.stop()
     await this.share?.server.close()
     peer?.close()
