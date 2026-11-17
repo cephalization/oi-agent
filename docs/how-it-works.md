@@ -632,6 +632,10 @@ These work best on the session you are in, because the evidence is right there.
   the latest transient snapshot; conversation state still comes from spans.
   The TUI shows sender names and the same queue and background rows to hosts,
   drivers and viewers, including when joining in the middle of a turn.
+  Tasks already running before `/share` or before either role joins appear in
+  the initial manifest; tasks started afterward appear through the same status
+  stream even when the parent conversation is idle. Child session files and
+  task-control or approval endpoints are not exposed by this status snapshot.
 
 ## Further reading
 
