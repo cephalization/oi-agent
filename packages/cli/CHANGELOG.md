@@ -1,5 +1,11 @@
 # oi-agent
 
+## 0.11.1
+
+### Patch Changes
+
+- [#81](https://github.com/cephalization/oi-agent/pull/81) [`855ef68`](https://github.com/cephalization/oi-agent/commit/855ef683790e1e760845da31c5c58b29d5adbe15) Thanks [@cephalization](https://github.com/cephalization)! - Stop describing delegation as experimental in the README and the bundled guide. The `"delegation": "off"` setting is unchanged.
+
 ## 0.11.0
 
 ### Minor Changes
