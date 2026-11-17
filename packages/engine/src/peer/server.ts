@@ -179,7 +179,11 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
 
       for (const response of followers.keys()) response.end()
 
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve())
+        // Pending HTTP requests must not keep /unshare or host exit waiting.
+        server.closeAllConnections()
+      })
     },
   }
 }

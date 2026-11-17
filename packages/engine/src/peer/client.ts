@@ -17,6 +17,10 @@ export interface PeerConnection {
   readonly close: () => void
 }
 
+// The host sends state every 500 ms, even while idle. A tunnel can disappear
+// without closing its local TCP stream; do not wait forever for an EOF.
+const HOST_TIMEOUT_MS = 10_000
+
 const decodeInfo = Schema.decodeUnknownOption(SessionInfo)
 const decodeManifest = Schema.decodeUnknownOption(Manifest)
 const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(WireEvent))
@@ -65,8 +69,12 @@ export const joinSession = async (
   token: string,
   user: string,
 ): Promise<PeerConnection> => {
+  const controller = new AbortController()
   const headers = { authorization: `Bearer ${token}`, "x-oi-user": user }
-  const get = (route: string): Promise<Response> => fetch(`${baseUrl}${route}`, { headers })
+
+  const get = (route: string): Promise<Response> =>
+    fetch(`${baseUrl}${route}`, { headers, signal: controller.signal })
+
   const infoResponse = await get("/v1/session")
 
   if (!infoResponse.ok) throw new Error(`The host refused the connection (HTTP ${infoResponse.status}).`)
@@ -79,7 +87,6 @@ export const joinSession = async (
     )
 
   const sessionId = info.header.id
-  const controller = new AbortController()
   // Follow events before copying files, so nothing that ends in between is missed.
   const events = await fetch(`${baseUrl}/v1/events`, { headers, signal: controller.signal })
 
@@ -132,9 +139,25 @@ export const joinSession = async (
 
     if (events.body === null) return
 
+    const reader = events.body.getReader()
+
+    const cancel = (): void => {
+      void reader.cancel().catch(() => undefined)
+    }
+
+    let timeout = setTimeout(() => controller.abort(), HOST_TIMEOUT_MS)
+
+    controller.signal.addEventListener("abort", cancel, { once: true })
+
     try {
-      for await (const chunk of events.body) {
-        buffer += decoder.decode(chunk, { stream: true })
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        clearTimeout(timeout)
+        timeout = setTimeout(() => controller.abort(), HOST_TIMEOUT_MS)
+        buffer += decoder.decode(value, { stream: true })
 
         const frames = buffer.split("\n\n")
 
@@ -151,6 +174,12 @@ export const joinSession = async (
       }
     } catch {
       // The stream was closed, by us or by the host.
+    } finally {
+      clearTimeout(timeout)
+      controller.signal.removeEventListener("abort", cancel)
+      reader.releaseLock()
+      // Cancel pending prompt requests too: they must not outlive the stream.
+      controller.abort()
     }
   }
 
@@ -162,13 +191,20 @@ export const joinSession = async (
     closed: pump(),
     close: () => controller.abort(),
     prompt: async (text, mode = "steer") => {
-      const response = await fetch(`${baseUrl}/v1/prompt`, {
-        method: "POST",
-        headers: { ...headers, "content-type": "application/json" },
-        body: JSON.stringify({ text, mode }),
-      })
+      try {
+        const response = await fetch(`${baseUrl}/v1/prompt`, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ text, mode }),
+          signal: controller.signal,
+        })
 
-      return response.ok ? undefined : `The host rejected the prompt (HTTP ${response.status}).`
+        return response.ok ? undefined : `The host rejected the prompt (HTTP ${response.status}).`
+      } catch {
+        controller.abort()
+
+        return "Host disconnected. Left the joined chat."
+      }
     },
   }
 }
