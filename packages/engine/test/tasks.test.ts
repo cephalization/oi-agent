@@ -81,6 +81,63 @@ describe("tasks", () => {
     expect(s.tasks.status(task).state).toBe("cancelled")
   })
 
+  it("Escape stops nested tasks and all of their background jobs", async () => {
+    const s = setup("sleep 30")
+
+    const engine = new Engine({
+      store: s.store,
+      config: loadConfig({ OI_AGENT_CONFIG_DIR: `${s.store.home}/config`, OI_AGENT_HOME: s.store.home }),
+      approvals: "allow",
+      model: scriptedModel(() => ({ content: [], stop_reason: "end_turn" })),
+      runner: () => "sleep 30",
+    })
+
+    const first = engine.tasks.delegate(s.from, { ...BRIEF, isolation: "shared" })
+
+    const second = engine.tasks.delegate(
+      { ...s.from, sessionId: first.header.id },
+      { ...BRIEF, isolation: "shared" },
+    )
+
+    const job = engine.jobs.start({
+      sessionId: second.header.id,
+      cwd: s.cwd,
+      command: "sleep 30",
+      tool: s.from.span,
+    })
+
+    const asked = engine.tasks.approvals.ask(
+      first.header.id,
+      {
+        tool: "bash",
+        input: { command: "echo approval" },
+        trace_id: "t",
+        span_id: "cancel-approval",
+        user_id: "tony",
+        prompt: "run",
+        cwd: s.cwd,
+      },
+      new AbortController().signal,
+    )
+
+    const relayed: Array<string> = []
+
+    engine.onApproval((request) => relayed.push(request.span_id))
+    engine.watch(s.parent.id)
+    await until(() => relayed.length === 1)
+    engine.cancel(s.parent.id)
+    expect(await asked).toBe("deny")
+    expect(engine.tasks.approvals.waiting(first.header.id)).toEqual([])
+    engine.onApproval((request) => relayed.push(request.span_id))
+    expect(relayed).toEqual(["cancel-approval"])
+    expect(engine.tasks.status(first).state).toBe("cancelled")
+    expect(engine.tasks.status(second).state).toBe("cancelled")
+    expect(engine.jobs.state(job).state).toBe("killed")
+    expect(pendingInbox(s.store, first.header.id)).toEqual([])
+    expect(pendingInbox(s.store, second.header.id)).toEqual([])
+    engine.close()
+  })
+
   it("an unchanged worktree is removed with its branch, and comes back when the task is sent a message", async () => {
     const s = setup("true")
     const task = s.tasks.delegate(s.from, { ...BRIEF, isolation: "worktree" })

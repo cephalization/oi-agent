@@ -122,6 +122,12 @@ export const pendingInbox = (store: Store, sessionId: string): Array<InboxFile> 
     }),
   )
 
+  for (const traceId of store.listTraceIds(sessionId)) {
+    for (const span of store.readTraceRoots(sessionId, traceId).ended) {
+      for (const id of readMetadata(span).cancelled_inbox ?? []) consumed.add(id)
+    }
+  }
+
   return store.listInbox(sessionId).filter((entry) => !consumed.has(entry.id))
 }
 

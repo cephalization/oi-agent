@@ -32,9 +32,11 @@ import {
   type EngineMetadata,
   type InboxFile,
   OI,
+  writeMetadata,
   type SessionHeader,
   stringAttr,
 } from "./format.ts"
+import { newSpanId, newTraceId, nowNs, nsToIso } from "./ids.ts"
 import { describeState, type Job, jobReport, type Jobs, jobsOf } from "./jobs.ts"
 import { type Task, Tasks } from "./tasks.ts"
 import { type Model, ModelError } from "./model.ts"
@@ -178,6 +180,7 @@ export class Engine {
   private readonly attended = new Set<string>()
   /** Sessions their person has left: nothing waiting in them starts until someone is back. */
   private readonly away = new Set<string>()
+  private readonly cancellations = new Map<string, number>()
   /** Inbox prompts already in a session's queue. */
   private readonly queuedPrompts = new Set<string>()
   /** Sessions with a delivery turn already in the queue. */
@@ -400,6 +403,53 @@ export class Engine {
     Effect.runFork(Fiber.interrupt(running.fiber))
   }
 
+  /** Escape: stop all work and withdraw unread prompts, returning them for editing. */
+  cancel(sessionId: string): Array<InboxFile> {
+    this.cancellations.set(sessionId, (this.cancellations.get(sessionId) ?? 0) + 1)
+    this.interrupt(sessionId, true)
+
+    const entries = pendingInbox(this.store, sessionId)
+    const time = nsToIso(nowNs())
+
+    this.store.endSpan(sessionId, {
+      name: "session.cancel",
+      context: { trace_id: newTraceId(), span_id: newSpanId() },
+      span_kind: "SPAN_KIND_INTERNAL",
+      parent_id: null,
+      start_time: time,
+      end_time: time,
+      status_code: "OK",
+      status_message: "",
+      attributes: {
+        [OI.SESSION_ID]: sessionId,
+        [OI.SPAN_KIND]: "CHAIN",
+        [OI.METADATA]: writeMetadata(undefined, {
+          cancelled_inbox: [
+            ...entries.map((entry) => entry.id),
+            ...this.jobs.running(sessionId).map((job) => `job-${job.id}`),
+          ],
+        }),
+      },
+      events: [],
+    })
+
+    for (const task of this.tasks.list(sessionId)) {
+      this.cancel(task.header.id)
+      this.tasks.cancel(task)
+
+      // A killed runner cannot remove its approval request. Do not let the
+      // watcher put that dead task's dialog back in front of the user.
+      for (const request of this.tasks.approvals.waiting(task.header.id)) {
+        if (!this.resolveApproval(request.span_id, "deny"))
+          this.tasks.approvals.answer(task.header.id, request.span_id, "deny")
+      }
+    }
+
+    this.jobs.killAll(sessionId)
+
+    return entries.filter((entry) => entry.delivers === undefined)
+  }
+
   /**
    * Run `task` after everything already queued for the session, and `after`
    * before anything queued later. A session has a single writer.
@@ -431,12 +481,19 @@ export class Engine {
    * the order they were submitted.
    */
   submit(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
+    const cancellation = this.cancellations.get(sessionId)
+
+    if (prompt.inboxId === undefined) this.away.delete(sessionId)
+
     return this.enqueue(
       sessionId,
       async () => {
         // Read from the inbox before the session was left: it stays there for whoever serves it next.
-        if (prompt.inboxId !== undefined && this.away.has(sessionId)) {
-          this.queuedPrompts.delete(prompt.inboxId)
+        if (
+          cancellation !== this.cancellations.get(sessionId) ||
+          (prompt.inboxId !== undefined && this.away.has(sessionId))
+        ) {
+          if (prompt.inboxId !== undefined) this.queuedPrompts.delete(prompt.inboxId)
 
           return LEFT
         }
@@ -445,6 +502,8 @@ export class Engine {
         const handoff = await this.pickupHandoff(sessionId)
 
         if (handoff !== undefined && !handoff.ok) return handoff
+
+        if (cancellation !== this.cancellations.get(sessionId)) return LEFT
 
         return this.execute(sessionId, prompt)
       },
@@ -475,7 +534,7 @@ export class Engine {
 
   /** Whether the turn running here reads what is said to it: a `/compact` or `/handoff` does not. */
   steerable(sessionId: string): boolean {
-    return this.running.get(sessionId)?.operation === false
+    return !this.away.has(sessionId) && this.running.get(sessionId)?.operation === false
   }
 
   /**
@@ -495,6 +554,8 @@ export class Engine {
    * it is not lost with this process: whoever serves the session next runs it.
    */
   queue(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile {
+    this.away.delete(sessionId)
+
     const entry = this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text })
 
     // A running turn drains the inbox when it ends, which keeps prompts in the order they were sent.
@@ -612,13 +673,14 @@ export class Engine {
     if (this.queuedDeliveries.has(sessionId)) return
 
     this.queuedDeliveries.add(sessionId)
+    const cancellation = this.cancellations.get(sessionId)
 
     void this.enqueue(
       sessionId,
       async () => {
         this.queuedDeliveries.delete(sessionId)
 
-        if (this.away.has(sessionId)) return undefined
+        if (this.away.has(sessionId) || cancellation !== this.cancellations.get(sessionId)) return undefined
 
         const results = pendingInbox(this.store, sessionId).filter((entry) => entry.delivers !== undefined)
 

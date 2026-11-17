@@ -220,6 +220,20 @@ These work best on the session you are in, because the evidence is right there.
   between the parent and its tasks keeps the same owner, while switching to
   unrelated work releases it. Unanswered task approvals remain available
   when the terminal is reopened.
+- **"How do I write a multiline prompt or stop everything?"** Shift+Enter
+  inserts a newline; Enter submits. The TUI enables the terminal's modified-key
+  protocol while open and restores it on exit; the editor also understands
+  xterm modified Enter and Alt+Enter. The idle hint separates Enter's action
+  from the available editing hotkeys with a dot.
+  Escape calls `Engine.cancel`: it interrupts the current turn, recursively
+  stops delegated tasks and their commands, and kills session background jobs.
+  Unread inbox entries are withdrawn by an append-only `session.cancel` CHAIN
+  span (`metadata.cancelled_inbox`), so reopening cannot dispatch them.
+  A cancellation generation also invalidates prompts already scheduled in the
+  engine's promise queue. Automatic inbox delivery stays paused until an
+  explicit new prompt or rejoin. The latest withdrawn prompt from this user
+  returns to the editor; Up/Down recall the earlier ones. Quitting/reloading
+  remains different: it preserves queued prompts and background work.
 - **"What will Enter do?"** The line under the prompt says, from the
   conversation's own state (`enterHint` in `source/cli/src/tui/app.ts`):
   idle, Enter starts a new turn, and says so even while tasks and background
