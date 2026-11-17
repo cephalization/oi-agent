@@ -138,17 +138,23 @@ scenario(
               output: entry.observed ? result : "Reporting the completed background result.",
             })
 
-            verdict = (
-              await runEvals(
-                { ...runtime, store: new Store(store.home) },
-                fixture.sessionId,
-                delivered.traceId,
-              )
-            )[0]
+            const results = await runEvals(
+              { ...runtime, store: new Store(store.home) },
+              fixture.sessionId,
+              delivered.traceId,
+            )
+
+            // A waiting check's result is the one that names its launch turn; the turn's own verdict comes after it.
+            const settled = entry.wait
+              ? results.find((result) => result.annotation.metadata?.["deferred_from"] !== undefined)
+              : results[0]
 
             if (index < entry.results.length - 1) {
-              expect(verdict?.annotation.label).toBe("pending")
+              // Still waiting: recorded once, on the launch turn, and not judged.
+              expect(settled).toBeUndefined()
               expect(calls).toBe(0)
+            } else {
+              verdict = settled
             }
           }
 
