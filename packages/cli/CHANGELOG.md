@@ -1,5 +1,42 @@
 # oi-agent
 
+## 0.9.0
+
+### Minor Changes
+
+- [#57](https://github.com/cephalization/oi-agent/pull/57) [`273c225`](https://github.com/cephalization/oi-agent/commit/273c225fb55378e3295d3d7100a194a4b797dfbc) Thanks [@cephalization](https://github.com/cephalization)! - Long commands no longer die at the tool timeout. A `bash` command that is still running after its time limit keeps going as a background job, and the agent can start one that way on purpose (test suites, builds, servers). You can keep talking while it runs: the status line counts running jobs, and when one finishes its result is delivered to the agent, which picks the work back up. Jobs survive `/reload` and quitting oi; results that arrive while you are away are delivered when you reopen the session. `oi run` waits for the jobs it started (`--no-wait` to skip that).
+
+- [#57](https://github.com/cephalization/oi-agent/pull/57) [`271df99`](https://github.com/cephalization/oi-agent/commit/271df990f00fb16345a6c4d82260f1ac7fa63411) Thanks [@cephalization](https://github.com/cephalization)! - oi now delegates by default. The conversation stays open for thinking and planning while subagents do the work: the agent writes a brief and hands it to another oi agent with its own session, and for anything that changes files its own git worktree and branch, so tasks run side by side without colliding with each other or your checkout.
+  
+  - Running tasks and background commands are listed above the status line, with what each is doing.
+  - Results come back by themselves. If you are typing, they wait (`✉ 1 result waiting`) until you send or clear your prompt; `/inbox` delivers them now. Several arrive as one digest.
+  - A tool call a subagent needs approved is asked in your terminal, labelled with the task.
+  - `/tasks` lists them, `/attach <task>` opens one to watch and type to, `/detach` returns. You can also ask the agent to steer or cancel a task.
+  - Tasks keep running when you quit or `/reload`; what finished meanwhile is delivered when you return.
+  - A task that ends without changing anything removes its worktree and branch; one with work in it keeps them until you merge or remove them. A follow-up message to a finished task continues it where it was.
+  - `oi -s <task session>` opens a task directly; tool calls it needs approved are asked there too.
+  - New config: `cheap_model` (the model for mechanical tasks), `max_tasks` (how many run at once, default 4), and `"delegation": "off"` to keep all work in the conversation.
+
+- [#60](https://github.com/cephalization/oi-agent/pull/60) [`fd927a6`](https://github.com/cephalization/oi-agent/commit/fd927a6c9db610a03f594b8ae1b84e41bfcedc0f) Thanks [@cephalization](https://github.com/cephalization)! - `/metrics` shows where a session's time went, and `oi metrics [session]` prints the same from the shell (`--json` for all the numbers). Each turn is split into model time and tool time; tool time is grouped by what ran (`pnpm e2e`, `git commit`, `read_file`), the slowest tool calls are listed, and evaluator and learning time is reported apart from the turns. Delegated tasks are listed with their own totals. Everything is computed from the start and end times the span files already hold, so it works on old sessions too.
+
+- [#51](https://github.com/cephalization/oi-agent/pull/51) [`7a5879a`](https://github.com/cephalization/oi-agent/commit/7a5879ac21689abf6614935b98a8104578f28536) Thanks [@cephalization](https://github.com/cephalization)! - `/model` now saves the model you pick as the default, so new sessions start on it instead of going back to the one in your config. Use `/model --temp <model>` to switch only for the running process. Resumed sessions still continue on the model they last used.
+
+- [#57](https://github.com/cephalization/oi-agent/pull/57) [`54f307e`](https://github.com/cephalization/oi-agent/commit/54f307ec66efdc367e135e5c3a9069b780e47ab3) Thanks [@cephalization](https://github.com/cephalization)! - Evaluators understand work that finishes later. An LLM evaluator sees which background commands and tasks a turn started and which results it was given, so reporting on earlier work is not mistaken for starting it again. A new opt-in, `wait_for_background: true`, is for checks that depend on the outcome ("the tests it started must pass"): the turn that starts the work is marked `pending`, with no failure feedback and nothing learned from it, and is judged once the results have been delivered, polled with `job_status`, or the work was cancelled. Pending results are not counted as passes. Checks without the option still run at once, which is what a rule about starting work wants.
+
+- [#61](https://github.com/cephalization/oi-agent/pull/61) [`cb8851a`](https://github.com/cephalization/oi-agent/commit/cb8851a7e826f0f1f42c3c7d5b8c276ebb81836e) Thanks [@cephalization](https://github.com/cephalization)! - The terminal now says what Enter will do, and lets you choose. Under the prompt: `enter starts a new turn` when the conversation is idle, including while tasks and background commands are still running. While a turn runs, Enter **steers** it: the agent reads your message before its next step, in the same turn, instead of after it has finished. Press ctrl+t to switch to **queueing** the message for the next turn, and again to switch back. Messages that are waiting are listed above the status line, a steering message is shown in the transcript where the agent was given it, and if a turn ends before it could be steered the message runs as the next turn and the terminal says so. Queued messages are kept on disk, so quitting does not lose them.
+
+### Patch Changes
+
+- [#59](https://github.com/cephalization/oi-agent/pull/59) [`595f68c`](https://github.com/cephalization/oi-agent/commit/595f68ca225b24a84cf06886bffcac4b68302496) Thanks [@cephalization](https://github.com/cephalization)! - Fix replies being cut short, or missing, in a terminal attached to a task (`/attach`, `oi -s <task>`). Text a subagent wrote between two looks at its files was dropped, so a reply could show as its first few characters.
+
+- [#58](https://github.com/cephalization/oi-agent/pull/58) [`a610ec1`](https://github.com/cephalization/oi-agent/commit/a610ec1dbe96baab5192418713bd8743ed3e2ce7) Thanks [@cephalization](https://github.com/cephalization)! - `LLM` spans now say who served a call and how it was paid for. `llm.provider` is the vendor (`openai` for both an OpenAI API key and the ChatGPT plan sign-in, where it used to say `chatgpt`), oi's own provider id stays in `metadata.oi_agent.provider`, and a new `metadata.oi_agent.billing` is `plan` for ChatGPT-plan calls and `api` otherwise, so plan usage can be told apart from per-token spend in Phoenix. An OpenAI-compatible provider entry can declare a `vendor` (for example `"groq"`). Evaluator judge spans no longer put a provider id in `llm.system`.
+
+- [#64](https://github.com/cephalization/oi-agent/pull/64) [`3fc6544`](https://github.com/cephalization/oi-agent/commit/3fc654404ce6f7bb5a7daa63deb7cd33036ec804) Thanks [@cephalization](https://github.com/cephalization)! - Fixes found before the release:
+  
+  - A message queued for the next turn no longer starts after you have left: quitting, `/reload`, `/new` and `/resume` leave it in the session, and it runs when the session is next opened. Before, a message the engine had already picked up could start a turn with nobody at the terminal.
+  - `oi -c` and `oi metrics` with no session now mean the session you last worked in. They used to take the newest session folder, which was often a delegated task's session or one opened and closed without a prompt.
+  - During `/compact` and `/handoff` the line under the prompt says Enter queues: those read nothing said to them, so a message sent then was shown as steering and never read.
+
 ## 0.8.0
 
 ### Minor Changes
