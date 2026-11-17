@@ -68,6 +68,7 @@ export const joinSession = async (
   baseUrl: string,
   token: string,
   user: string,
+  hostTimeoutMs: number = HOST_TIMEOUT_MS,
 ): Promise<PeerConnection> => {
   const controller = new AbortController()
   const headers = { authorization: `Bearer ${token}`, "x-oi-user": user }
@@ -145,7 +146,12 @@ export const joinSession = async (
       void reader.cancel().catch(() => undefined)
     }
 
-    let timeout = setTimeout(() => controller.abort(), HOST_TIMEOUT_MS)
+    // Only a host that publishes status is known to send something every 500 ms.
+    // An older host is silent while idle, so silence says nothing about it.
+    const watch = (): NodeJS.Timeout | undefined =>
+      manifest.state === undefined ? undefined : setTimeout(() => controller.abort(), hostTimeoutMs)
+
+    let timeout = watch()
 
     controller.signal.addEventListener("abort", cancel, { once: true })
 
@@ -156,7 +162,7 @@ export const joinSession = async (
         if (done) break
 
         clearTimeout(timeout)
-        timeout = setTimeout(() => controller.abort(), HOST_TIMEOUT_MS)
+        timeout = watch()
         buffer += decoder.decode(value, { stream: true })
 
         const frames = buffer.split("\n\n")

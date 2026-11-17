@@ -11,7 +11,7 @@ import { OI, type SpanFile, writeMetadata } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
 import { joinSession, type PeerConnection } from "../src/peer/client.ts"
 import { type PeerServer, servePeers } from "../src/peer/server.ts"
-import { formatShareLink, parseShareLink } from "../src/peer/tailcat.ts"
+import { formatShareLink, parseShareLink, tailcatForward } from "../src/peer/tailcat.ts"
 import type { StoreEvent } from "../src/store.ts"
 import type { Json } from "../src/wire.ts"
 import { tempStore } from "./helpers.ts"
@@ -325,6 +325,47 @@ describe("peer sync", () => {
     }
   })
 
+  it("stays joined to an idle legacy host, which sends nothing between events", async () => {
+    const header = tempStore().createSession("/tmp")
+    const followers = new Set<http.ServerResponse>()
+
+    const server = http.createServer((request, response) => {
+      response.setHeader("content-type", "application/json")
+
+      if (request.url === "/v1/session")
+        return void response.end(JSON.stringify({ header, role: "viewer", host: "old host" }))
+
+      if (request.url === "/v1/manifest") return void response.end(JSON.stringify({ paths: [], open: [] }))
+
+      response.setHeader("content-type", "text/event-stream")
+      response.write(": connected\n\n")
+      followers.add(response)
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    // SAFETY: this server listens on a TCP port, never a named pipe.
+    const port = (server.address() as AddressInfo).port
+
+    cleanup.push(async () => {
+      for (const follower of followers) follower.end()
+
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    })
+
+    const peer = await joinSession(tempStore(), `http://127.0.0.1:${port}`, "token", "eve", 100)
+
+    await expect(
+      Promise.race([
+        peer.closed.then(() => "closed"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("open"), 400)),
+      ]),
+    ).resolves.toBe("open")
+
+    for (const follower of followers) follower.end()
+
+    await peer.closed
+  })
+
   it.each([
     { route: "/v1/session", status: 200, body: "{}", error: "invalid session description" },
     { route: "/v1/session", status: 200, body: "not json", error: "invalid session description" },
@@ -461,6 +502,41 @@ describe("peer sync", () => {
     } finally {
       socket.destroy()
     }
+  })
+
+  it("kills a tunnel that ignores the request to stop", async () => {
+    // tailcat does this once the other end of its tunnel is gone.
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "oi-tailcat-"))
+    const script = path.join(bin, "tailcat")
+    const searchPath = process.env["PATH"]
+
+    fs.writeFileSync(
+      script,
+      "#!/bin/sh\ntrap '' TERM\necho $$ > \"$0.pid\"\necho 'forwarding 127.0.0.1:1'\nwhile :; do sleep 1; done\n",
+      { mode: 0o755 },
+    )
+    process.env["PATH"] = `${bin}:${searchPath}`
+    cleanup.push(() => {
+      process.env["PATH"] = searchPath
+      fs.rmSync(bin, { recursive: true, force: true })
+    })
+
+    const tunnel = await tailcatForward("tcFake", 1)
+    const pid = Number(fs.readFileSync(`${script}.pid`, "utf8"))
+
+    const running = (): boolean => {
+      try {
+        return process.kill(pid, 0)
+      } catch {
+        return false
+      }
+    }
+
+    expect(tunnel.value).toBe("127.0.0.1:1")
+    expect(running()).toBe(true)
+    tunnel.stop()
+    await until(() => !running())
+    expect(running()).toBe(false)
   })
 
   it("round-trips share links", () => {

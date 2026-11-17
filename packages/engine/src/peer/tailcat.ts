@@ -13,6 +13,9 @@ export interface Tunnel {
 
 const START_TIMEOUT_MS = 30_000
 
+/** How long a stopped tunnel gets to exit by itself before it is killed. */
+const STOP_GRACE_MS = 1_000
+
 const waitFor = (child: ChildProcess, pattern: RegExp, what: string): Promise<string> =>
   new Promise((resolve, reject) => {
     let output = ""
@@ -48,7 +51,14 @@ const waitFor = (child: ChildProcess, pattern: RegExp, what: string): Promise<st
 const start = async (args: ReadonlyArray<string>, pattern: RegExp, what: string): Promise<Tunnel> => {
   const child = spawn("tailcat", [...args], { stdio: ["ignore", "pipe", "pipe"] })
 
+  // tailcat can ignore SIGTERM for minutes once the other end is gone, and a
+  // child that is still running keeps this process from exiting.
   const stop = (): void => {
+    if (child.exitCode !== null || child.signalCode !== null) return
+
+    const force = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS)
+
+    child.once("exit", () => clearTimeout(force))
     child.kill("SIGTERM")
   }
 
