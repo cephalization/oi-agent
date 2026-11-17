@@ -636,6 +636,12 @@ These work best on the session you are in, because the evidence is right there.
   the initial manifest; tasks started afterward appear through the same status
   stream even when the parent conversation is idle. Child session files and
   task-control or approval endpoints are not exposed by this status snapshot.
+  A current joiner also accepts the older manifest without a `state` snapshot:
+  conversation files and live Store events still replicate, and role/token checks
+  are unchanged. The opening notes explain that running-task status needs the
+  host updated and restarted, then a rejoin. A package update does not replace
+  an already-running host. Malformed session/manifest responses and rejected event
+  streams produce a descriptive join error rather than an Option decoding crash.
 
 ## Further reading
 

@@ -43,7 +43,8 @@ export const SessionState = Schema.Struct({
 export type SessionState = typeof SessionState.Type
 
 export const Manifest = Schema.Struct({
-  state: SessionState,
+  // Older hosts replicate conversation files but do not publish live status.
+  state: Schema.optionalKey(SessionState),
   paths: Schema.Array(Schema.String),
   open: Schema.Array(Schema.Struct({ span: SpanFile, deltas: Schema.Array(StreamDelta) })),
 })

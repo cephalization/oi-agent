@@ -1,4 +1,6 @@
 import * as fs from "node:fs"
+import * as http from "node:http"
+import type { AddressInfo } from "node:net"
 import * as path from "node:path"
 import {
   ApprovalDesk,
@@ -6,6 +8,8 @@ import {
   OI,
   type SpanFile,
   pendingInbox,
+  parseShareLink,
+  formatShareLink,
   readMetadata,
   writeMetadata,
 } from "@oi-agent/engine"
@@ -236,6 +240,111 @@ scenario(
       }
 
       jobs.close()
+    }
+  },
+)
+
+scenario(
+  "current drivers and viewers join legacy hosts without status snapshots",
+  { needs: ["rex"], config: new Map([["steering", "off"]]) },
+  async (s) => {
+    const host = await s.tui()
+
+    await host.waitFor(/enter starts a new turn/)
+    await host.line("Reply only heron.")
+    const session = s.spans.onlySession()
+
+    await s.spans.settledTurns(session, 1)
+    await host.line("/share local")
+    const screen = await host.waitFor(/View \(read-only\)/)
+    const links = [...screen.matchAll(/oi join (oi-share:\S+)/g)].map((match) => parseShareLink(match[1]!)!)
+    const upstream = links[0]!
+    const followers = new Set<http.ServerResponse>()
+
+    // Model the pre-0.10.1 wire contract, retaining the real host's token checks,
+    // immutable files, prompt handling and Store events, but no status snapshots.
+    const proxy = http.createServer((request, response) => {
+      const forward = http.request(
+        `${upstream.address}:${upstream.port}${request.url}`,
+        { method: request.method, headers: request.headers },
+        (incoming) => {
+          response.writeHead(incoming.statusCode ?? 500, incoming.headers)
+
+          if (request.url === "/v1/manifest" && incoming.statusCode === 200) {
+            incoming.resume()
+            response.end(JSON.stringify({ paths: s.spans.store.manifest(session), open: [] }))
+
+            return
+          }
+
+          if (request.url !== "/v1/events") {
+            incoming.pipe(response)
+
+            return
+          }
+
+          followers.add(response)
+          let buffer = ""
+
+          incoming.setEncoding("utf8")
+          incoming.on("data", (chunk: string) => {
+            buffer += chunk
+            const frames = buffer.split("\n\n")
+
+            buffer = frames.pop() ?? ""
+
+            for (const frame of frames) {
+              if (!frame.startsWith('data: {"type":"state",')) response.write(`${frame}\n\n`)
+            }
+          })
+          incoming.on("end", () => response.end())
+          response.on("close", () => {
+            followers.delete(response)
+            incoming.destroy()
+          })
+        },
+      )
+
+      forward.on("error", () => response.destroy())
+      request.pipe(forward)
+    })
+
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve))
+    // SAFETY: the proxy listens on a TCP port, never a named pipe.
+    const port = (proxy.address() as AddressInfo).port
+
+    try {
+      const driver = await s.tui(["join", formatShareLink({ ...links[0]!, port })], {
+        env: new Map([
+          ["OI_AGENT_HOME", path.join(s.sandbox.root, "legacy-driver")],
+          ["OI_AGENT_USER", "ana"],
+        ]),
+      })
+
+      const viewer = await s.tui(["join", formatShareLink({ ...links[1]!, port })], {
+        env: new Map([
+          ["OI_AGENT_HOME", path.join(s.sandbox.root, "legacy-viewer")],
+          ["OI_AGENT_USER", "eve"],
+        ]),
+      })
+
+      for (const peer of [driver, viewer]) {
+        await peer.waitFor(/The host does not publish live task status/)
+        await peer.waitFor(/Reply only heron/)
+      }
+
+      await viewer.line("Do not submit this viewer message.")
+      expect(pendingInbox(s.spans.store, session)).toEqual([])
+      await driver.line("Reply only finch.")
+      const turns = await s.spans.settledTurns(session, 2)
+
+      expect(turns[1]?.root.attributes["user.id"]).toBe("ana")
+      await viewer.waitFor(/Reply only finch/)
+      expect(await viewer.viewport()).not.toMatch(/Allow bash/)
+    } finally {
+      for (const follower of followers) follower.end()
+
+      await new Promise<void>((resolve) => proxy.close(() => resolve()))
     }
   },
 )
