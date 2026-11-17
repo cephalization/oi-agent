@@ -11,6 +11,7 @@ describe("background-work reporting", () => {
 
     expect(prompt).toContain("Once all background jobs and delegated tasks in the session have finished")
     expect(prompt).toContain("not just the last result")
+    expect(prompt).toContain("Explicitly restate each completed item's outcome in the final rollup")
     expect(prompt).toContain(
       "what is done or failed, important limitations, and outstanding decisions or next steps",
     )

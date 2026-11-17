@@ -209,7 +209,9 @@ These work best on the session you are in, because the evidence is right there.
   The shared system prompt (`source/engine/src/prompt.ts`) asks for a brief
   consolidated rollup once all background jobs and delegated tasks in the
   session have finished, including earlier results delivered in separate
-  turns, not just the last result. It covers done/failed work, important
+  turns, not just the last result. It explicitly restates each completed item's
+  outcome, including successes and failures already reported; merely saying
+  everything finished is not a rollup. It covers done/failed work, important
   limitations, and outstanding decisions or next steps. While work remains,
   the agent should say what is still running, not claim everything is done
   or poll just to wait. This guidance also applies with delegation off and
