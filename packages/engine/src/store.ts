@@ -8,6 +8,7 @@ import {
   type EndedSpan,
   FORMAT_VERSION,
   type InboxFile,
+  kindOf,
   parseAnnotation,
   parseDelta,
   parseDevice,
@@ -24,6 +25,7 @@ import {
   type SpanFile,
   type StreamDelta,
   spanFileName,
+  stringAttr,
 } from "./format.ts"
 import { isoToNs, newId, newSessionId, nowNs, nsToIso } from "./ids.ts"
 
@@ -73,6 +75,36 @@ const HEARTBEAT_MS = 2000
 
 /** An in-flight span with no heartbeat for this long has no live writer. */
 export const STALE_AFTER_MS = 10_000
+
+const TEXT_PART = /^llm\.output_messages\.(\d+)\.message\.contents\.(\d+)\.message_content\.text$/
+const WHOLE_TEXT = /^llm\.output_messages\.\d+\.message\.content$/
+
+/**
+ * The text a model call replied with, from the `LLM` span's output message
+ * attributes: the text parts in order where a message is recorded in parts
+ * (Anthropic), and its whole content otherwise (OpenAI).
+ */
+const replyText = (span: EndedSpan): string => {
+  if (kindOf(span) !== "LLM") return ""
+
+  const parts = Object.keys(span.attributes)
+    .flatMap((key) => {
+      const match = TEXT_PART.exec(key)
+
+      if (match === null || span.attributes[key.replace(/text$/, "type")] !== "text") return []
+
+      return [{ message: Number(match[1]), part: Number(match[2]), text: stringAttr(span, key) ?? "" }]
+    })
+    .toSorted((x, y) => x.message - y.message || x.part - y.part)
+
+  return parts.length > 0
+    ? parts.map((part) => part.text).join("")
+    : Object.keys(span.attributes)
+        .filter((key) => WHOLE_TEXT.test(key))
+        .toSorted()
+        .map((key) => stringAttr(span, key) ?? "")
+        .join("")
+}
 
 /** How often a followed session's files are checked, and how many of its newest traces. */
 const FOLLOW_MS = 150
@@ -491,6 +523,8 @@ export class Store {
     const ended = new Set<string>()
     /** In-flight span file → how many of its deltas have been emitted. */
     const open = new Map<string, number>()
+    /** Span id → the reply text emitted for it so far. */
+    const shown = new Map<string, string>()
     const side = new Set<string>()
     let first = true
 
@@ -522,7 +556,10 @@ export class Store {
         if (sent === undefined && !(first && span.parent_id === null))
           this.emit({ type: "span_open", session_id: sessionId, span })
 
-        for (const delta of deltas.slice(sent ?? (first ? deltas.length : 0)))
+        for (const delta of deltas.slice(sent ?? (first ? deltas.length : 0))) {
+          if (delta.k === "text")
+            shown.set(span.context.span_id, `${shown.get(span.context.span_id) ?? ""}${delta.d}`)
+
           this.emit({
             type: "delta",
             session_id: sessionId,
@@ -530,13 +567,32 @@ export class Store {
             span_id: span.context.span_id,
             delta,
           })
+        }
 
         open.set(file, deltas.length)
       }
 
       // Files list by start time; spans that ended since the last look are told in the order they ended.
-      for (const span of finished.toSorted((a, b) => a.end_time.localeCompare(b.end_time)))
+      for (const span of finished.toSorted((a, b) => a.end_time.localeCompare(b.end_time))) {
+        // A span's stream file goes when it ends, so what it streamed since the last look, or
+        // all of it for a call that began and ended between two looks, is only in the ended span.
+        const reply = replyText(span)
+        const seen = shown.get(span.context.span_id) ?? ""
+        const missed = reply.startsWith(seen) ? reply.slice(seen.length) : ""
+
+        shown.delete(span.context.span_id)
+
+        if (missed !== "")
+          this.emit({
+            type: "delta",
+            session_id: sessionId,
+            trace_id: span.context.trace_id,
+            span_id: span.context.span_id,
+            delta: { k: "text", i: 0, d: missed },
+          })
+
         this.emit({ type: "span_end", session_id: sessionId, span })
+      }
     }
 
     const scanSide = (): void => {

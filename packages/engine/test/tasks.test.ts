@@ -374,6 +374,12 @@ describe("approvals across processes", () => {
   })
 })
 
+/** The reply text a follower was told, in order. */
+const streamed = (events: ReadonlyArray<StoreEvent>): string =>
+  events
+    .flatMap((event) => (event.type === "delta" && event.delta.k === "text" ? [event.delta.d] : []))
+    .join("")
+
 describe("following a session another process writes", () => {
   it("emits what the writer would have emitted, from the files alone", async () => {
     const writer = tempStore()
@@ -416,6 +422,43 @@ describe("following a session another process writes", () => {
       "span_end:AGENT",
     ])
     expect(seen.every((event) => event.session_id === session.id)).toBe(true)
+    expect(streamed(seen)).toBe("pong")
+    engine.close()
+  })
+
+  it("emits a reply that was written between two looks, once and in full", async () => {
+    const writer = tempStore()
+    const session = writer.createSession(os.tmpdir())
+    const reader = new Store(writer.home)
+    const seen: Array<StoreEvent> = []
+
+    const engine = new Engine({
+      store: writer,
+      config: loadConfig({ OI_AGENT_CONFIG_DIR: `${writer.home}/config`, OI_AGENT_HOME: writer.home }),
+      approvals: "allow",
+      tools: [],
+      model: scriptedModel(() => ({
+        model: "scripted",
+        content: [{ type: "text", text: "heron" }],
+        stop_reason: "end_turn",
+      })),
+    })
+
+    reader.subscribe((event) => seen.push(event))
+
+    // Slower than the turn: its stream file is gone before the follower ever reads it.
+    const stop = reader.follow(session.id, 150)
+
+    await engine.submit(session.id, { text: "word?", userId: "tony" })
+    await until(() => seen.some((event) => event.type === "span_end" && event.span.parent_id === null))
+    stop()
+
+    expect(streamed(seen)).toBe("heron")
+
+    // The text comes before the end of the call that wrote it, as it does for the writer's own listeners.
+    const kinds = seen.map((event) => event.type)
+
+    expect(kinds.indexOf("delta")).toBeLessThan(kinds.indexOf("span_end"))
     engine.close()
   })
 })
