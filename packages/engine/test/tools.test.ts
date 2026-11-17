@@ -211,7 +211,7 @@ describe("background jobs", () => {
     const s = setup()
     const marker = `${os.tmpdir()}/oi-agent-kill-${process.pid}-${Date.now()}`
 
-    await s.run("bash", { command: `(sleep 1; touch ${marker}) & wait`, background: true })
+    await s.run("bash", { command: `(sleep 2; touch ${marker}) & wait`, background: true })
 
     const job = onlyJob(s.jobs)
     const killed = await s.run("job_kill", { id: job.id })

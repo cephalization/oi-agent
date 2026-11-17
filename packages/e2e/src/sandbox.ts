@@ -10,6 +10,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
+import { Jobs } from "@oi-agent/engine"
 import type { Schema } from "effect"
 
 export const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url))
@@ -235,8 +236,17 @@ export class Sandbox {
     return path.join(this.cwd, rel)
   }
 
-  /** Remove everything, unless the scenario failed and `OI_E2E_KEEP` asks to keep it. */
+  /**
+   * Stop what the scenario left running, then remove everything, unless the
+   * scenario failed and `OI_E2E_KEEP` asks to keep it. Background jobs and
+   * subagents outlive the CLI by design, so nothing else would stop them.
+   */
   dispose(keep: boolean): void {
+    const root = path.join(this.home, "jobs")
+    const jobs = new Jobs(root)
+
+    for (const session of fs.existsSync(root) ? fs.readdirSync(root) : []) jobs.killAll(session)
+
     if (!keep) fs.rmSync(this.root, { recursive: true, force: true })
   }
 }
