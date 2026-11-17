@@ -379,22 +379,27 @@ describe("peer sync", () => {
     const { server, base } = await host()
     const fetch = globalThis.fetch
 
-    const stalled = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(": connected\n\n"))
-      },
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      if (input !== `${base}/v1/events`) return fetch(input, init)
+
+      const stalled = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(": connected\n\n"))
+        },
+      })
+
+      return Promise.resolve(new Response(stalled))
     })
 
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) =>
-      input === `${base}/v1/events` ? Promise.resolve(new Response(stalled)) : fetch(input, init),
-    )
-
     try {
-      const { peer } = await join(base, server.tokens.driver, "ana")
+      const { peer: driver } = await join(base, server.tokens.driver, "ana")
+      const { peer: viewer } = await join(base, server.tokens.viewer, "eve")
 
+      expect(driver.info.role).toBe("driver")
+      expect(viewer.info.role).toBe("viewer")
       await expect(
         Promise.race([
-          peer.closed.then(() => "closed"),
+          Promise.all([driver.closed, viewer.closed]).then(() => "closed"),
           new Promise<string>((resolve) => setTimeout(() => resolve("stuck"), 12_000)),
         ]),
       ).resolves.toBe("closed")
