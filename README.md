@@ -2,447 +2,54 @@
 
 [![npm](https://img.shields.io/npm/v/oi-agent)](https://www.npmjs.com/package/oi-agent)
 
-A coding agent whose entire runtime state is OpenInference spans on disk.
+A terminal coding agent you can inspect, resume and share. oi reads and edits
+code, runs commands, and helps you work through software engineering tasks.
 
-There is no conversation database and no in-memory history. Every model call,
-tool call and evaluation is a span file, and the agent derives each request
-from those files. The same files export to Phoenix, sync to other machines by
-copying, and stream to anyone you share a session with.
+Its runtime state is [OpenInference](https://github.com/Arize-ai/openinference)
+spans on disk—not a separate conversation database. You can see what the model
+was sent, pick up a session later, or explore it in Phoenix. Experimental.
 
-Experimental. See [PLAN.md](PLAN.md) for the design and
-[docs/spec-gaps.md](docs/spec-gaps.md) for what OpenInference could not express.
+## Get started
 
-## It learns from your corrections
-
-Correct oi the way you'd correct a colleague. When the correction is about
-how you always want things done, not just this task, oi writes it down and
-checks its own work against it from then on. You never have to say "make a
-rule". Reports of bugs in the software being developed belong in code and
-regression tests—not standing rules about the coding agent's behavior.
-
-Think of a kitchen. You're the head chef and oi is the line cook, with a
-sous-chef at the pass taking notes. "Less salt on this one" is about one
-plate, and nothing is written down. "Salt again? We season lightly here" is
-house style: it goes on a card on the wall. Every plate is checked against
-the cards, a miss is called back before the next order, and a miss that keeps
-happening goes into the recipe book.
-
-```
-you: "hmm, var? it's not 2010. this codebase is const/let only."
- │
- ▼
-oi does the work ──► after the turn, a small model reads your message
-                     (with the previous turn and the checks you already have)
-                                   │
-              ┌────────────────────┴────────────────────┐
-              ▼                                         ▼
-     about this task only                       about how you work
-     "no, too long. use msg here"               "const/let only"
-     nothing is saved                           a standing check is saved:
-                                                ◆ steering: learned — Use const or let,
-                                                  never var. Checked from now on by
-                                                  evaluator no_var_declarations.
-```
-
-A learned check then climbs a ladder, and only as far as it needs to:
-
-```
-what you said ──► a check after every turn ──► on a miss, feedback ──► a permanent rule
-(once)            (◆ no_var_declarations)      at the start of the     in the system prompt,
-                                               next turn               every session
-```
-
-| Learned                                                                  | Left alone                                 |
-| ------------------------------------------------------------------------ | ------------------------------------------ |
-| "you don't need to print whole files back at me, it's just noise."       | "no, too long. use `msg` here."            |
-| "you keep writing these like marketing copy. plain and factual, please." | "can you make that one a bit more formal?" |
-| "bit wordy again. I prefer answers short."                               | "Shorter, please. Just the function name." |
-
-On corrections worded unlike anything in its prompt, the note-taker got 36
-of 36 right. How that was measured, and the two mistakes made measuring it:
-[docs/experiments/steering.md](docs/experiments/steering.md).
-
-Checks and rules live in `~/.config/oi-agent/projects/<project>/`, never in
-your repository; each check records the turn it was learned from. `/evals`
-and `/rules` list them, deleting a check's file removes it, and `/revert`
-undoes the latest rule. Every decision, including why something was _not_
-learned, is a `steering` trace on disk and in Phoenix, and a `steering`
-annotation on the turn (`learned`, `durable` or `one-off`, scored by
-confidence), so in Phoenix you can filter turns by what was learned. The
-terminal only mentions what was learned.
-
-`oi setup` asks whether to learn and which model should read your messages.
-Set `"steering_model": "provider/model"` to use any configured provider,
-including ChatGPT or a local OpenAI-compatible server, without an Anthropic
-key. Unset (or empty) uses the judge model when an Anthropic key is available,
-otherwise the agent's model. The accuracy numbers above are for Haiku, not a
-promise about every model. Turn learning off with `"steering": "off"` or
-`OI_AGENT_STEERING=off`.
-
-For a cheap decision-model screen, set `"steering_model": "decision:jev-latest"`.
-Jev checks every message; only durable corrections go to an LLM to write the
-evaluator. That writer is `judge_model` when available, otherwise the agent's
-model. A failed screen falls back to the writer. LLM evaluators and rule
-distillation still use the Anthropic judge; configuring the steering model
-changes detection, not those tasks.
-
-### Decision models and auto approvals
-
-Decision models are separate from chat models: they answer typed questions
-with probabilities, not generated text, and are not offered in `/model`.
-Store a TypeSafe key with `oi auth login typesafe` (or `/provider` → TypeSafe),
-or set `TYPESAFE_API_KEY`. Configure its endpoint and model separately:
-
-```json
-{
-  "approvals": "auto",
-  "decision": {
-    "kind": "systemone",
-    "base_url": "https://api.typesafe.ai",
-    "model": "jev-latest"
-  },
-  "steering": "auto",
-  "steering_model": "decision:jev-latest"
-}
-```
-
-Auto mode allows a tool call only when all four answers clear the safety
-thresholds: irreversible damage < 0.5, writes or data uploads outside the
-workspace < 0.5, exposing secrets < 0.5, and directly requested work > 0.5.
-Requested read-only service queries and normal authentication to that service
-do not count as external changes or secret exposure merely because they use
-the network. Hard rules ask
-about destructive deletes outside the workspace, force pushes, sudo,
-discarding work, and file writes outside the workspace (including symlinks).
-Everything uncertain, missing or failed asks you; without a key it asks every
-time. The prompt explains why, including any probabilities that failed their
-thresholds. In auto mode, `y` allows only this call and `n` denies it; neither
-changes the mode. The approval dialog has no yolo shortcut in auto mode:
-use `/yolo` or the mode-cycle key separately if that is what you want. This is an approval aid, not an operating-system sandbox.
-
-`/auto` enables it for this session; `--approvals auto` selects it from the
-command line without changing config. `/reload` preserves the current mode. Tab cycles ask → auto → yolo when a
-TypeSafe key is available; otherwise it keeps the ask/yolo cycle. `oi run`
-in auto mode denies calls that would need a human. Restart or `/reload` after
-changing the TypeSafe key. Each call is a `DECISION` span under the tool or
-steering evaluator that asked, with `decision.*` usage and the request and
-response bodies (secrets scrubbed), never `llm.*`. The status line counts
-decision tokens separately, with an estimate at TypeSafe's input rate
-($0.042/M; output free). Other endpoints may charge differently.
-
-## Try it
-
-Requires Node 24+ and one of: an Anthropic API key, an OpenAI API key, a
-ChatGPT plan, or any OpenAI-compatible server (Ollama, vLLM, LM Studio,
-OpenRouter, …).
+Requires Node 24+ and an Anthropic or OpenAI API key, a ChatGPT plan, or an
+OpenAI-compatible server such as Ollama, vLLM or LM Studio.
 
 ```sh
 npm install -g oi-agent    # installs the `oi` command
-oi                         # first run walks you through setup, then starts a session
+cd your-project
+oi                        # first run walks you through setup
 ```
 
-Or run it once without installing: `npx oi-agent`.
+Or try it without installing: `npx oi-agent`.
 
-Setup asks for your name, a provider and its key (or a ChatGPT sign-in), a
-model, reasoning effort, whether tools need approval, an optional Phoenix
-server and where sessions live. It lists the provider's models, checks the
-key, and looks for Phoenix on `localhost:6006`. Settings are saved to
-`~/.config/oi-agent/config.json`; keys and sign-ins go to the system
-keychain. Run `oi setup` to change them.
+Ask it to explain some code, fix a bug, or run your tests. Tools ask for
+approval by default. Type `/` for commands, use `oi -c` to continue your latest
+session, and run `oi setup` to change your provider or settings.
 
-Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
-`provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
-`OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`. `ANTHROPIC_BASE_URL` and
-`OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
-OpenAI and ChatGPT models are called over a WebSocket so the prompt cache is
-reused between calls; `OI_AGENT_OPENAI_TRANSPORT=http` uses plain HTTP instead.
+## What you can do
 
-| Command                        | What it does                                                              |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `oi`                           | Interactive session. `-c` continues the latest, `-s <id>` a specific one. |
-| `oi resume <id or URL>`        | Continue a session from disk or from Phoenix (see below).                 |
-| `oi setup`                     | Run setup again.                                                          |
-| `oi run "<prompt>"`            | One prompt, headless. Add `--yolo` to let tools run unasked.              |
-| `oi join <link>`               | Join a session shared with `/share`.                                      |
-| `oi sessions` / `oi show <id>` | List sessions; print one.                                                 |
-| `oi metrics [id]`              | Where a session's time went (`--json` for all the numbers).               |
-| `oi auth logout <provider>`    | Forget a provider's key, or sign out of ChatGPT.                          |
-| `oi serve <session>`           | Run what waits in a session's inbox, unattended (how a task is run).      |
-| `oi export [id]`               | Send sessions to Phoenix. Safe to repeat.                                 |
-| `oi auth login [provider]`     | Store a provider's key; `oi auth login chatgpt` signs in with ChatGPT.    |
-| `oi where`                     | Print the sessions directory.                                             |
+- **Work with your models.** Use Anthropic, OpenAI, a ChatGPT plan or local
+  models, and switch providers during a session.
+- **Keep working while tasks run.** Background commands and optional subagents
+  report back when finished. Delegation is experimental; turn it off with
+  `"delegation": "off"` in config if you prefer work in one conversation.
+- **Teach it your preferences.** Durable corrections can become checks on
+  later work, with feedback and reversible learned rules.
+- **Pick up and share work.** Resume from disk or Phoenix, compact context,
+  hand off to a new thread, or invite someone to a live session.
+- **Look inside.** Inspect every model and tool call. oi ships with its own
+  source and guide; ask how it works or try `/tour`.
 
-Inside a session, type `/` for a menu of commands: Tab completes, ↑↓ pick,
-Enter runs. `/resume` switches to an earlier session, picked from a list you
-can filter by its first prompt or directory; `/new` starts a fresh one.
-With Phoenix connected, the list also has the sessions in your Phoenix
-project, and Tab on a session moves it between this disk and Phoenix-only
-storage. `/model` switches model, or provider, from the next turn on, picked
-from every provider's models (`anthropic/claude-opus-5-5`,
-`openai/gpt-5.1`, `ollama/qwen3`, …), and saves it to the config as the
-default for new sessions; `/model --temp <model>` switches only for the
-running process. `/provider` opens a menu of
-Anthropic, OpenAI and OpenAI-compatible servers. Under each are its options:
-an API key (hidden as you type, kept in the keychain), signing in with a
-ChatGPT plan in the browser, or adding a server by name, base URL, optional
-key and a comma-separated list of models. A server's models go straight into
-`/model`, with the name and output limit the server reports for each. Switching provider mid-session works: the conversation carries over
-as text, tool calls and tool results. The line under the prompt says what Enter will do: start a new turn when the conversation is idle (also while tasks and background commands run), and while a turn is running either steer it (the agent reads your message before its next step) or, after ctrl+t, queue it for the next turn. Messages that are waiting are listed above the status line. With the menu closed, Tab cycles approval modes (ask, auto when configured,
-and yolo), and Shift+Tab cycles reasoning effort
-through the levels the current model accepts. The others are `/share`,
-`/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`,
-`/session`, `/tour`, `/reload`, `/help` and `/quit`.
+## Learn more
 
-The status bar keeps a session-id prefix visible, including after switching or
-handing off threads. Run `/session` to print the full copyable ID, an
-`oi -s <id>` resume command, the context size, and the tokens used across every
-model call. The status bar shows the context size: the tokens in the latest
-model request and its reply. Unique prefixes work with `/resume` and `oi -s`.
-Switching sessions with `/new`, `/resume`, or `/handoff` starts a fresh viewport
-with the destination banner and status bar. Earlier output stays in terminal
-scrollback; scroll up to see it.
-
-### Terminal status
-
-On a TTY, oi reports working, approval-blocked, done and error states using
-[OSC 7501 (Program Status Protocol)](https://www.superlogical.com/rex/docs/build/program-status).
-Supporting terminals such as Rex can show which panes need attention without
-reading their screens. The next keypress acknowledges a result; interrupting
-returns to idle, and leaving the interactive session clears its status.
-`oi run` leaves done or error behind when it exits. Redirected stdout contains
-no status sequences. Messages are secret-scrubbed and bounded to the protocol's
-UTF-8 limits. Unknown OSCs are ignored by other terminals; tmux users need to
-configure passthrough themselves (oi does not wrap these sequences).
-
-### Compact context without rewriting history
-
-`/compact [focus]` summarizes this branch into a working brief for the next
-model request. For example: `/compact preserve the migration decisions and
-remaining tests`. It uses the current model, with no tools, and records the
-summarization as a `CHAIN` span with an `LLM` child. The original spans stay
-unchanged; the terminal reports when the checkpoint is committed.
-
-The brief replaces the whole preceding model context, not the visible
-conversation. It is lossy: inspect the `context.compact` span's output if you
-need to check what was retained. Resume from disk or Phoenix uses the same
-checkpoint. Failed or interrupted compactions retain the original context.
-Run it between turns, before the context is too large to summarize. Automatic
-compaction is not implemented yet.
-
-### Delegated work: the conversation stays free
-
-**Want oi to do the work here instead?** Set `"delegation": "off"` in
-`~/.config/oi-agent/config.json`. This disables subagents; slow shell commands
-can still run in the background. Delegation is experimental: a fresh worktree
-does not include uncommitted changes, installed dependencies or build outputs.
-Do not assume splitting work makes a task faster or cheaper.
-
-[Delegation-quality experiment](docs/experiments/delegation-quality.md) measures
-ordinary requests, including when not to split work, against an off control.
-
-With delegation enabled, oi hands most real work to subagents, so the conversation you are in stays
-open for thinking, planning and deciding. Ask for something that takes more
-than a quick answer and the agent writes a brief and delegates it; you can
-keep talking while it runs.
-
-- **A subagent is another oi agent with its own session.** It sees only its
-  brief. A task that changes files gets its own git worktree and branch
-  (under the oi home, never inside your project), so tasks running side by
-  side, and your checkout, do not collide. A task that ends without changing
-  anything takes its worktree and branch with it (a follow-up recreates
-  them); one with work in it stays until you merge or remove it.
-- **Running work is listed above the status line**: each task and background
-  command, how long it has run, and what it is doing now.
-- **Results come back by themselves.** When a task or command finishes, the
-  agent is told and tells you what matters. If you are typing, the result
-  waits (`✉ 1 result waiting`) until you send or clear your prompt; `/inbox`
-  delivers what is waiting now. Several results arrive together as one digest.
-- **A task that needs you asks here.** A tool call a subagent needs approved
-  shows the usual prompt in your terminal, labelled with the task, and the
-  subagent waits.
-- **`/tasks`** opens a keyboard picker: ↑↓ (or Tab/Shift+Tab) move, Enter
-  opens the task's conversation, and Esc cancels. Running tasks, including
-  those waiting for approval, come first; each group is newest-created first.
-  Finished, failed and cancelled tasks stay available for viewing. The picker
-  shows each task's state and branch/directory. **`/attach <task>`** still
-  opens one directly: you watch it work and what you type goes to it.
-  **`/detach`** returns. You can also tell the agent to steer or stop a
-  task ("tell the test task to skip replay", "cancel it").
-- **Tasks outlive the terminal.** Quit or `/reload` and they keep running;
-  what finished while you were away is delivered when you come back.
-
-Slow commands work the same way without a subagent: a `bash` command that
-outlives its time limit keeps running in the background instead of being
-killed, and its result is delivered when it ends.
-
-Config: `"cheap_model": "provider/model"` is what the agent uses for
-mechanical tasks (running a suite, a rote edit); without it every task runs
-on the session's model. `"max_tasks"` (default 4) limits how many run at once.
-`"delegation": "off"` turns subagents off: the agent then does everything in
-the conversation, as before.
-`oi run` waits for the work it started unless given `--no-wait`.
-
-### Hand off work into a new thread
-
-`/handoff <query>` writes a task-focused working brief, opens a fresh session
-in the same directory, and submits your query there. For example:
-
-```text
-/handoff Implement the migration using the decisions above, then run its tests.
-```
-
-The query is kept separate from the generated brief, not rewritten by the
-summarizer. The original thread and its model context are preserved. The new
-thread stores its own brief and provenance, so resuming it from disk or Phoenix
-does not need the old thread's files. It keeps your current model and approval
-mode when opened in the running CLI.
-
-Run handoff between turns, with a nonempty query and an existing conversation.
-If summarization fails, oi stays in the source thread. A destination created
-before a crash is recoverable through `/resume`; its query and brief are durable
-spans, not an in-memory pending prompt. Opening either thread repairs a missing
-destination seed from the source's durable handoff intent, including a crash
-between header creation and seed completion. Pending handoffs run before queued
-or peer prompts. An interrupted destination turn is not
-automatically retried, because its tools may already have run. Handoff currently
-requires the slash command; natural-language trigger phrases are not detected.
-
-### From source
-
-Requires Node 26+ and pnpm.
-
-```sh
-pnpm install
-pnpm dev                   # builds the CLI and links `oi` into ~/.local/bin
-```
-
-`pnpm dev` bundles the CLI, copies the build to
-`~/.local/share/oi-agent/builds/` (keeping the last five) and links it onto
-your PATH; run it again after changing the code. Since `oi` runs a copy,
-rebuilding the repo never changes an `oi` that is already installed or
-running, and `pnpm dev` refuses to run from inside oi itself unless given
-`--force`. `bin/oi` runs the TypeScript sources directly without building.
-
-`oi` is a small launcher that starts the CLI and starts it again on
-`/reload`, keeping the session. Under `bin/oi` that means edits to the
-sources take effect without leaving the session. If they break startup, the
-launcher falls back to the last `pnpm build`.
-
-## Things to try
-
-**Look at the state.** Run a turn, then open the session folder:
-
-```
-sessions/<session-id>/
-  session.json
-  traces/<trace-id>/<start-ns>-<span-id>.json   one file per span
-  annotations/<id>.json                         evaluator results
-  inbox/<id>.json                               prompts from peers, results of background work
-```
-
-Kill the process mid-turn and run `oi -c`: the session opens from the files,
-with the turn that was cut short recorded as interrupted.
-
-**Prompt an eval into existence.** Tell the agent something like "from now on,
-always run the tests before telling me a change is done; set up a check for
-that". It writes an evaluator to
-`~/.config/oi-agent/projects/<project>/evals/`. After every later turn the
-evaluator runs, its verdict is stored as an annotation and exported to
-Phoenix, a failure is shown to the agent at the start of its next turn, and
-the failure is distilled into a standing rule in that folder's `rules.md`.
-In the terminal a failure is printed in full; passes are only counted in the
-status bar, and `/verdicts` shows every verdict on the last reviewed turn.
-A check runs only on turns it applies to: oi records when it applies
-(`writes` for observed file changes, `commit` for an observed Git commit,
-`tool:<name>`, or every turn) separately from what counts as a violation,
-and shows the trigger when it saves the check. "Open a PR after every
-commit" skips a turn spent discussing issues, without a judge call; the skip
-is recorded as `skipped`, not a pass. When oi cannot tell, the check runs.
-Nothing is written into the project itself. `/revert`
-undoes the latest rule.
-
-**Or just correct it.** No need to ask for a check: see
-[It learns from your corrections](#it-learns-from-your-corrections).
-
-Evaluators can also put a limit on something the harness measures. Each turn's
-root span records the session's size on disk (`metadata.oi_agent.session_bytes`),
-so "warn me when this conversation is larger than 100 MB" becomes a threshold
-evaluator: once the session is over the limit, the agent is told at the start
-of its next turn and warns you.
-
-**Bring your agent files.** In a project set up for other coding agents, oi
-reads the nearest `AGENTS.md`, `AGENT.md` or `CLAUDE.md` (up to the repository
-root, plus `~/.claude/CLAUDE.md` and `~/.config/AGENTS.md`) at the start of a
-session and follows it. Skills in `.agents/skills/` and `.claude/skills/`, in
-the project or your home directory, are listed by description and read in full
-only when a task calls for one.
-
-**Share a session.** `/share` opens a [tailcat](https://github.com/tailscale/tailcat)
-tunnel (`brew install tailcat`) and prints two links: one that can send
-prompts and one that is view-only. On another machine, `oi join <link>` copies
-the session and follows it live. Prompts from a peer run on the host under the
-peer's name; tool approvals stay with the host. `/share local` skips the
-tunnel for two terminals on one machine.
-
-**Ask it how it works.** oi ships with its own source code and a guide
-([docs/how-it-works.md](docs/how-it-works.md)), and it knows where the current
-session's span files are. Ask "how do you remember what I said?" or "what did
-you actually send the model just now?", or type `/tour`. It answers by reading
-its real code and the real spans from your conversation, so using it for
-ordinary work doubles as a way to learn how agents work.
-
-**Open it in Phoenix.** With the endpoint set, spans and annotations arrive as
-they are written, grouped by session, with model, token and cost data on every
-`LLM` span, including the evaluator's own model calls.
-
-**Resume it from Phoenix.** Phoenix ends up holding everything a session needs
-to continue, so any session traced there can be picked up again, on any
-machine: `oi resume <session id>`, or paste a session URL from the Phoenix UI.
-A trace URL continues from that turn instead of the latest one, forking the
-session there. The spans are written back to disk, and new turns go to the
-same Phoenix session.
-
-To save space, a session can live only in Phoenix: press Tab on it in the
-`/resume` list. Its files are deleted once Phoenix is confirmed to hold every
-span and annotation. Opening it fetches it again, and leaving moves it back
-out. A session from another machine opens with tools asking before they run,
-and the opening notes say if your checkout differs from the one it last ran
-in.
-
-## Layout
-
-| Path                     | Contents                                                                                            |
-| ------------------------ | --------------------------------------------------------------------------------------------------- |
-| `packages/engine`        | The format, span store, tracer, fold, agent loop, evaluators, Phoenix export, peer protocol. No UI. |
-| `packages/cli`           | The `oi` command and the terminal UI.                                                               |
-| `tools/oxlint/anti-slop` | Vendored lint rules ([upstream](https://github.com/dmmulroy/anti-slop)).                            |
-
-Key files in the engine, in reading order: `format.ts` (the on-disk format),
-`store.ts`, `tracer.ts` (an Effect tracer that writes span files), `fold.ts`
-(state derived from spans), `agent.ts` (the loop).
+- [Using oi](docs/how-it-works.md#using-oi): configuration, commands, approvals,
+  learning, delegation and sharing.
+- [How oi works](docs/how-it-works.md#the-one-idea): the span-based design and
+  a map to the bundled source. This guide ships with oi as `self/GUIDE.md`.
+- [Contributing](docs/how-it-works.md#contributing): run from source, checks
+  and release workflow.
+- [Design and status](PLAN.md) · [OpenInference spec gaps](docs/spec-gaps.md)
 
 ## License
 
 [MIT](LICENSE)
-
-## Development
-
-Commits on `main` follow [Conventional Commits](https://www.conventionalcommits.org).
-Pull requests are rebase-merged, so every commit on a branch lands on `main`
-and each commit message must follow the convention; titles are checked too. Releases use [Changesets](https://github.com/changesets/changesets):
-each pull request that changes something users see adds a `.changeset/*.md`
-file (`pnpm changeset`) naming the bump and a release note. On each push to
-`main`, a "version packages" pull request collects them into versions and
-`CHANGELOG.md`; merging it publishes `oi-agent` to npm with provenance,
-using the `NPM_TOKEN` repository secret, and tags a GitHub release.
-
-```sh
-pnpm dev        # build and install the `oi` command
-pnpm check      # format, lint and type-check (Vite+)
-pnpm fix        # same, applying fixes
-pnpm test       # Vitest
-pnpm e2e        # end-to-end scenarios against the real CLI (packages/e2e)
-node packages/engine/bench/resume.ts 100 4000   # disk and resume cost
-```
