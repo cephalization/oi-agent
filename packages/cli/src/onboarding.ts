@@ -383,7 +383,7 @@ export const firstTips = (config: Config): Array<string> => [
   config.phoenix.endpoint === ""
     ? "/phoenix sends every span to a Phoenix server, and logs in through your browser when auth is enabled."
     : "/phoenix changes where spans go, or logs in again; /export sends a session now.",
-  "/feedback drafts a public issue for oi to review and submit yourself.",
+  "/feedback drafts a public issue for oi for you to review and approve.",
   "/share invites someone into the session, /tour has oi explain itself from its own files, and / lists the rest of the commands.",
 ]
 

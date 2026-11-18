@@ -1,3 +1,4 @@
+import * as path from "node:path"
 import { OI, readMetadata } from "@oi-agent/engine"
 import { expect } from "vite-plus/test"
 import { scenario } from "../src/scenario.ts"
@@ -5,14 +6,32 @@ import { scenario } from "../src/scenario.ts"
 scenario(
   "feedback previews a scrubbed issue without giving the model tools or session history",
   { needs: ["rex"], config: new Map([["steering", "off"]]) },
-  async ({ tui, spans }) => {
-    const term = await tui(["--yolo"])
+  async ({ tui, spans, sandbox }) => {
+    // No real gh can be invoked by this scenario, even on a consent regression.
+    const env = new Map([["PATH", sandbox.tmp]])
+    const term = await tui(["--yolo"], { env })
 
     await term.waitFor(/^›\s*$/m)
     await term.line("/feedback")
     await term.waitFor(/issues/)
     await term.line("/share local")
-    await term.waitFor(/This session is shared/)
+    const shared = await term.waitFor(/View \(read-only\)/)
+    const links = [...shared.matchAll(/oi join (oi-share:\S+)/g)]
+
+    expect(links).toHaveLength(2)
+
+    for (const [index, link] of links.entries()) {
+      const peer = await tui(["join", link[1] ?? ""], {
+        env: new Map([...env, ["OI_AGENT_HOME", path.join(sandbox.root, `feedback-peer-${index}`)]]),
+      })
+
+      await peer.waitFor(/joined .*session as/)
+      await peer.line("/feedback Do not post")
+      await peer.waitFor(/Only the host can run \/feedback/)
+      await peer.line("/quit")
+      expect(await peer.exited()).toBe(0)
+    }
+
     await term.line("/feedback This must stay local")
     await term.waitFor(/Drafting feedback requires an unshared session/)
     await term.line("/unshare")
@@ -43,8 +62,10 @@ scenario(
     expect(draft?.output).toContain(`${process.platform}/${process.arch}`)
     expect(spans.tools(session)).toEqual([])
     await term.waitFor(/github\.com\/cephalization\/oi-agent\/issues/)
-    await term.waitFor(/gh issue create/)
     await term.waitFor(/Title: .+\nBody:/)
+    await term.waitFor(/Type POST to publish/, 10_000)
+    await term.key("esc")
+    await term.waitFor(/Not posted/)
     await term.line("Reply with just: resumed")
     await spans.settledTurns(session, 3)
 

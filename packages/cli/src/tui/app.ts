@@ -29,6 +29,7 @@ import {
   type ModelOption,
   type NewImage,
   formatBytes,
+  feedbackIssue,
   formatShareLink,
   branchTo,
   listRuleVersions,
@@ -52,6 +53,7 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
+import { FEEDBACK_DESTINATION, FEEDBACK_MANUAL, postFeedback } from "../feedback.ts"
 import { clipboardImage, droppedImages, readImage, shellWords } from "../images.ts"
 import { type Dialog, setupPhoenix } from "../phoenix-setup.ts"
 import { ProgramStatus } from "../program-status.ts"
@@ -162,9 +164,6 @@ const SHARE_ARGUMENTS: ReadonlyArray<Suggestion> = [
 const TOUR =
   "Give me a short tour of how you work, using this session as the example. Read your guide first, then show me the real files: what a turn looks like on disk, and what you actually sent the model. Keep it brief and offer where to go deeper."
 
-const FEEDBACK_REPO = "github.com/cephalization/oi-agent"
-const FEEDBACK_DESTINATION = `https://${FEEDBACK_REPO}/issues`
-
 interface Question {
   readonly label: string
   /** Shown as dots, and kept out of history. */
@@ -194,6 +193,8 @@ class App {
   private readonly transcript: Transcript
   private readonly approvals: Array<ApprovalRequest> = []
   private share: Share | undefined
+  private sharing = false
+  private feedbackActive = false
   private notice = ""
   private frame = 0
   /** This session's commands and tasks still running, as last looked at. */
@@ -928,12 +929,17 @@ class App {
 
     if (this.share !== undefined) return this.printShare(this.share)
 
+    if (this.sharing) return
+
+    this.sharing = true
     this.notice = "opening a tailcat tunnel…"
     this.draw()
 
-    const server = await servePeers(engine, sessionId)
+    let server: PeerServer | undefined
 
     try {
+      server = await servePeers(engine, sessionId)
+
       // A local share skips the tunnel: useful on one machine or a trusted network.
       const tunnel = local
         ? { value: "http://127.0.0.1", stop: () => undefined }
@@ -942,11 +948,12 @@ class App {
       this.share = { server, tunnel }
       this.printShare(this.share)
     } catch (error) {
-      await server.close()
+      await server?.close()
       this.say([error instanceof Error ? error.message : String(error)])
+    } finally {
+      this.sharing = false
+      this.notice = ""
     }
-
-    this.notice = ""
   }
 
   private printShare(share: Share): void {
@@ -1641,6 +1648,10 @@ class App {
     this.done(this.options.engine?.createSession(process.cwd()).id)
   }
 
+  private get feedbackIsPrivate(): boolean {
+    return !this.sharing && this.share === undefined && this.options.phoenix?.exporter === undefined
+  }
+
   private async feedback(description: string): Promise<void> {
     const { engine, sessionId, user } = this.options
 
@@ -1648,38 +1659,69 @@ class App {
       return this.say([
         "Usage: /feedback <short description of the bug or suggestion>",
         "Do not include personal details, secrets, or logs. Drafting uses your configured model and is recorded in this session.",
-        `To file manually instead, use ${FEEDBACK_DESTINATION}.`,
+        FEEDBACK_MANUAL,
       ])
 
     if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
 
     if (engine === undefined) return
 
-    if (this.share !== undefined || this.options.phoenix?.exporter !== undefined)
+    if (!this.feedbackIsPrivate)
       return this.say([
         "Drafting feedback requires an unshared session with Phoenix export off.",
-        `To file manually instead, use ${FEEDBACK_DESTINATION}.`,
+        FEEDBACK_MANUAL,
       ])
 
-    this.say([
-      `Public issue destination: ${FEEDBACK_DESTINATION}`,
-      "Review the exact title and body below for private details. oi does not post issues for you.",
-      `If gh is available and signed in, run gh issue create --repo ${FEEDBACK_REPO} in your terminal and paste the draft.`,
-      "Otherwise, choose New issue at the destination above and paste it there. Submit only if you approve the final content.",
-    ])
+    this.feedbackActive = true
 
-    const previous = this.from
+    try {
+      this.say([
+        `Public issue destination: ${FEEDBACK_DESTINATION}`,
+        "Review the title and body below for private details. Nothing is posted without your confirmation.",
+      ])
 
-    this.from = undefined
+      const previous = this.from
 
-    const outcome = await engine.submit(sessionId, {
-      text: description,
-      userId: user,
-      previous,
-      operation: "feedback",
-    })
+      this.from = undefined
 
-    if (!outcome.ok && !outcome.interrupted) this.say([outcome.message])
+      const outcome = await engine.submit(sessionId, {
+        text: description,
+        userId: user,
+        previous,
+        operation: "feedback",
+      })
+
+      if (!outcome.ok) {
+        if (!outcome.interrupted) this.say([FEEDBACK_MANUAL])
+
+        return
+      }
+
+      // Transcript has rendered this same outcome as plain content. Never restore a pending
+      // confirmation from history or accept it as an agent prompt or tool approval.
+      const issue = feedbackIssue(outcome.result.output)
+
+      if (issue === undefined || !this.feedbackIsPrivate) return this.say(["Not posted.", FEEDBACK_MANUAL])
+
+      const consent = await this.ask("Type POST to publish this preview (default: no)", false)
+
+      if (consent !== "POST" || !this.feedbackIsPrivate) return this.say(["Not posted."])
+
+      this.say(["Posting feedback with gh…"])
+
+      const result = await postFeedback(issue)
+
+      if (result.status === "posted") return this.say([`Issue posted: ${result.url}`])
+
+      this.say([
+        result.status === "missing"
+          ? "GitHub CLI (gh) was not found. Nothing was posted."
+          : "Could not confirm posting with gh. Check GitHub before retrying to avoid a duplicate.",
+        FEEDBACK_MANUAL,
+      ])
+    } finally {
+      this.feedbackActive = false
+    }
   }
 
   private async command(text: string): Promise<void> {
@@ -1842,6 +1884,8 @@ class App {
   }
 
   private submit(text: string): void {
+    if (this.feedbackActive) return this.say(["Feedback is in progress."])
+
     const { engine, peer, sessionId, user } = this.options
 
     if (text.startsWith("/")) {
@@ -2271,6 +2315,7 @@ class App {
 
     const { next } = exit
 
+    this.question?.answer(undefined)
     clearInterval(ticker)
     process.stdin.off("data", onData)
     process.stdout.off("resize", onResize)

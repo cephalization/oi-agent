@@ -77,7 +77,7 @@ export const COMMANDS: ReadonlyArray<Command> = [
   },
   {
     name: "/feedback",
-    summary: "draft a public issue for oi without posting it",
+    summary: "draft a public issue for oi and ask before posting",
     argument: { name: "description", required: false },
     hostOnly: true,
   },

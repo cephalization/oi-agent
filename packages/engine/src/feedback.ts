@@ -15,6 +15,29 @@ export const scrubFeedback = (text: string): string =>
     .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email removed]")
     .replace(/(?:\/(?:Users|home)\/|[A-Z]:\\Users\\)[^\s,;"'<>`]+/gi, "[path removed]")
 
+export interface FeedbackIssue {
+  readonly title: string
+  readonly body: string
+}
+
+/** Do not let a model-provided terminal or bidi control change what a person sees. */
+const safePayload = (issue: FeedbackIssue): boolean =>
+  issue.title.length <= 256 &&
+  issue.body.length <= 4000 &&
+  !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(`${issue.title}${issue.body.replaceAll("\n", "")}`)
+
+/** Parse the canonical preview without altering the bytes that will be sent to GitHub. */
+export const feedbackIssue = (preview: string): FeedbackIssue | undefined => {
+  const match = /^Title: ([^\n]+)\nBody:\n([\s\S]+)$/.exec(preview)
+  const [, title, body] = match ?? []
+
+  if (title === undefined || body === undefined || title.trim() === "" || body.trim() === "") return undefined
+
+  const issue = { title, body }
+
+  return safePayload(issue) ? issue : undefined
+}
+
 /** The model supplies only prose. Runtime details come from this fixed allowlist, not tools. */
 export const feedbackDraft = (reply: string): string | undefined => {
   // Accept whitespace and an inline Body value, but require both labeled fields.
@@ -27,5 +50,7 @@ export const feedbackDraft = (reply: string): string | undefined => {
 
   if (title === "" || body === "") return undefined
 
-  return `Title: ${title}\nBody:\n${body}\n\nRuntime: Node.js ${process.version} · ${process.platform}/${process.arch}`
+  const preview = `Title: ${title}\nBody:\n${body}\n\nRuntime: Node.js ${process.version} · ${process.platform}/${process.arch}`
+
+  return feedbackIssue(preview) === undefined ? undefined : preview
 }
