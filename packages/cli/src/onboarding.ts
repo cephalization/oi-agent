@@ -30,7 +30,8 @@ import { ask, askSecret, askUntil, choose, confirm, say } from "./prompts.ts"
 import { Providers } from "./providers.ts"
 import { style, wrap } from "./tui/ansi.ts"
 
-const MODELS: ReadonlyArray<{ value: string; label: string; hint?: string }> = [
+// Higher versions first; keep the curated order for models at the same version.
+const ANTHROPIC_MODELS: ReadonlyArray<{ value: string; label: string; hint?: string }> = [
   {
     value: "claude-opus-5-5",
     label: "Claude Opus 5.5",
@@ -180,21 +181,29 @@ const steeringStep = async (
   if (steering === "off") return { steering, steering_model: current.steering_model }
 
   const options = [
-    { value: agentModel, label: `The agent's model, ${agentModel}`, hint: "no extra key" },
-    { value: HAIKU, label: "Claude Haiku 5.5", hint: "measured for this; needs an Anthropic key" },
+    {
+      value: agentModel,
+      label: `The agent's model, ${agentModel}`,
+      hint: "Use the same model. No extra API key.",
+    },
+    {
+      value: HAIKU,
+      label: "Claude Haiku 5.5",
+      hint: "Low-cost option. Needs an Anthropic API key.",
+    },
     {
       value: JEV,
       label: "TypeSafe Jev decision model",
       hint: "cheap screen per message; needs a TypeSafe key",
     },
-    { value: "", label: "Another model (provider/model)" },
+    { value: "", label: "Another model", hint: "Enter the provider and model ID yourself." },
   ]
 
   if (current.steering_model !== "" && !options.some((option) => option.value === current.steering_model))
     options.splice(options.length - 1, 0, {
       value: current.steering_model,
       label: current.steering_model,
-      hint: "current steering model",
+      hint: "Your current model for checking corrections.",
     })
 
   const fallback = getSecret("anthropic") !== undefined ? HAIKU : agentModel
@@ -289,8 +298,6 @@ const compatibleStep = async (current: Config, providers: Providers): Promise<st
   }
 }
 
-const ANTHROPIC_MODELS = MODELS
-
 /** Choose among a provider's listed models, or type one. */
 const listedModelStep = async (
   current: string,
@@ -306,7 +313,11 @@ const listedModelStep = async (
 
   if (ids.length === 0) return ask("Model id", current)
 
-  const shown = ids.slice(0, 14)
+  // Compare digit runs as numbers (5.10 before 5.6), just for the setup menu.
+  // Keep the configured model selectable even if it falls below the menu's cutoff.
+  const shown = ids
+    .toSorted((a, b) => b.localeCompare(a, "en", { numeric: true }))
+    .filter((id, index) => index < 14 || id === current)
 
   const picked = await choose(
     "Which model?",
@@ -440,13 +451,13 @@ export const runOnboarding = async (): Promise<Config> => {
   const approvals = await choose(
     "Before running a tool that changes your machine:",
     [
-      { value: "ask" as const, label: "Ask me each time", hint: "recommended" },
+      { value: "allow" as const, label: "Just run it" },
       {
         value: "auto" as const,
         label: "Let a decision model approve safe ones",
         hint: "TypeSafe Jev; you approve the rest",
       },
-      { value: "allow" as const, label: "Just run it" },
+      { value: "ask" as const, label: "Ask me each time" },
     ],
     current.approvals,
   )
