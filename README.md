@@ -24,7 +24,8 @@ Or try it without installing: `npx oi-agent`.
 
 Ask it to explain some code, fix a bug, or run your tests. Tools ask for
 approval by default. Type `/` for commands, use `oi -c` to continue your latest
-session, and run `oi setup` to change your provider or settings.
+session, and run `oi setup` to change your provider or settings. You can type
+while it works, and Enter says it to the turn that is running.
 
 ## What you can do
 
@@ -39,6 +40,8 @@ session, and run `oi setup` to change your provider or settings.
   later work, with feedback and reversible learned rules.
 - **Pick up and share work.** Resume from disk or Phoenix, compact context,
   hand off to a new thread, or invite someone to a live session.
+- **Send traces to Phoenix.** `/phoenix` picks the server, and logs in through
+  your browser if it asks for a login.
 - **Look inside.** Inspect every model and tool call. oi ships with its own
   source and guide; ask how it works or try `/tour`.
 
