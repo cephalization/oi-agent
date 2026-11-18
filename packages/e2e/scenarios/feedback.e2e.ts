@@ -1,3 +1,4 @@
+import * as fs from "node:fs"
 import * as path from "node:path"
 import { OI, readMetadata } from "@oi-agent/engine"
 import { expect } from "vite-plus/test"
@@ -8,6 +9,17 @@ scenario(
   { needs: ["rex"], config: new Map([["steering", "off"]]) },
   async ({ tui, spans, sandbox }) => {
     // No real gh can be invoked by this scenario, even on a consent regression.
+    // Keep the provider's keychain lookup working with that restricted PATH.
+    const keychain = process.platform === "darwin" ? "security" : "secret-tool"
+
+    const lookup = (sandbox.env().get("PATH") ?? "")
+      .split(path.delimiter)
+      .filter(path.isAbsolute)
+      .map((dir) => path.join(dir, keychain))
+      .find(fs.existsSync)
+
+    if (lookup !== undefined) fs.symlinkSync(lookup, path.join(sandbox.tmp, keychain))
+
     const env = new Map([["PATH", sandbox.tmp]])
     const term = await tui(["--yolo"], { env })
 
