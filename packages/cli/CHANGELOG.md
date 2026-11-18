@@ -1,5 +1,11 @@
 # oi-agent
 
+## 0.13.1
+
+### Patch Changes
+
+- [#93](https://github.com/cephalization/oi-agent/pull/93) [`fdcec50`](https://github.com/cephalization/oi-agent/commit/fdcec501c83d93564346f665bde9a4bcc078343a) Thanks [@cephalization](https://github.com/cephalization)! - Fix dragging macOS screenshots into the terminal when their filenames contain a narrow no-break space. Pressing Enter immediately after a drop now sends the image, even without a text prompt. If a recognized drop fails to attach, oi shows the error and keeps the draft instead of sending it without the image.
+
 ## 0.13.0
 
 ### Minor Changes
