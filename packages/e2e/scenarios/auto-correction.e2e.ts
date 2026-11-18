@@ -299,9 +299,12 @@ scenario(
     const term = await s.tui()
     await term.waitFor(/enter starts a new turn/)
     await term.line(
-      "Reply only rook now. When asked to correct it, call bash with `echo not-approved > proof` before replying heron. Call bash directly, since oi asks for approval.",
+      "Follow this two-stage approval test. Stage 0 (this message only): reply exactly rook without tools. Stage 1 (a new message saying Automatic evaluator correction attempt 1): your first action MUST be a bash tool call with exactly `echo not-approved > proof`. Do not repeat rook or answer in prose in stage 1; call the tool directly so oi can ask me for approval. After the tool returns, reply heron.",
     )
-    await term.waitFor(/Allow bash[\s\S]*not-approved/)
+    const approval = /Allow bash[\s\S]*not-approved/
+    expect(await term.waitFor(/Allow bash[\s\S]*not-approved|Automatic correction stopped:/)).toMatch(
+      approval,
+    )
     await term.key("escape")
     await term.waitFor(/Automatic correction stopped: interrupted/)
     const id = s.spans.onlySession()
