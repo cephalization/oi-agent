@@ -14,9 +14,9 @@ import { fileURLToPath } from "node:url"
 import { imageTypeOf, MAX_IMAGE_BYTES, type NewImage } from "@oi-agent/engine"
 
 /**
- * Split pasted text the way a shell would: spaces separate, and a backslash,
- * single quotes or double quotes keep a space inside a word. Terminals
- * disagree on which they use for a dropped path, so all three are read.
+ * Split dropped paths on shell blanks and line breaks, not Unicode whitespace
+ * (macOS screenshot names contain a narrow no-break space). Terminals quote
+ * or escape paths in different ways, so accept all three forms.
  */
 export const shellWords = (text: string): Array<string> => {
   const words: Array<string> = []
@@ -37,7 +37,7 @@ export const shellWords = (text: string): Array<string> => {
     } else if (char === "\\" && index + 1 < text.length) {
       word += text[(index += 1)] ?? ""
       started = true
-    } else if (/\s/.test(char)) {
+    } else if (/[ \t\r\n]/.test(char)) {
       if (started || word !== "") words.push(word)
 
       word = ""
@@ -94,9 +94,9 @@ const looksLikeImage = (file: string): boolean => {
  */
 export const droppedImages = (pasted: string, cwd: string): Array<string> | undefined => {
   // A path is short. Prose that happens to be long is not worth splitting into words and stat-ing each.
-  if (pasted.trim() === "" || pasted.length > 8192) return undefined
+  if (pasted.length > 8192) return undefined
 
-  const files = shellWords(pasted.trim()).map((word) => toPath(word, cwd))
+  const files = shellWords(pasted).map((word) => toPath(word, cwd))
 
   return files.length > 0 && files.every((file) => file !== undefined && looksLikeImage(file))
     ? files.flatMap((file) => file ?? [])

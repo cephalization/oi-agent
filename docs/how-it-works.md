@@ -129,7 +129,11 @@ tracker before retrying to avoid a duplicate.
 To show the agent an image, drop the file on the terminal: PNG, JPEG, GIF or
 WebP, several at once if you like. A terminal pastes a dropped file's path, and
 oi takes a paste that is nothing but image files as attachments instead of
-text. Ctrl+V attaches an image from the clipboard (a screenshot taken to the
+text, including macOS screenshot paths with narrow no-break spaces. You can
+press Enter immediately after a drop, even with no text in the prompt. If
+oi recognizes the image files but cannot attach them, it shows why and stops
+the immediate send. Use `/image <path>` for a file oi did not recognize.
+Ctrl+V attaches an image from the clipboard (a screenshot taken to the
 clipboard has no file to drop), and `/image <path>` attaches one by name. What
 is attached is listed above the prompt and goes with your next message,
 whether that starts a turn, steers the running one or waits in the queue;
@@ -1053,9 +1057,11 @@ These work best on the session you are in, because the evidence is right there.
   conversation; that is the disk cost noted under "Status" in PLAN.md, and
   images make it larger.
   In the terminal, `droppedImages` (`source/cli/src/images.ts`) recognizes a
-  paste that is only image paths, `clipboardImage` reads the clipboard with
-  `osascript`, `wl-paste` or `xclip`, and the editor hands a finished paste
-  to the application before inserting it (`Editor.onPaste`).
+  paste that is only image paths. Its shell-style path splitting preserves
+  Unicode spaces in filenames. `clipboardImage` reads the clipboard with
+  `osascript`, `wl-paste` or `xclip`. The editor hands a finished paste to the
+  application (`Editor.onPaste`) before processing any keys after it, so
+  Enter can send the image even if both arrive in one input chunk.
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge. Drivers send

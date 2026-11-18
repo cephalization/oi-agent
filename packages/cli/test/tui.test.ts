@@ -95,6 +95,35 @@ describe("editor", () => {
     expect(editor.text).toBe("see plain text")
   })
 
+  it.each([0, 1, 2, 3, 4, 5, 6])(
+    "submits after taking a paste with %i bytes of the end marker in the first chunk",
+    (split) => {
+      const editor = new Editor()
+      const pastes: Array<string> = []
+      const end = "\u001B[201~"
+
+      editor.onPaste = (text) => {
+        pastes.push(text)
+
+        return ""
+      }
+
+      expect(editor.feed(`see \u001B[200~/tmp/shot.png${end.slice(0, split)}`)).toEqual({ type: "redraw" })
+      expect(editor.feed(`${end.slice(split)}\r`)).toEqual({ type: "submit", text: "see" })
+      expect(pastes).toEqual(["/tmp/shot.png"])
+    },
+  )
+
+  it("inserts a pasted command-like escape literally, then handles subsequent input as keys", () => {
+    const editor = new Editor()
+
+    editor.feed("\u001B[200~text\u001B[116;5u")
+    expect(editor.feed("\u001B[201~\u001B[13;2unext\r")).toEqual({
+      type: "submit",
+      text: "text\u001B[116;5u\nnext",
+    })
+  })
+
   it("normalizes modified-key shortcuts without changing Shift+Enter", () => {
     expect(normalizeKeys("\u001B[116;5u")).toBe("\u0014")
     expect(normalizeKeys("\u001B[9;2u")).toBe("\u001B[Z")
@@ -493,6 +522,17 @@ describe("images dropped on the terminal", () => {
     expect(droppedImages(path.join(dir, "liar.png"), dir)).toBeUndefined()
     expect(droppedImages(`${plain} ${path.join(dir, "missing.png")}`, dir)).toBeUndefined()
     expect(droppedImages(dir, dir)).toBeUndefined()
+  })
+
+  it("preserves Unicode filename spaces in an escaped macOS screenshot drop", () => {
+    const screenshot = path.join(dir, "Screenshot 2026-11-18 at 1.54.09\u202FPM.png")
+    const plain = path.join(dir, "plain.png")
+    const escaped = screenshot.replaceAll(" ", String.raw`\ `)
+
+    fs.writeFileSync(screenshot, pngBytes)
+    expect(droppedImages(escaped, dir)).toEqual([screenshot])
+    expect(droppedImages(`${escaped}\t'${plain}'\r\n`, dir)).toEqual([screenshot, plain])
+    expect(droppedImages(`look at ${escaped}`, dir)).toBeUndefined()
   })
 
   it("reads an image for attaching, or says why it cannot", () => {

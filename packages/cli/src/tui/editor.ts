@@ -48,6 +48,13 @@ export class Editor {
    */
   onPaste: (text: string) => string = (text) => text
 
+  /** The app may allow an empty line (e.g. with attachments) or stop a failed drop from sending. */
+  canSubmit: (text: string) => boolean = (text) => text !== ""
+
+  get inPaste(): boolean {
+    return this.pasting
+  }
+
   get text(): string {
     return this.buffer
   }
@@ -116,12 +123,12 @@ export class Editor {
   private submit(): EditorAction {
     const text = this.buffer.trim()
 
+    if (!this.canSubmit(text)) return { type: "redraw" }
+
     this.buffer = ""
     this.position = 0
 
-    if (text === "") return { type: "redraw" }
-
-    if (this.history.at(-1) !== text) this.history.push(text)
+    if (text !== "" && this.history.at(-1) !== text) this.history.push(text)
 
     this.historyIndex = this.history.length
     this.draft = ""
@@ -167,36 +174,48 @@ export class Editor {
     return { type: "redraw" }
   }
 
-  /** Feed raw terminal input. Returns what the application should do. */
-  feed(raw: string): EditorAction {
-    const data = this.pasting || raw.includes(PASTE_START) ? raw : normalizeKeys(raw)
-
-    if (this.pasting || data.includes(PASTE_START)) {
-      const start = data.indexOf(PASTE_START)
-      const end = data.indexOf(PASTE_END)
-      const from = start === -1 ? 0 : start + PASTE_START.length
-
-      // Held until the paste ends: a path split across chunks must be read whole.
-      this.pasted += data.slice(from, end === -1 ? undefined : end)
-      this.pasting = end === -1
-
-      if (!this.pasting) {
-        this.insert(this.onPaste(this.pasted).replaceAll("\r", "\n"))
-        this.pasted = ""
-      }
-
-      return { type: "redraw" }
-    }
-
-    // A chunk can carry several keys (fast typing, or text followed by enter).
-    let action: EditorAction = { type: "redraw" }
-
-    for (const key of data.match(KEYS) ?? []) {
-      action = this.key(key)
+  private keys(data: string): EditorAction {
+    for (const key of normalizeKeys(data).match(KEYS) ?? []) {
+      const action = this.key(key)
 
       if (action.type !== "redraw") return action
     }
 
-    return action
+    return { type: "redraw" }
+  }
+
+  /** Feed raw terminal input, keeping keys outside a paste in their original order. */
+  feed(raw: string): EditorAction {
+    let data = raw
+
+    while (this.pasting || data.includes(PASTE_START)) {
+      if (!this.pasting) {
+        const start = data.indexOf(PASTE_START)
+        const action = this.keys(data.slice(0, start))
+
+        if (action.type !== "redraw") return action
+
+        data = data.slice(start + PASTE_START.length)
+        this.pasting = true
+      }
+
+      // Search across the chunk boundary, including a partial end marker.
+      const from = Math.max(0, this.pasted.length - PASTE_END.length + 1)
+
+      this.pasted += data
+
+      const end = this.pasted.indexOf(PASTE_END, from)
+
+      if (end === -1) return { type: "redraw" }
+
+      const pasted = this.pasted.slice(0, end)
+
+      data = this.pasted.slice(end + PASTE_END.length)
+      this.pasted = ""
+      this.pasting = false
+      this.insert(this.onPaste(pasted).replaceAll("\r", "\n"))
+    }
+
+    return this.keys(data)
   }
 }
