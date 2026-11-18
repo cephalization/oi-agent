@@ -127,6 +127,10 @@ reviewed turn's results. Each learned check records its origin turn; steering
 traces explain both learned and ignored corrections. Phoenix also receives
 these traces and annotations when connected.
 
+A correction you type while the agent is working counts too: "no, use pnpm"
+or "do not push" said mid-turn is weighed by auto approvals from the next tool
+call on, judged by your checks, and can be learned like any other message.
+
 `oi setup` asks whether to learn and which model should read your messages.
 Set `"steering_model": "provider/model"` to use any configured provider,
 including ChatGPT or a local server. Unset or empty uses the judge model with
@@ -585,7 +589,14 @@ These work best on the session you are in, because the evidence is right there.
   if another process builds it after a crash; later calls of the turn carry
   it in their stored request body. If the turn ends before reading it, the
   entry is still pending, and the inbox drain that follows every turn runs
-  it as an ordinary next turn; the terminal says that happened. A queued
+  it as an ordinary next turn; the terminal says that happened. A steering
+  message counts as something you said in that turn for everything that
+  reads the turn, not only for the agent: the approval decider sees it for
+  every tool call made after it (`renderSaid` in `source/engine/src/fold.ts`),
+  evaluators see it in the transcript between the calls it was said between
+  and in `input.said_while_working` (`turnRecord` in
+  `source/engine/src/evals.ts`), and steering detection reads it as a
+  message of its own (see "How do you learn from my corrections?"). A queued
   prompt is a plain inbox entry (`Engine.queue`): the running turn never
   sees it, it runs after, in the order sent, and it survives quitting:
   leaving a session stops its turn without starting what is queued
@@ -707,7 +718,11 @@ These work best on the session you are in, because the evidence is right there.
   `durable` or `one-off`, with the confidence as score); the terminal shows
   only `learned` ones (`shownInTerminal`). Each detection is also an
   `EVALUATOR` trace with the prompt as input and the verdict as output, so
-  you can read why it did or did not learn something. `steering_model` can
+  you can read why it did or did not learn something. A message you give to
+  a running turn is read the same way, in a detection of its own (`heardIn`):
+  its context is the running turn as it stood when you said it, not the turn
+  before, and a turn steered twice gets a detection for the prompt and one
+  for each message, in order. `steering_model` can
   name any configured `provider/model`, or `decision:<model>`: the latter
   calls System One to screen each prompt, then the judge model (or the
   agent's own model) writes an evaluator only for a durable correction.
@@ -726,7 +741,9 @@ These work best on the session you are in, because the evidence is right there.
   `decision.ts`): dangerous deletes, force pushes, sudo, discarding work and
   file writes outside the working directory always ask. Then `askDecision`
   calls the configured System One endpoint with the tool, input, working
-  directory, current user prompt and learned project rules. Four Nouls
+  directory, current user prompt (with anything said to the turn before
+  this call, marked as said while the agent was working) and learned project
+  rules. Four Nouls
   assess irreversible damage, effects outside the workspace, secrets, and
   whether the user requested it. Requested read-only service queries and
   normal authentication are not counted as external changes or secret

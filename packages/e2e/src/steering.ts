@@ -5,7 +5,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { parser, projectDir } from "@oi-agent/engine"
+import { kindOf, parser, projectDir } from "@oi-agent/engine"
 import { Schema } from "effect"
 import { expectOk, type Sample } from "./scenario.ts"
 
@@ -95,6 +95,34 @@ export const ONE_OFF: ReadonlyArray<Case> = [
   },
 ]
 
+/**
+ * Corrections given while the turn they correct is running (issue #62).
+ * `setup` is what the agent was asked to do after a command that waits, and
+ * `steer` is said while it waits, so the agent has not yet done the thing
+ * being corrected.
+ */
+export const MID_TURN_DURABLE: ReadonlyArray<Case> = [
+  {
+    setup: "tell me what command installs this project's dependencies. Reply with just the command.",
+    steer: "we use pnpm in this project, never npm. keep that in mind from here on.",
+  },
+  {
+    setup: "add a one-line comment above greet in src/greet.js.",
+    steer: "actually no, don't add comments to my code, ever. I keep it uncommented.",
+  },
+]
+
+export const MID_TURN_ONE_OFF: ReadonlyArray<Case> = [
+  {
+    setup: "suggest a new name for the greet function. Reply with just the name.",
+    steer: "call it sayHello for this change.",
+  },
+  {
+    setup: "say what src/greet.js exports, in one sentence.",
+    steer: "just the function name is enough this time.",
+  },
+]
+
 /** Evaluator files for this project and the user, by name. */
 const evalFiles = (s: Sample): Array<string> => {
   const env = { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }
@@ -131,22 +159,20 @@ const describe = (file: string): Learned => {
   }
 }
 
-/** Run one case in a fresh session; return the evaluators it created, then remove them unless `retain`. */
-export const learned = async (s: Sample, entry: Case, retain = false): Promise<Array<Learned>> => {
+/** Run `body` and return the evaluators it left behind, removing them afterwards unless `retain`. */
+const evaluatorsFrom = async (
+  s: Sample,
+  retain: boolean,
+  body: () => Promise<void>,
+): Promise<Array<Learned>> => {
   // Rules learned in an earlier case go into every later system prompt: start each case without them.
   fs.rmSync(path.join(projectDir(s.sandbox.cwd, { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }), "rules.md"), {
     force: true,
   })
 
   const before = new Set(evalFiles(s))
-  const first = await s.run(["run", entry.setup])
 
-  expectOk(first)
-
-  const session = s.spans.sessions().at(-1) ?? ""
-  const second = await s.run(["run", "-s", session, entry.steer])
-
-  expectOk(second)
+  await body()
 
   const files = evalFiles(s).filter((file) => !before.has(file))
   const created = files.map(describe)
@@ -155,3 +181,53 @@ export const learned = async (s: Sample, entry: Case, retain = false): Promise<A
 
   return created
 }
+
+/** Run one case in a fresh session; return the evaluators it created, then remove them unless `retain`. */
+export const learned = (s: Sample, entry: Case, retain = false): Promise<Array<Learned>> =>
+  evaluatorsFrom(s, retain, async () => {
+    expectOk(await s.run(["run", entry.setup]))
+
+    const session = s.spans.sessions().at(-1) ?? ""
+
+    expectOk(await s.run(["run", "-s", session, entry.steer]))
+  })
+
+/** A command that runs until the case lets it go, so the turn is certainly running when it is steered. */
+const GATE = "go"
+const GATED = `until [ -f ${GATE} ]; do sleep 0.2; done; echo gate-opened`
+
+/**
+ * Run one case with the correction given to the running turn: start a turn
+ * that waits in a command, say `steer` to it as the terminal's Enter does (an
+ * inbox entry that steers), then let the command finish.
+ */
+export const learnedMidTurn = (s: Sample, entry: Case, retain = false): Promise<Array<Learned>> =>
+  evaluatorsFrom(s, retain, async () => {
+    const earlier = new Set(s.spans.sessions())
+    const gate = path.join(s.sandbox.cwd, GATE)
+
+    fs.rmSync(gate, { force: true })
+
+    // Nobody answers approvals in `oi run`, and the waiting command needs one.
+    const running = s.run([
+      "run",
+      "--yolo",
+      `Call the bash tool now with exactly the command \`${GATED}\` and no other arguments. When it finishes, ${entry.setup}`,
+    ])
+
+    try {
+      const session = await s.spans.waitFor("the case's session", () =>
+        s.spans.sessions().find((id) => !earlier.has(id)),
+      )
+
+      await s.spans.waitFor("the waiting command to be running", () =>
+        s.spans.open(session).find((span) => kindOf(span) === "TOOL"),
+      )
+      s.spans.store.writeInbox(session, { user_id: "e2e", text: entry.steer, steers: true })
+    } finally {
+      fs.writeFileSync(gate, "")
+    }
+
+    expectOk(await running)
+    fs.rmSync(gate, { force: true })
+  })

@@ -12,7 +12,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { Effect, Match, Option, Schema } from "effect"
 import { projectDir } from "./config.ts"
-import { branchTo, loadSession, type TurnSummary } from "./fold.ts"
+import { branchTo, loadSession, renderSaid, SAID_MID_TURN, type TurnSummary } from "./fold.ts"
 import {
   type AnnotationBody,
   type AnnotationFile,
@@ -29,7 +29,7 @@ import {
 } from "./format.ts"
 import { newId, newSpanId, nowNs, nsToIso } from "./ids.ts"
 import { addRule, readRules } from "./rules.ts"
-import type { Store } from "./store.ts"
+import type { Store, TraceFiles } from "./store.ts"
 import { truncate } from "./tools.ts"
 import { diskTracer } from "./tracer.ts"
 import type { Detector } from "./steering.ts"
@@ -263,25 +263,113 @@ export const formatBytes = (bytes: number): string => {
   return bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : `${(bytes / 1e9).toFixed(2)} GB`
 }
 
+/** Told to a judge only about a turn its person steered. */
+const STEERED_FACT =
+  " The user said more while the agent was working (input.said_while_working, and marked in a transcript). Each message is an instruction from the user that binds the agent from the point it was given: after_calls is how many of the turn's tool calls had already been made by then, and those earlier calls cannot have gone against it."
+
+/** A turn's spans, as its record reads them. */
+interface TurnSpans {
+  readonly trace: TraceFiles
+  readonly root: EndedSpan | undefined
+  /** Evaluators judge the work, not their own creation: a `create_eval` call holds the very pattern it forbids. */
+  readonly tools: ReadonlyArray<EndedSpan>
+}
+
+const turnSpans = (store: Store, sessionId: string, traceId: string): TurnSpans => {
+  const trace = store.readTrace(sessionId, traceId)
+
+  return {
+    trace,
+    root: trace.ended.find((span) => span.parent_id === null),
+    tools: trace.ended.filter(
+      (span) => kindOf(span) === "TOOL" && stringAttr(span, OI.TOOL_NAME) !== "create_eval",
+    ),
+  }
+}
+
+/** A message given to the turn while it ran, placed among its tool calls. */
+interface SaidMidTurn {
+  readonly text: string
+  /** How many of the turn's tool calls had been made when the agent was given it. */
+  readonly after_calls: number
+}
+
+/**
+ * Where each steering message falls in the turn. A message follows a model
+ * call's tool results and is read by the next model call, so every tool that
+ * started before that next call came first.
+ */
+const saidMidTurn = ({ trace, root, tools }: TurnSpans): Array<SaidMidTurn> => {
+  const steered = root === undefined ? [] : (readMetadata(root).steered ?? [])
+
+  if (steered.length === 0) return []
+
+  const calls = trace.ended
+    .filter((span) => kindOf(span) === "LLM")
+    .toSorted((left, right) => left.start_time.localeCompare(right.start_time))
+
+  return steered.map((entry) => {
+    const followed = calls.findIndex((call) => call.context.span_id === entry.after)
+    const reader = followed === -1 ? undefined : calls[followed + 1]
+
+    return {
+      text: entry.text,
+      // No later model call: the turn was stopped before the message was read, after everything it did.
+      after_calls:
+        reader === undefined
+          ? tools.length
+          : tools.filter((tool) => tool.start_time < reader.start_time).length,
+    }
+  })
+}
+
+const stepOf = (tool: EndedSpan): string =>
+  `[tool call] ${tool.name} ${stringAttr(tool, OI.INPUT_VALUE) ?? ""}\n[tool result] ${truncate(stringAttr(tool, OI.OUTPUT_VALUE) ?? "", 2000)}`
+
+/** The turn as lines of a transcript, up to but not including the agent's answer. */
+const turnLines = (spans: TurnSpans, said: ReadonlyArray<SaidMidTurn>, upTo = said.length): Array<string> => {
+  const input = spans.root === undefined ? "" : (stringAttr(spans.root, OI.INPUT_VALUE) ?? "")
+  const heard = said.slice(0, upTo)
+  const tools = upTo === said.length ? spans.tools : spans.tools.slice(0, said[upTo]?.after_calls)
+
+  const saidAfter = (count: number): Array<string> =>
+    heard.flatMap((entry) => (entry.after_calls === count ? [`${SAID_MID_TURN} ${entry.text}`] : []))
+
+  return [
+    `[user] ${input}`,
+    ...saidAfter(0),
+    ...tools.flatMap((tool, index) => [stepOf(tool), ...saidAfter(index + 1)]),
+  ]
+}
+
+/** A message said to a running turn, with the turn as it stood when the message was given. */
+export interface MidTurnMessage {
+  readonly text: string
+  readonly before: string
+}
+
+/** What was said to a turn while it ran, each with the transcript the person was reacting to. */
+export const midTurnMessages = (store: Store, sessionId: string, traceId: string): Array<MidTurnMessage> => {
+  const spans = turnSpans(store, sessionId, traceId)
+  const said = saidMidTurn(spans)
+
+  return said.map((entry, index) => ({
+    text: entry.text,
+    before: turnLines(spans, said, index).join("\n\n"),
+  }))
+}
+
 /** A turn rendered as text, from its spans. */
 export const turnRecord = (store: Store, sessionId: string, traceId: string): TurnRecord => {
-  const trace = store.readTrace(sessionId, traceId)
-  const root = trace.ended.find((span) => span.parent_id === null)
+  const spans = turnSpans(store, sessionId, traceId)
+  const { root, tools } = spans
+  const said = saidMidTurn(spans)
 
-  // Evaluators judge the work, not their own creation: a `create_eval` call holds the very pattern it forbids.
-  const tools = trace.ended.filter(
-    (span) => kindOf(span) === "TOOL" && stringAttr(span, OI.TOOL_NAME) !== "create_eval",
-  )
-
-  const input = root === undefined ? "" : (stringAttr(root, OI.INPUT_VALUE) ?? "")
+  const prompt = root === undefined ? "" : (stringAttr(root, OI.INPUT_VALUE) ?? "")
+  const input = renderSaid(prompt, said)
   const output = root === undefined ? "" : (stringAttr(root, OI.OUTPUT_VALUE) ?? "")
   const calls = tools.map((span) => `${span.name} ${stringAttr(span, OI.INPUT_VALUE) ?? ""}`)
   const results = tools.map((span) => stringAttr(span, OI.OUTPUT_VALUE) ?? "")
-
-  const steps = tools.map(
-    (span, index) =>
-      `[tool call] ${calls[index] ?? ""}\n[tool result] ${truncate(results[index] ?? "", 2000)}`,
-  )
 
   const sessionBytes =
     (root === undefined ? undefined : readMetadata(root).session_bytes) ?? store.sessionBytes(sessionId)
@@ -306,7 +394,12 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
   const judged = JSON.stringify(
     {
       current_turn: { session_id: sessionId, trace_id: traceId },
-      input: { role: (metadata?.delivers?.length ?? 0) > 0 ? "delivered_results" : "prompt", text: input },
+      input: {
+        role: (metadata?.delivers?.length ?? 0) > 0 ? "delivered_results" : "prompt",
+        text: prompt,
+        // Absent (and so dropped from the JSON) on a turn nobody steered.
+        said_while_working: said.length === 0 ? undefined : said,
+      },
       initiated_this_turn: tools.map((span) => ({
         span_id: span.context.span_id,
         name: span.name,
@@ -339,12 +432,12 @@ export const turnRecord = (store: Store, sessionId: string, traceId: string): Tu
     activity,
     judged,
     metrics: { session_bytes: sessionBytes, tool_calls: tools.length },
-    facts: `Session storage on disk: ${formatBytes(sessionBytes)} (${sessionBytes} bytes). Tool calls this turn: ${tools.length}.`,
+    facts: `Session storage on disk: ${formatBytes(sessionBytes)} (${sessionBytes} bytes). Tool calls this turn: ${tools.length}.${said.length === 0 ? "" : STEERED_FACT}`,
     input,
     output,
     tool_input: calls.join("\n"),
     tool_output: results.join("\n"),
-    transcript: [`[user] ${input}`, ...steps, `[assistant] ${output}`].join("\n\n"),
+    transcript: [...turnLines(spans, said), `[assistant] ${output}`].join("\n\n"),
   }
 }
 

@@ -5,7 +5,6 @@
 import { Effect, Schema } from "effect"
 import { definitionFrom, EvalInput, type EvalRuntime, pendingFeedback, runEvals, saveEval } from "./evals.ts"
 import type { Engine } from "./engine.ts"
-import { readMetadata } from "./format.ts"
 import { detectSteering } from "./steering.ts"
 import { defineTool, failed, ok, type ToolSpec } from "./tools.ts"
 
@@ -93,11 +92,6 @@ export const attachEvals = (engine: Engine, runtime: EvalRuntime): void => {
 
       // After the evaluators, so an evaluator learned from this prompt does not judge the turn that taught it.
       if (runtime.detect === undefined) return
-
-      const root = runtime.store.readTrace(sessionId, traceId).ended.find((span) => span.parent_id === null)
-
-      // A turn oi started to deliver results has no words from a person to learn from.
-      if (root !== undefined && readMetadata(root).delivers !== undefined) return
 
       await detectSteering(runtime, runtime.detect, sessionId, traceId)
     },

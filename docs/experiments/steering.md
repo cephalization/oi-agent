@@ -202,3 +202,29 @@ passed, with the four pending web scenarios skipped. Thus all 39 currently
 runnable live scenarios passed across the two invocations, not in one
 uninterrupted full-suite run. The nonzero false-positive rate remains a reason
 to inspect learned checks rather than treat automatic classification as exact.
+
+## Corrections said to a running turn (issue #62)
+
+A message that steers a running turn was read only by the agent: detection
+never saw it. It is now read in a detection of its own, with the running turn
+as it stood (the prompt and the tool calls made before the message) in place
+of the previous turn. The detector's prompt and thresholds are unchanged.
+
+Four mid-turn cases were added to the scored scenario
+(`MID_TURN_DURABLE` and `MID_TURN_ONE_OFF` in `packages/e2e/src/steering.ts`).
+Each starts a turn that waits in a command, gives the correction to that turn
+as the terminal's Enter does, and lets the command finish, so the correction
+arrives before the agent has done the thing it corrects. With
+`OI_E2E_SAMPLES=3` on 2026-11-18 (`chatgpt/gpt-5.6-luna`, Haiku detector):
+
+| Cases                | Learned |
+| -------------------- | ------- |
+| durable, as a prompt | 18/18   |
+| one-off, as a prompt | 0/27    |
+| durable, mid-turn    | 6/6     |
+| one-off, mid-turn    | 0/6     |
+
+Four of the six mid-turn evaluators were written by the detector and two by
+the agent itself with `create_eval`, which it calls for an explicit "never"
+whether or not the message arrived mid-turn. Four cases are few: this shows
+the path works and does not over-learn on these wordings, not a rate.
