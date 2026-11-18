@@ -106,7 +106,7 @@ describe("choosing a Phoenix server", () => {
     expect(await setupPhoenix(scripted([server.url, undefined]).dialog, CURRENT, {})).toBeUndefined()
   })
 
-  it("says what did not answer as Phoenix, and asks again or keeps it as told", async () => {
+  it("says what is not responding as a Phoenix server, and asks again or keeps it as told", async () => {
     const server = await phoenix()
     const again = scripted(["http://127.0.0.1:9", "retry", server.url, ""])
 
@@ -114,9 +114,11 @@ describe("choosing a Phoenix server", () => {
       endpoint: server.url,
       project: "oi-agent",
     })
-    expect(again.said.some((line) => line.startsWith("! http://127.0.0.1:9 did not answer as Phoenix"))).toBe(
-      true,
-    )
+    expect(
+      again.said.some((line) =>
+        line.startsWith("! http://127.0.0.1:9 is not responding as a Phoenix server"),
+      ),
+    ).toBe(true)
 
     // Kept anyway (the server is down for now): no key is asked for or needed to save it.
     const kept = scripted(["http://127.0.0.1:9", "keep", "", "skip"])
@@ -133,7 +135,7 @@ describe("choosing a Phoenix server", () => {
 
     await setupPhoenix(dialog, CURRENT, { PHOENIX_COLLECTOR_ENDPOINT: "http://elsewhere:6006" })
     expect(said).toContain(
-      "! PHOENIX_COLLECTOR_ENDPOINT is set in your environment and wins over this choice the next time oi starts.",
+      "! PHOENIX_COLLECTOR_ENDPOINT is set in your environment and overrides this setting the next time oi starts.",
     )
   })
 })

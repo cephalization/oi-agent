@@ -43,7 +43,7 @@ no setting and so are asked nowhere: attaching images, typing while the agent
 works, `/phoenix` and `/share`.
 
 For Phoenix, setup asks the server what it wants before saving anything: a
-Phoenix without auth needs no key, and one that asks for a login offers
+Phoenix without auth needs no key, and one with auth enabled offers
 "Log in with your browser". Your browser opens Phoenix, you log in and
 approve oi, and Phoenix makes a personal API key that oi stores in the
 keychain; you never see or paste it. If the browser cannot reach your

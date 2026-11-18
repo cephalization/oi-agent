@@ -1020,7 +1020,7 @@ class App {
       open: (url) => {
         openBrowser(url)
         // Not wrapped by us: a terminal lets a long line be selected whole, and a URL must be copied whole.
-        this.say(["Your browser opens to log in to Phoenix. If it did not, visit:", url])
+        this.say(["Opening your browser to log in to Phoenix. If it did not open, visit:", url])
       },
       paste: (label, until) => {
         const waiting = this.ask(label, false)

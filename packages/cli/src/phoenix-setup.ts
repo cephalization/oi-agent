@@ -69,7 +69,7 @@ const describe = (endpoint: string, probe: PhoenixProbe): string => {
   const what = probe.version === undefined ? "Phoenix" : `Phoenix ${probe.version}`
 
   return probe.auth === "required"
-    ? `Connected to ${what} at ${endpoint}. It asks for a login.`
+    ? `Connected to ${what} at ${endpoint}. Auth is enabled.`
     : `Connected to ${what} at ${endpoint}.`
 }
 
@@ -103,13 +103,13 @@ const chooseServer = async (
       return { endpoint, probe }
     }
 
-    dialog.warn(`${endpoint} did not answer as Phoenix: ${probe.detail ?? "no answer"}.`)
+    dialog.warn(`${endpoint} is not responding as a Phoenix server: ${probe.detail ?? "no response"}.`)
 
     const next = await dialog.choose(
       "What now?",
       [
         { value: "retry", label: "Enter a different URL" },
-        { value: "keep", label: "Use it anyway", hint: "export keeps trying; nothing is lost meanwhile" },
+        { value: "keep", label: "Use it anyway", hint: "export retries; spans stay on disk" },
       ],
       "retry",
     )
@@ -147,7 +147,7 @@ const viaBrowser = async (dialog: Dialog, login: PhoenixLogin): Promise<string |
 
   while (!settled) {
     const typed = await dialog.paste(
-      "Waiting for the browser · if it cannot reach this machine, paste the address it ended on · esc cancels",
+      "Waiting for browser login · paste the redirect URL here if the browser cannot reach this machine · esc cancels",
       outcome,
     )
 
@@ -190,8 +190,7 @@ const chooseCredentials = async (
   const fromEnv = env["PHOENIX_API_KEY"] !== undefined && env["PHOENIX_API_KEY"] !== ""
   const stored = getSecret("phoenix")
 
-  if (fromEnv)
-    dialog.warn("PHOENIX_API_KEY is set in your environment, and is used instead of a key stored here.")
+  if (fromEnv) dialog.warn("PHOENIX_API_KEY is set in your environment and overrides the stored key.")
 
   const support =
     probe.auth === "required"
@@ -199,10 +198,10 @@ const chooseCredentials = async (
       : ({ status: "unsupported", why: "" } as const)
 
   if (support.status === "unsupported" && support.why !== "")
-    dialog.note(`${support.why} Paste an API key instead: create one in Phoenix under Settings.`)
+    dialog.note(`${support.why} Paste an API key instead; create one in Phoenix under Settings.`)
 
   if (support.status === "unreachable")
-    dialog.warn(`Could not ask Phoenix whether it supports browser login: ${support.detail}.`)
+    dialog.warn(`Could not check whether Phoenix supports browser login: ${support.detail}.`)
 
   const options: Array<Option> = []
 
@@ -210,7 +209,7 @@ const chooseCredentials = async (
     options.push({
       value: "login",
       label: "Log in with your browser",
-      hint: "Phoenix makes an API key for oi, kept in your keychain",
+      hint: "Phoenix creates an API key for oi, stored in your keychain",
     })
 
   options.push({ value: "paste", label: "Paste an API key", hint: "hidden as you type" })
@@ -259,12 +258,12 @@ const chooseCredentials = async (
     const verdict = await checkPhoenixKey(endpoint, key)
 
     if (verdict === "rejected") {
-      dialog.warn("Phoenix did not accept that key.")
+      dialog.warn("Phoenix rejected that key.")
       continue
     }
 
     if (verdict === "accepted") dialog.ok("Phoenix accepted the key.")
-    else dialog.warn("Could not reach Phoenix to check the key. It is kept, and export will keep trying.")
+    else dialog.warn("Could not reach Phoenix to check the key. The key is saved and export will retry.")
 
     return choice === "keep" ? { kind: "none" } : { kind: "store", key }
   }
@@ -311,7 +310,7 @@ export const setupPhoenix = async (
     ["PHOENIX_PROJECT_NAME", project],
   ] as const) {
     if (env[name] !== undefined && env[name] !== value)
-      dialog.warn(`${name} is set in your environment and wins over this choice the next time oi starts.`)
+      dialog.warn(`${name} is set in your environment and overrides this setting the next time oi starts.`)
   }
 
   return { endpoint: server.endpoint, project }

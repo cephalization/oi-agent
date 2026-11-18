@@ -323,7 +323,7 @@ describe("logging in to Phoenix through the browser", () => {
 
     await expect(start(closed.url)).rejects.toMatchObject({
       reason: "unsupported",
-      message: "This Phoenix does not let new apps register for browser login.",
+      message: "This Phoenix has client registration disabled, so browser login is unavailable.",
     })
 
     const server = await phoenix()

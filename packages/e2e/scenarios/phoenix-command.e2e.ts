@@ -87,7 +87,7 @@ const answer = async (term: Terminal, text: string): Promise<void> => {
 
 /** The page oi asks the person to open: long, so it wraps on screen and is read with the rows joined. */
 const loginUrl = async (term: Terminal): Promise<string> => {
-  const screen = await term.waitFor(/Waiting for the browser/)
+  const screen = await term.waitFor(/Waiting for browser login/)
 
   const urls = [
     ...screen.replaceAll("\n", "").matchAll(/(http\S+?\/oauth2\/authorize\?\S+?code_challenge_method=S256)/g),
@@ -111,7 +111,7 @@ const toCredentials = async (term: Terminal, project: string): Promise<void> => 
   await term.line("/phoenix")
   await term.waitFor(/\? Phoenix URL \(type `none` to turn export off\)/)
   await answer(term, PHOENIX_AUTH_ENDPOINT)
-  await term.waitFor(/It asks for a login\./)
+  await term.waitFor(/Auth is enabled\./)
   await term.waitFor(/\? Phoenix project/)
   await answer(term, project)
   await term.waitFor(/How should oi authenticate to Phoenix\?[\s\S]*Log in with your browser/)
@@ -233,7 +233,7 @@ describe("/phoenix", () => {
       await term.send("not a url")
       await term.key("enter")
       await term.waitFor(/! That is not a URL\./)
-      await term.waitFor(/Waiting for the browser/)
+      await term.waitFor(/Waiting for browser login/)
       await term.paste(redirect)
       await term.key("enter")
       await term.waitFor(/✓ Phoenix accepted the key\./)
