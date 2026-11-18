@@ -38,7 +38,9 @@ model, reasoning effort, whether tools need approval, an optional Phoenix
 server and where sessions live. It lists the provider's models, checks the
 key, and looks for Phoenix on `localhost:6006`. Settings are saved to
 `~/.config/oi-agent/config.json`; keys and sign-ins go to the system
-keychain. Run `oi setup` to change them.
+keychain. Run `oi setup` to change them. It ends with a few things that need
+no setting and so are asked nowhere: attaching images, typing while the agent
+works, `/phoenix` and `/share`.
 
 For Phoenix, setup asks the server what it wants before saving anything: a
 Phoenix without auth needs no key, and one that asks for a login offers

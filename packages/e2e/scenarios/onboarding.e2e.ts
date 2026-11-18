@@ -215,6 +215,14 @@ describe("onboarding", () => {
       expect(screen).not.toMatch(/API key \(input is hidden; leave empty to skip\)/)
       expect(savedConfig(s)).toMatchObject({ steering: "auto", steering_model: "local/m1" })
 
+      // Setup ends on what needs no setting and so was asked nowhere: images, steering, Phoenix, sharing.
+      const tips = screen.replaceAll(/\s+/g, " ")
+
+      expect(tips).toContain("drop an image file on the terminal")
+      expect(tips).toContain("a correction that should last is learned")
+      expect(tips).toContain("/phoenix sends every span to a Phoenix server")
+      expect(tips).toContain("/share invites someone into the session")
+
       const term = await s.tui([], { env: NO_KEY })
 
       await term.waitFor(/Every step is an OpenInference span on disk/)

@@ -165,7 +165,7 @@ const steeringStep = async (
 ): Promise<{ steering: Steering; steering_model: string }> => {
   step(
     "Learning from corrections",
-    'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. One small call per message.',
+    'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. That includes what you type while it is working. One small call per message.',
   )
 
   const steering = await choose(
@@ -360,6 +360,21 @@ const phoenixStep = async (current: Config["phoenix"]): Promise<Config["phoenix"
   return (await setupPhoenix(setupDialog, current)) ?? current
 }
 
+/**
+ * What a person would otherwise find out late, said once when setup ends:
+ * things that need no setting, and so appear nowhere above.
+ */
+export const firstTips = (config: Config): Array<string> => [
+  "Show it a picture: drop an image file on the terminal, or press ctrl+v to paste one from the clipboard.",
+  config.steering === "off"
+    ? "Type while it works: Enter says it to the running turn, and ctrl+t queues it for the next one instead."
+    : "Type while it works: Enter says it to the running turn (ctrl+t queues it instead), and a correction that should last is learned.",
+  config.phoenix.endpoint === ""
+    ? "/phoenix sends every span to a Phoenix server, and logs in through your browser if it asks."
+    : "/phoenix changes where spans go, or logs in again; /export sends a session now.",
+  "/share invites someone into the session, /tour has oi explain itself from its own files, and / lists the rest.",
+]
+
 /** Run setup and write the config file. Resolves to the saved settings. */
 export const runOnboarding = async (): Promise<Config> => {
   const current = loadConfig()
@@ -450,7 +465,7 @@ export const runOnboarding = async (): Promise<Config> => {
 
   step(
     "Storage",
-    "Sessions are plain span files. Point this at a synced folder to share them between machines.",
+    "Sessions are plain span files, with any images you attach beside them. Point this at a synced folder to share them between machines.",
   )
 
   const home = expand(await ask("Sessions directory", tilde(first ? defaultHome() : current.home)))
@@ -474,9 +489,18 @@ export const runOnboarding = async (): Promise<Config> => {
   say()
   ok(`Saved ${tilde(file)}`)
   say()
-  say(
-    `Run ${style.bold("oi")} in a project to start. ${style.gray("oi setup changes these settings; oi --help lists commands.")}`,
-  )
+  say(`Run ${style.bold("oi")} in a project to start. Worth knowing on day one:`)
+
+  // Wrapped here, with a hanging indent: a terminal would break each tip mid-word at its edge.
+  for (const tip of firstTips(config)) {
+    const [head = "", ...rest] = wrap(tip, Math.max((process.stdout.columns ?? 80) - 5, 40))
+
+    say(`  ${style.gray("·")} ${head}`)
+
+    for (const line of rest) say(`    ${line}`)
+  }
+
+  say(style.gray("oi setup changes these settings; oi --help lists commands."))
   say()
 
   return config
