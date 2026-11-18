@@ -1,5 +1,15 @@
 # oi-agent
 
+## 0.13.0
+
+### Minor Changes
+
+- [#90](https://github.com/cephalization/oi-agent/pull/90) [`d41d15f`](https://github.com/cephalization/oi-agent/commit/d41d15fec6d7ea3376e73c38cca4659235bea2f0) Thanks [@cephalization](https://github.com/cephalization)! - Add `/feedback` to the onboarding tips and slash menu. Draft an oi GitHub issue from a short description, with Node and platform details, then review the exact preview and approve posting with `gh`. If `gh` is unavailable, use the official issue tracker.
+
+### Patch Changes
+
+- [#89](https://github.com/cephalization/oi-agent/pull/89) [`fb6d9dd`](https://github.com/cephalization/oi-agent/commit/fb6d9dd2bfd50fe9fef34af8c43158f1af3b797b) Thanks [@cephalization](https://github.com/cephalization)! - Clarify the correction-model choices in setup and list higher model versions first. Move “Ask me each time” to the end of the tool approval menu without changing the default or your saved preference.
+
 ## 0.12.0
 
 ### Minor Changes
