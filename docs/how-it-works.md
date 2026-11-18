@@ -42,6 +42,11 @@ keychain. Run `oi setup` to change them. It ends with a few things that need
 no setting and so are asked nowhere: attaching images, typing while the agent
 works, `/phoenix` and `/share`.
 
+Setup lists higher model versions first within each model family. You can still
+enter a model ID manually. In the tool approvals menu, **Ask me each time** is
+listed last but remains the default for a new setup. Rerunning setup defaults
+to your saved approval mode.
+
 For Phoenix, setup asks the server what it wants before saving anything: a
 Phoenix without auth needs no key, and one with auth enabled offers
 "Log in with your browser". Your browser opens Phoenix, you log in and

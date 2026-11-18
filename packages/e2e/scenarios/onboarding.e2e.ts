@@ -25,6 +25,7 @@ const SavedConfig = Schema.fromJsonString(
   Schema.Struct({
     provider: Schema.String,
     model: Schema.String,
+    approvals: Schema.String,
     steering: Schema.String,
     steering_model: Schema.String,
   }),
@@ -35,8 +36,8 @@ const savedConfig = (s: Scenario) =>
     fs.readFileSync(path.join(s.sandbox.configDir, "config.json"), "utf8"),
   )
 
-/** Answer every step of `oi setup` up to the learning step, with a local server and its one model. */
-const setupUntilLearning = async (term: Terminal): Promise<void> => {
+/** Set up a local server and wait for its model menu. */
+const setupUntilModel = async (term: Terminal, models: string = "m1"): Promise<string> => {
   await term.waitFor(/Your name/)
   await term.key("enter")
   await term.waitFor(/Which provider\?/)
@@ -49,12 +50,23 @@ const setupUntilLearning = async (term: Terminal): Promise<void> => {
   await term.waitFor(/API key/)
   await term.key("enter")
   await term.waitFor(/Models, comma-separated/)
-  await term.line("m1")
-  await term.waitFor(/Which model\?/)
+  await term.line(models)
+
+  return term.waitFor(/Which model\?[\s\S]*choice \(\d+\)/)
+}
+
+/** Accept the default model and effort, then wait for the approvals menu. */
+const setupUntilApprovals = async (term: Terminal): Promise<string> => {
   await term.key("enter")
   await term.waitFor(/Reasoning effort\?/)
   await term.key("enter")
-  await term.waitFor(/Before running a tool/)
+
+  return term.waitFor(/Before running a tool[\s\S]*choice \(\d+\)/)
+}
+
+const setupUntilLearning = async (term: Terminal): Promise<void> => {
+  await setupUntilModel(term)
+  await setupUntilApprovals(term)
   await term.key("enter")
   await term.waitFor(/Learning from corrections[\s\S]*When you correct oi:/)
 }
@@ -87,6 +99,41 @@ afterAll(() => {
 })
 
 describe("onboarding", () => {
+  scenario(
+    "first-run setup lists higher model versions first and still defaults to asking for approval",
+    { needs: ["rex"] },
+    async (s) => {
+      fs.unlinkSync(path.join(s.sandbox.configDir, "config.json"))
+
+      const setup = await s.tui(["setup"], { env: NO_KEY })
+      const models = await setupUntilModel(setup, "gpt-5.2, gpt-5.10, gpt-5.6-luna")
+
+      expect(models).toMatch(
+        /1\s+gpt-5\.10\s+2\s+gpt-5\.6-luna\s+3\s+gpt-5\.2\s+4\s+Another model id\s+choice \(1\)/,
+      )
+
+      const approvals = await setupUntilApprovals(setup)
+
+      expect(approvals).toMatch(
+        /1\s+Just run it\s+2\s+Let a decision model approve safe ones[^\n]*\n\s*3\s+Ask me each time\s+choice \(3\)/,
+      )
+      await setup.key("enter")
+      await setup.waitFor(/When you correct oi:/)
+      await setup.key("enter")
+
+      const corrections = await setup.waitFor(/Which model reads your messages[\s\S]*choice \(\d+\)/)
+      const hints = corrections.replaceAll(/\s+/g, " ")
+
+      expect(hints).toContain("Use the same model. No extra API key.")
+      expect(hints).toContain("Low-cost option. Needs an Anthropic API key.")
+      expect(hints).toContain("TypeSafe Jev decision model cheap screen per message; needs a TypeSafe key")
+      expect(hints).toContain("Enter the provider and model ID yourself.")
+      await setup.key("enter")
+      await finishSetup(setup)
+      expect(savedConfig(s)).toMatchObject({ model: "gpt-5.10", approvals: "ask" })
+    },
+  )
+
   scenario(
     "setup logs in to a Phoenix that asks for it through the browser, and keeps the key in the keychain",
     { needs: ["rex", "phoenix-auth"] },
@@ -230,19 +277,19 @@ describe("onboarding", () => {
     },
   )
   scenario(
-    "rerunning setup preserves a custom steering model",
-    { needs: ["rex"], config: new Map([["steering_model", "other/custom-model"]]) },
+    "rerunning setup preserves configured approvals and a custom correction model",
+    { needs: ["rex"], approvals: "allow", config: new Map([["steering_model", "other/custom-model"]]) },
     async (s) => {
       const setup = await s.tui(["setup"], { env: NO_KEY })
 
       await setupUntilLearning(setup)
       await setup.key("enter")
       await setup.waitFor(
-        /Which model reads your messages[\s\S]*other\/custom-model[\s\S]*current steering model/,
+        /Which model reads your messages[\s\S]*other\/custom-model[\s\S]*Your current model for checking corrections/,
       )
       await setup.key("enter")
       await finishSetup(setup)
-      expect(savedConfig(s).steering_model).toBe("other/custom-model")
+      expect(savedConfig(s)).toMatchObject({ approvals: "allow", steering_model: "other/custom-model" })
     },
   )
 })
