@@ -10,6 +10,7 @@ import {
   shownInTerminal,
   branchTo,
   type EndedSpan,
+  feedbackIssue,
   executionDurationMs,
   isoToNs,
   kindOf,
@@ -246,10 +247,13 @@ export class Transcript {
   private readonly operations = new Set<string>()
 
   private turnOutput(span: SpanFile): Array<string> {
-    const lines = (stringAttr(span, OI.OUTPUT_VALUE) ?? "").split("\n")
+    const output = stringAttr(span, OI.OUTPUT_VALUE) ?? ""
+    const lines = output.split("\n")
 
     // The public issue preview must be copyable as written, not rendered as Markdown.
-    return readMetadata(span).operation === "feedback" ? lines : this.prose(lines)
+    if (readMetadata(span).operation !== "feedback") return this.prose(lines)
+
+    return feedbackIssue(output) === undefined ? ["Feedback preview unavailable."] : lines
   }
 
   private turnEnded(span: EndedSpan): void {

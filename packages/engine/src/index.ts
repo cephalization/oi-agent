@@ -8,6 +8,8 @@ export * from "./config.ts"
 
 export * from "./engine.ts"
 
+export { feedbackIssue, type FeedbackIssue } from "./feedback.ts"
+
 export * from "./fold.ts"
 
 export * from "./format.ts"

@@ -21,6 +21,10 @@ describe("feedback draft", () => {
     expect(feedbackDraft("Title: Menu freezes\nBody:\nSee alice@example.test")).not.toContain("alice")
   })
 
+  it.each(["\u001b[2J", "\u202E", "\r", "\u0000"])("rejects terminal or display controls: %j", (control) => {
+    expect(feedbackDraft(`Title: Menu freezes\nBody:\nDo${control} not post`)).toBeUndefined()
+  })
+
   it.each(["free-form text", "Title: \nBody:\nText", "Title: Missing body\nBody:\n"])(
     "rejects malformed or incomplete previews: %s",
     (reply) => expect(feedbackDraft(reply)).toBeUndefined(),
