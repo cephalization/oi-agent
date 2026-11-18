@@ -87,13 +87,14 @@ export const createEvalTool: ToolSpec = defineTool({
 export const attachEvals = (engine: Engine, runtime: EvalRuntime): void => {
   engine.hooks = {
     pendingFeedback: (sessionId) => pendingFeedback(runtime.store, sessionId),
-    afterTurn: async (sessionId, traceId) => {
-      await runEvals(runtime, sessionId, traceId)
+    afterTurn: async (sessionId, traceId, obligations) => {
+      const corrections = new Map<string, Schema.Json>()
+      const annotations = await runEvals(runtime, sessionId, traceId, { corrections, obligations })
 
       // After the evaluators, so an evaluator learned from this prompt does not judge the turn that taught it.
-      if (runtime.detect === undefined) return
+      if (runtime.detect !== undefined) await detectSteering(runtime, runtime.detect, sessionId, traceId)
 
-      await detectSteering(runtime, runtime.detect, sessionId, traceId)
+      return { annotations, corrections }
     },
   }
 }

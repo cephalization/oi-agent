@@ -174,6 +174,41 @@ call a judge for a commit check. Unknown evidence runs the check rather than
 silently skipping it. Threshold checks can use measured session size, for
 example "warn me when this conversation is larger than 100 MB".
 
+#### Automatic evaluator correction
+
+By default, evaluator feedback waits for the next turn. To let oi start a
+corrective turn itself, set `"auto_correction": true` in
+`~/.config/oi-agent/config.json`. `"max_correction_turns"` defaults to 2 and
+accepts integers from 1 to 10. The budget is fixed when the cycle starts.
+
+Only feedback-enabled failures of immediate LLM evaluators and regex checks
+on the answer (`target: "output"`) can start or join the initial batch.
+Thresholds, deferred background checks and regex checks on tool activity or
+whole transcripts still give normal feedback: a new answer cannot undo
+recorded actions or shrink the session. A corrective turn receives the actual
+failed annotations. Every attempt rechecks the same pinned definitions against
+the correction, without the initial applicability gate; an LLM judge also
+sees the original failing turn. Other evaluations still run, but their
+failures do not join the batch or extend its budget.
+
+The terminal shows attempts and why they stop: all original checks passed,
+budget exhausted, no change in the failed obligations and recorded work,
+a denial or an unavailable recheck, interruption, disabled continuation, or
+a queued prompt or intervening turn taking priority. Escape on the host
+stops the cycle; turn the setting off and restart to disable it. Tools keep
+the normal approval policy. Shared drivers and viewers can observe the same
+attempts and stops, but only the host can approve or interrupt them.
+
+`oi run` waits for corrections even with `--no-wait`, uses its normal
+headless approval policy, and retains the original turn's exit semantics
+(check stderr for the correction stop reason). An explicit new prompt takes
+precedence over a saved continuation. Interactive local resume can start the
+next unused attempt from a completed checkpoint, with its original budget.
+If an attempt started without recording a subsequent decision, resume stops
+the chain rather than rerunning it or its tools. Phoenix-backed resumes do
+not continue a saved cycle: exports omit open spans. Unattended subagent
+runners do not create automatic correction cycles.
+
 Checks and rules live in `~/.config/oi-agent/projects/<project>/`, never in
 your repository. `/evals` and `/rules` list them; deleting a check's file
 removes it, and `/revert` undoes the latest rule. `/verdicts` shows the last

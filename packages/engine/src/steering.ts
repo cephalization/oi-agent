@@ -118,7 +118,7 @@ const heardIn = (runtime: EvalRuntime, sessionId: string, traceId: string): Arra
 
   // A turn oi started to deliver results has no prompt from a person, but can still be steered by one.
   const prompt: Array<Heard> =
-    metadata.delivers === undefined
+    metadata.delivers === undefined && metadata.correction === undefined
       ? [
           {
             text: stringAttr(root, OI.INPUT_VALUE) ?? "",

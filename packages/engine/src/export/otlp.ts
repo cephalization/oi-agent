@@ -149,6 +149,16 @@ export const linksOf = (span: EndedSpan): Array<SpanLink> => {
   if (metadata.origin !== undefined)
     links.push({ trace_id: metadata.origin.trace_id, span_id: metadata.origin.span_id, relation: "origin" })
 
+  if (metadata.correction !== undefined) {
+    links.push({ ...metadata.correction.origin, relation: "correction.origin" })
+    links.push({ ...metadata.correction.checkpoint, relation: "correction.checkpoint" })
+  }
+
+  if (metadata.correction_checkpoint !== undefined) {
+    links.push({ ...metadata.correction_checkpoint.origin, relation: "correction.origin" })
+    links.push({ ...metadata.correction_checkpoint.after, relation: "correction.after" })
+  }
+
   return links
 }
 

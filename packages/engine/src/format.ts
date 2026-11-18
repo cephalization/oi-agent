@@ -331,6 +331,41 @@ export type Billing = typeof Billing.Type
  * JSON string) under one key, so it never collides with user metadata.
  * See docs/spec-gaps.md for why each field exists.
  */
+const CorrectionAttempt = Schema.Struct({
+  origin: SpanRef,
+  checkpoint: SpanRef,
+  attempt: Schema.Int,
+  budget: Schema.Int,
+  triggers: Schema.Array(Schema.String),
+})
+
+const CorrectionStop = Schema.Literals([
+  "passed",
+  "budget exhausted",
+  "stalled",
+  "unrepairable",
+  "interrupted",
+  "disabled",
+  "superseded",
+])
+
+const CorrectionCheckpoint = Schema.Struct({
+  origin: SpanRef,
+  after: SpanRef,
+  attempts: Schema.Int,
+  budget: Schema.Int,
+  triggers: Schema.Array(Schema.String),
+  obligations: Schema.Array(
+    Schema.Struct({
+      original: Schema.String,
+      latest: Schema.optionalKey(Schema.String),
+      definition: Schema.Json,
+    }),
+  ),
+  fingerprint: Schema.String,
+  stop: Schema.optionalKey(CorrectionStop),
+})
+
 export const EngineMetadata = Schema.Struct({
   /** The turn this turn continues. `null` for the first turn of a session. */
   previous: Schema.optionalKey(Schema.NullOr(SpanRef)),
@@ -395,6 +430,8 @@ export const EngineMetadata = Schema.Struct({
       reason: Schema.Literals(["requested", "timeout"]),
     }),
   ),
+  correction: Schema.optionalKey(CorrectionAttempt),
+  correction_checkpoint: Schema.optionalKey(CorrectionCheckpoint),
   /** Eval feedback injected into this turn's input. */
   injected: Schema.optionalKey(
     Schema.Array(Schema.Struct({ annotation_id: Schema.String, name: Schema.String })),
