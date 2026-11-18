@@ -1,5 +1,19 @@
 # oi-agent
 
+## 0.12.0
+
+### Minor Changes
+
+- [#84](https://github.com/cephalization/oi-agent/pull/84) [`cc29c7b`](https://github.com/cephalization/oi-agent/commit/cc29c7bbf884f4ca63d39740dcd49978aaa4c1fe) Thanks [@cephalization](https://github.com/cephalization)! - Attach images to a prompt. Drop image files (PNG, JPEG, GIF or WebP) on the terminal, press ctrl+v to paste one from the clipboard, or use `/image <path>`; what is attached is listed above the prompt and goes with your next message, and Backspace at the start of the line removes the last one. `oi run --image <file>` does the same without a terminal. Images are kept in the session, so resuming, switching provider and sharing do not depend on the original files, and someone who joined with a drive link can send images to the host. oi does not check whether a model can read images: a model that cannot says so through its provider's error, and you can switch to one that can with `/model`.
+
+- [#85](https://github.com/cephalization/oi-agent/pull/85) [`e3da10c`](https://github.com/cephalization/oi-agent/commit/e3da10c5c44b85683c4af0b38fbe2a7e90e40e50) Thanks [@cephalization](https://github.com/cephalization)! - `/phoenix` chooses the Phoenix server, project and login while a session runs, and export switches to it at once with no restart; `oi setup` asks the same questions. oi now asks the server what it wants before saving: a Phoenix without auth needs no key, and one that asks for a login offers "Log in with your browser", where you approve oi in Phoenix and it stores a personal API key in your keychain without you seeing or pasting it. Pasting an API key still works, as does pasting the redirect address when the browser cannot reach your machine. `/phoenix` then `none` turns export off.
+
+### Patch Changes
+
+- [#88](https://github.com/cephalization/oi-agent/pull/88) [`fe91168`](https://github.com/cephalization/oi-agent/commit/fe91168d8742b9cfe5c7b442cb76e5b66e733ef0) Thanks [@cephalization](https://github.com/cephalization)! - Setup now ends with a quick overview of features that need no setting: attaching images, typing while oi works, `/phoenix` and `/share`. Setup and the Phoenix step use plainer wording throughout.
+
+- [#83](https://github.com/cephalization/oi-agent/pull/83) [`46c721e`](https://github.com/cephalization/oi-agent/commit/46c721eff9f60d17cedce9bd4694503cd34481c6) Thanks [@cephalization](https://github.com/cephalization)! - A message you give to a running turn now counts as something you said for everything that reads the turn. Before, only the agent saw it: auto approvals decided later tool calls against the original prompt alone, evaluators judged a transcript without it, and a correction given mid-turn ("no, use pnpm") was never considered for learning. Now the approval decider sees it from the next tool call on, evaluators see it where it was said, and steering detection reads each mid-turn message on its own.
+
 ## 0.11.1
 
 ### Patch Changes
