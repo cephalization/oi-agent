@@ -291,4 +291,84 @@ describe("decision model", () => {
       expect(stringAttr(detections[1]!, OI.OUTPUT_VALUE)).toContain('"confidence":0.95')
     },
   )
+
+  scenario(
+    "a message said to a running turn reaches the approval decider and steering detection",
+    {
+      needs: ["rex"],
+      ...withDecider(server),
+      config: new Map<string, Schema.Json>([
+        ...withDecider(server).config,
+        ["steering", "auto"],
+        ["steering_model", "decision:jev-latest"],
+      ]),
+      env: new Map([...withDecider(server).env, ["ANTHROPIC_API_KEY", ""]]),
+    },
+    async (s) => {
+      const gated = "until [ -f go ]; do sleep 0.2; done; echo gate-opened"
+      const steer = "From now on, always use printf instead of echo in this project."
+      const term = await s.tui()
+
+      await term.waitFor(/enter starts a new turn/)
+      await term.line(
+        `Call the bash tool now with exactly the command \`${gated}\` and no other arguments. When it finishes, call the bash tool a second time to print the word after-gate, then reply with just: done.`,
+      )
+
+      const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
+
+      await s.spans.waitFor("the gated command to be running", () =>
+        s.spans
+          .open(session)
+          .find((span) => kindOf(span) === "TOOL" && readMetadata(span).awaiting_approval === false),
+      )
+      await term.waitFor(/enter steers the running turn/)
+      await term.line(steer)
+      await term.waitFor(/↳ steering, when the turn's current step ends/)
+      fs.writeFileSync(path.join(s.sandbox.cwd, "go"), "")
+
+      const [turn] = await s.spans.settledTurns(session, 1)
+
+      expect(readMetadata(turn!.root).steered?.map((entry) => entry.text)).toEqual([steer])
+
+      // The decider was asked about each command against what had been said by then.
+      const asked = s.spans
+        .tools(session)
+        .map((tool) =>
+          s.spans
+            .ended(session)
+            .find((span) => kindOf(span) === "DECISION" && span.parent_id === tool.span.context.span_id),
+        )
+        .map((decision) => (decision === undefined ? "" : (stringAttr(decision, OI.INPUT_VALUE) ?? "")))
+
+      expect(asked.length).toBeGreaterThanOrEqual(2)
+      expect(asked[0]).toContain("gate-opened")
+      expect(asked[0]).not.toContain("printf instead of echo")
+
+      for (const request of asked.slice(1)) expect(request).toContain("printf instead of echo")
+
+      // Detection read the prompt and then the message, each on its own; only the message is durable.
+      const detections = await s.spans.waitFor("both detections", () => {
+        const found = s.spans
+          .ended(session)
+          .filter((span) => span.parent_id === null && span.name === "steering")
+
+        return found.length === 2 ? found : undefined
+      })
+
+      expect(stringAttr(detections[1]!, OI.INPUT_VALUE)).toBe(steer)
+      expect(detections.map((detection) => readMetadata(detection).evaluates)).toEqual([
+        turn?.trace_id,
+        turn?.trace_id,
+      ])
+
+      const screens = detections.map((detection) =>
+        s.spans.trace(session, detection.context.trace_id).find((span) => kindOf(span) === "DECISION"),
+      )
+
+      // The message was judged against the turn as it stood, not against the turn before.
+      expect(stringAttr(screens[1]!, OI.INPUT_VALUE)).toContain("gate-opened")
+      expect(stringAttr(detections[0]!, OI.OUTPUT_VALUE)).toContain('"durable":false')
+      expect(stringAttr(detections[1]!, OI.OUTPUT_VALUE)).toContain('"durable":true')
+    },
+  )
 })

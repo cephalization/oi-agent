@@ -1,6 +1,6 @@
 /**
- * Learning from steering: after each turn, a small model reads the user's
- * prompt and decides whether it corrects the agent in a way that applies
+ * Learning from steering: after each turn, a small model reads what the user
+ * said in it (the prompt, and each message given while it ran) and decides whether it corrects the agent in a way that applies
  * beyond the current task ("we use pnpm here", "too long again"). If so, it
  * proposes an evaluator, which is saved like one from `create_eval`, so the
  * correction is checked on every later turn and can become a rule.
@@ -18,6 +18,7 @@ import {
   EvalInput,
   type EvalRuntime,
   loadEvals,
+  midTurnMessages,
   reporterFor,
   saveEval,
   turnRecord,
@@ -30,9 +31,12 @@ import { diskTracer } from "./tracer.ts"
 
 /** What the detector reads. */
 export interface SteeringInput {
-  /** The user's prompt for the turn. */
+  /** What the user said: a turn's prompt, or a message given while it ran. */
   readonly prompt: string
-  /** The turn before it, as text, so that "no, not like that" can be resolved. Empty for a first turn. */
+  /**
+   * What it was said about, as text, so that "no, not like that" can be resolved: the turn before a
+   * prompt (empty for a first turn), or the running turn as it stood when a message was given to it.
+   */
   readonly previous: string
   /** Evaluators the project already has, so a correction they cover is not learned twice. */
   readonly existing: ReadonlyArray<{ readonly name: string; readonly description: string }>
@@ -92,23 +96,54 @@ export const STEERING_CONFIDENCE = 0.7
 /** How much of the previous turn the detector sees. */
 const PREVIOUS_CHARS = 4000
 
-const inputFor = (runtime: EvalRuntime, sessionId: string, traceId: string, cwd: string): SteeringInput => {
-  const trace = runtime.store.readTrace(sessionId, traceId)
-  const root = trace.ended.find((span) => span.parent_id === null)
-  const previous = root === undefined ? undefined : readMetadata(root).previous?.trace_id
-
-  return {
-    prompt: root === undefined ? "" : (stringAttr(root, OI.INPUT_VALUE) ?? ""),
-    previous:
-      previous === undefined
-        ? ""
-        : truncate(turnRecord(runtime.store, sessionId, previous).transcript, PREVIOUS_CHARS),
-    existing: loadEvals(cwd).map((definition) => ({
-      name: definition.name,
-      description: definition.description,
-    })),
-  }
+/** Something a person said, and what they were reacting to. */
+interface Heard {
+  readonly text: string
+  readonly previous: string
 }
+
+/**
+ * Every message of a turn that is a person's: the prompt, read against the
+ * turn before it, then each message said while the turn ran, read against
+ * the turn as it stood. A correction given mid-turn is judged on its own:
+ * it is said at the moment the agent goes wrong, and seldom repeats the prompt.
+ */
+const heardIn = (runtime: EvalRuntime, sessionId: string, traceId: string): Array<Heard> => {
+  const root = runtime.store.readTrace(sessionId, traceId).ended.find((span) => span.parent_id === null)
+
+  if (root === undefined) return []
+
+  const metadata = readMetadata(root)
+  const previous = metadata.previous?.trace_id
+
+  // A turn oi started to deliver results has no prompt from a person, but can still be steered by one.
+  const prompt: Array<Heard> =
+    metadata.delivers === undefined
+      ? [
+          {
+            text: stringAttr(root, OI.INPUT_VALUE) ?? "",
+            previous: previous === undefined ? "" : turnRecord(runtime.store, sessionId, previous).transcript,
+          },
+        ]
+      : []
+
+  return [
+    ...prompt,
+    ...midTurnMessages(runtime.store, sessionId, traceId).map((message) => ({
+      text: message.text,
+      previous: message.before,
+    })),
+  ]
+}
+
+const inputFor = (heard: Heard, cwd: string): SteeringInput => ({
+  prompt: heard.text,
+  previous: truncate(heard.previous, PREVIOUS_CHARS),
+  existing: loadEvals(cwd).map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+  })),
+})
 
 /** The outcome, for the span's output and for tests. */
 export type SteeringOutcome =
@@ -191,18 +226,38 @@ const verdictAnnotation = (
 export const shownInTerminal = (file: AnnotationFile): boolean =>
   file.annotation.name !== "steering" || file.annotation.label === "learned"
 
-/** Read a finished turn's prompt for durable steering, and learn it as an evaluator. */
-export const detectSteering = (
+/**
+ * Read what a person said in a finished turn for durable steering, and learn
+ * it as evaluators: one detection per message, in the order they were said,
+ * so a later one sees what an earlier one taught.
+ */
+export const detectSteering = async (
   runtime: EvalRuntime,
   detect: Detector,
   sessionId: string,
   traceId: string,
-): Promise<SteeringOutcome> => {
+): Promise<Array<SteeringOutcome>> => {
   const cwd = runtime.store.readHeader(sessionId)?.cwd
 
-  if (cwd === undefined) return Promise.resolve({ learned: false, reason: "no such session" })
+  if (cwd === undefined) return [{ learned: false, reason: "no such session" }]
 
-  const input = inputFor(runtime, sessionId, traceId, cwd)
+  const outcomes: Array<SteeringOutcome> = []
+
+  for (const heard of heardIn(runtime, sessionId, traceId))
+    outcomes.push(await detectOne(runtime, detect, sessionId, traceId, cwd, heard))
+
+  return outcomes
+}
+
+const detectOne = (
+  runtime: EvalRuntime,
+  detect: Detector,
+  sessionId: string,
+  traceId: string,
+  cwd: string,
+  heard: Heard,
+): Promise<SteeringOutcome> => {
+  const input = inputFor(heard, cwd)
 
   const run = Effect.gen(function* () {
     const usage = yield* reporterFor(runtime, sessionId)

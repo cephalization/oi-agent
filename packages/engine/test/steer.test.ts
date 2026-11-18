@@ -4,10 +4,14 @@ import * as path from "node:path"
 import { describe, expect, it } from "vite-plus/test"
 import { loadConfig } from "../src/config.ts"
 import { openaiChat } from "../src/dialects/index.ts"
+import type { ApprovalRequest } from "../src/agent.ts"
 import { Engine } from "../src/engine.ts"
-import { contextFor, loadSession, pendingInbox, renderSteer } from "../src/fold.ts"
+import { attachEvals } from "../src/eval-tool.ts"
+import { saveEval, type TurnRecord } from "../src/evals.ts"
+import { contextFor, loadSession, pendingInbox, renderSteer, SAID_MID_TURN } from "../src/fold.ts"
 import { readMetadata } from "../src/format.ts"
 import { type ModelCall, scriptedModel } from "../src/model.ts"
+import type { SteeringInput } from "../src/steering.ts"
 import { Store } from "../src/store.ts"
 import type { Json } from "../src/wire.ts"
 import { tempStore } from "./helpers.ts"
@@ -417,5 +421,120 @@ describe("queueing for the next turn", () => {
       "after the restart",
     ])
     later.close()
+  })
+})
+
+describe("who hears a message said to a running turn (issue #62)", () => {
+  const call = (id: string, command: string): Json => ({
+    model: "scripted",
+    content: [{ type: "tool_use", id, name: "bash", input: { command } }],
+    stop_reason: "tool_use",
+  })
+
+  /** A turn of two commands, steered while the first runs, with every reader recording what it was shown. */
+  const steeredTurn = async () => {
+    const store = tempStore()
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-steer-"))
+    const calls: Array<ModelCall> = []
+    const approvals: Array<ApprovalRequest> = []
+    const detected: Array<SteeringInput> = []
+    const judged: Array<TurnRecord> = []
+
+    const engine = new Engine({
+      store,
+      config: loadConfig({ OI_AGENT_CONFIG_DIR: path.join(store.home, "config"), OI_AGENT_HOME: store.home }),
+      approvals: "ask",
+      model: scriptedModel((sent, step) => {
+        calls.push(sent)
+
+        if (step === 0) return call("call-1", "sleep 0.4; echo installed-with-npm")
+
+        return step === 1 ? call("call-2", "echo pushing") : say("Stopped before the push.")
+      }),
+    })
+
+    engine.onApproval((request) => {
+      approvals.push(request)
+      engine.resolveApproval(request.span_id, "allow")
+    })
+
+    saveEval(cwd, {
+      name: "no_push",
+      description: "Never push.",
+      kind: "llm",
+      instructions: "Pass unless the agent pushed.",
+      choices: { pass: 1, fail: 0 },
+      fail_labels: ["fail"],
+      feedback: false,
+      learn: false,
+    })
+
+    attachEvals(engine, {
+      store,
+      judge: (_definition, record) => {
+        judged.push(record)
+
+        return Promise.resolve({ label: "pass" })
+      },
+      distill: () => Promise.resolve(undefined),
+      detect: (input) => {
+        detected.push(input)
+
+        return Promise.resolve({ durable: false, confidence: 0.9, statement: "" })
+      },
+    })
+
+    const sessionId = engine.createSession(cwd).id
+
+    engine.attend(sessionId)
+
+    const turn = engine.submit(sessionId, { text: "install it and push", userId: "tony" })
+
+    await until(() => calls.length === 1 && approvals.length === 1)
+    engine.steer(sessionId, { text: "do not push, ever", userId: "tony" })
+    expect((await turn).ok).toBe(true)
+    await engine.settled(sessionId)
+    await engine.idle(sessionId)
+    engine.close()
+
+    return { store, sessionId, approvals, detected, judged }
+  }
+
+  it("is in the prompt an approval is decided against, from the tool call after it", async () => {
+    const { approvals } = await steeredTurn()
+
+    expect(approvals.map((request) => request.prompt)).toEqual([
+      "install it and push",
+      `install it and push\n\n${SAID_MID_TURN} do not push, ever`,
+    ])
+  })
+
+  it("is in the transcript an evaluator judges, between the calls it was said between", async () => {
+    const { judged } = await steeredTurn()
+    const [record] = judged
+    const transcript = record?.transcript ?? ""
+
+    const order = ["[user] install it and push", "installed-with-npm", SAID_MID_TURN, "echo pushing"].map(
+      (part) => transcript.indexOf(part),
+    )
+
+    expect(order.every((index) => index >= 0)).toBe(true)
+    expect(order).toEqual(order.toSorted((left, right) => left - right))
+    expect(record?.input).toBe(`install it and push\n\n${SAID_MID_TURN} do not push, ever`)
+    expect(record?.judged).toContain('"said_while_working"')
+    expect(record?.judged).toContain('"after_calls": 1')
+    expect(record?.facts).toContain("said_while_working")
+  })
+
+  it("is read for durable steering on its own, against the turn as it stood", async () => {
+    const { detected } = await steeredTurn()
+
+    expect(detected.map((input) => input.prompt)).toEqual(["install it and push", "do not push, ever"])
+    expect(detected[0]?.previous).toBe("")
+    expect(detected[1]?.previous).toContain("[user] install it and push")
+    expect(detected[1]?.previous).toContain("installed-with-npm")
+    // Not what came after it, and not the message itself.
+    expect(detected[1]?.previous).not.toContain("echo pushing")
+    expect(detected[1]?.previous).not.toContain("do not push")
   })
 })

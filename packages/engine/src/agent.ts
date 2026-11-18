@@ -10,7 +10,7 @@ import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { observeWorkspace, compareWorkspace } from "./evidence.ts"
 import { completeHandoff } from "./handoff.ts"
 import { nsToIso, sessionIdForTrace } from "./ids.ts"
-import { contextFor, pendingInbox, steerPoint } from "./fold.ts"
+import { contextFor, pendingInbox, renderSaid, steerPoint } from "./fold.ts"
 import {
   type AnnotationFile,
   type EngineMetadata,
@@ -471,7 +471,8 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
         yield* Effect.forEach(
           response.calls,
           (use) =>
-            toolStep(env, use, input.userId, input.text, (ids) => {
+            // What was said to the turn so far is part of what the person asked for.
+            toolStep(env, use, input.userId, renderSaid(input.text, steered), (ids) => {
               observedResults.push(...ids)
               root.patchMetadata({ observed_results: observedResults })
               root.flush()

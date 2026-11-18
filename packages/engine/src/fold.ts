@@ -207,6 +207,17 @@ const toolResultsFor = (trace: TraceFiles, call: LastCall): Array<ToolResult> =>
 export const renderSteer = (entry: Pick<Steered, "user_id" | "text">): string =>
   `<steering from="${entry.user_id.replaceAll('"', "'")}">\nSent while you were working on the above. Take it into account now, without starting over.\n\n${entry.text}\n</steering>`
 
+/** How a message said to a running turn is marked for a reader that is not the agent. */
+export const SAID_MID_TURN = "[user, while the agent was working]"
+
+/**
+ * What a person said in a turn, for a reader that is not the agent (a judge,
+ * a detector, the approval decider): the prompt, then each message given
+ * while the turn ran, marked as such.
+ */
+export const renderSaid = (prompt: string, steered: ReadonlyArray<Pick<Steered, "text">>): string =>
+  [prompt, ...steered.map((entry) => `${SAID_MID_TURN} ${entry.text}`)].join("\n\n")
+
 /** The `LLM` span a message to a running turn would follow: the turn's latest finished model call. */
 export const steerPoint = (store: Store, sessionId: string, traceId: string): string | undefined =>
   lastModelCall(store.readTrace(sessionId, traceId))?.span.context.span_id
