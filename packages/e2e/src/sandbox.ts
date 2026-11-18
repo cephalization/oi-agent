@@ -168,6 +168,8 @@ export class Sandbox {
       ["TERM", "xterm-256color"],
       ["LANG", "en_US.UTF-8"],
       ["TMPDIR", this.tmp],
+      // A scenario is its own browser: nothing a test does should open a tab on this machine.
+      ["OI_AGENT_NO_BROWSER", "1"],
       ["OI_AGENT_CONFIG_DIR", this.configDir],
       ["OI_AGENT_HOME", this.home],
       ...Object.entries(GIT_ENV),
