@@ -138,6 +138,32 @@ scenario sends one `CHAIN` span about itself (verdict, notes, scores) to the
 drove. Scenarios with `phoenix: true` also have the CLI export there. Set
 `OI_E2E_TRACE=0` to turn the reporting off.
 
+Scenarios about logging in (`/phoenix`, and setup's Phoenix step) need a
+second Phoenix that asks for a login (`needs: ["phoenix-auth"]`); they are
+skipped without one. Start it on another port and working directory, with a
+known admin password:
+
+```sh
+PHOENIX_ENABLE_AUTH=true PHOENIX_SECRET=$(openssl rand -hex 32) \
+  PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD='<password>' \
+  PHOENIX_PORT=6007 PHOENIX_GRPC_PORT=4318 PHOENIX_WORKING_DIR=/tmp/phoenix-auth \
+  PHOENIX_OAUTH2_DCR_RATE_LIMIT_PER_HOUR=100000 \
+  uvx arize-phoenix serve
+OI_E2E_PHOENIX_AUTH_PASSWORD='<password>' pnpm e2e scenarios/phoenix-command.e2e.ts
+```
+
+Each scenario has its own config directory, so each registers oi with
+Phoenix again, and Phoenix allows ten registrations an hour by default:
+hence the raised limit. `OI_E2E_PHOENIX_AUTH` is its URL (default `http://localhost:6007`) and
+`OI_E2E_PHOENIX_AUTH_EMAIL` its admin (default `admin@localhost`). The
+scenario is the browser: it logs in as that admin and answers Phoenix's
+consent page over HTTP (`answerLogin` in `src/phoenix.ts`). The harness sets
+`OI_AGENT_NO_BROWSER`, so nothing a scenario does opens a tab. These
+scenarios store the key Phoenix makes under a keychain service of their own
+(`OI_AGENT_KEYCHAIN_SERVICE`) and delete it afterwards, and run on a fake
+model (`fakeChatModel` in `src/fakes.ts`), since a real model's credentials
+are in the real keychain.
+
 ## Pending scenarios
 
 A scenario for an issue that is not built yet is written from the issue's

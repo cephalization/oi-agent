@@ -12,7 +12,14 @@ import { getSecret, nowNs } from "@oi-agent/engine"
 import type { Schema } from "effect"
 import { it } from "vite-plus/test"
 import { withLock } from "./lock.ts"
-import { PHOENIX_ENDPOINT, PHOENIX_PROJECT, phoenixUp, reportScenario } from "./phoenix.ts"
+import {
+  PHOENIX_AUTH_ENDPOINT,
+  PHOENIX_ENDPOINT,
+  PHOENIX_PROJECT,
+  phoenixAuthUp,
+  phoenixUp,
+  reportScenario,
+} from "./phoenix.ts"
 import { ModelProxy, modelsMode } from "./proxy.ts"
 import { canConfine, type RunResult, Sandbox, type SandboxConfig, type SandboxOptions } from "./sandbox.ts"
 import { mapSamples, positiveInteger } from "./samples.ts"
@@ -34,7 +41,7 @@ export const MODELS = {
 }
 
 /** Prerequisites beyond the scenario's own model, which is always checked. */
-export type Need = "rex" | "phoenix" | "second-model" | "typesafe"
+export type Need = "rex" | "phoenix" | "phoenix-auth" | "second-model" | "typesafe"
 
 export interface ScenarioOptions {
   /** Fixture repo to work in (`fixtures/repos/<name>`). */
@@ -150,6 +157,10 @@ const missing = async (need: Need): Promise<string | undefined> => {
       return (await findRex()) === undefined ? "Rex is not installed" : undefined
     case "phoenix":
       return (await phoenixUp()) ? undefined : `Phoenix is not reachable at ${PHOENIX_ENDPOINT}`
+    case "phoenix-auth":
+      return (await phoenixAuthUp())
+        ? undefined
+        : `no Phoenix with auth to log in to at ${PHOENIX_AUTH_ENDPOINT} (see the README)`
     case "second-model":
       return hasProvider(MODELS.second) ? undefined : `no credentials for ${MODELS.second}`
   }

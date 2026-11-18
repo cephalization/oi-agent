@@ -5,10 +5,13 @@
  * a key means it will not run: setup has to say so, and the terminal has to
  * keep saying so, rather than leaving it silently off.
  */
+import { execFileSync } from "node:child_process"
+import { randomBytes } from "node:crypto"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Schema } from "effect"
-import { describe, expect } from "vite-plus/test"
+import { afterAll, describe, expect } from "vite-plus/test"
+import { answerLogin, PHOENIX_AUTH_ENDPOINT } from "../src/phoenix.ts"
 import { type Scenario, scenario } from "../src/scenario.ts"
 import type { Terminal } from "../src/term.ts"
 
@@ -70,7 +73,79 @@ const finishSetup = async (term: Terminal): Promise<string> => {
   return screen
 }
 
+/** A keychain service of this file's own, so the key setup stores is never a real one. */
+const KEYCHAIN = `oi-agent-e2e-${randomBytes(6).toString("hex")}`
+
+afterAll(() => {
+  try {
+    execFileSync("security", ["delete-generic-password", "-s", KEYCHAIN, "-a", "phoenix"], {
+      stdio: "ignore",
+    })
+  } catch {
+    // Nothing was stored.
+  }
+})
+
 describe("onboarding", () => {
+  scenario(
+    "setup logs in to a Phoenix that asks for it through the browser, and keeps the key in the keychain",
+    { needs: ["rex", "phoenix-auth"] },
+    async (s) => {
+      const project = `oi-e2e-setup-${randomBytes(4).toString("hex")}`
+
+      const setup = await s.tui(["setup"], {
+        env: new Map([...NO_KEY, ["OI_AGENT_KEYCHAIN_SERVICE", KEYCHAIN]]),
+      })
+
+      await setupUntilLearning(setup)
+      await setup.key("enter")
+      await setup.waitFor(/Which model reads your messages/)
+      await setup.key("enter")
+
+      // The same conversation as /phoenix: the server is asked what it wants before anything is saved.
+      await setup.waitFor(/Phoenix URL \(type `none` to turn export off\)/)
+      await setup.line(PHOENIX_AUTH_ENDPOINT)
+      await setup.waitFor(/It asks for a login\./)
+      await setup.waitFor(/Phoenix project/)
+      await setup.line(project)
+      await setup.waitFor(/How should oi authenticate to Phoenix\?[\s\S]*1\s+Log in with your browser/)
+      await setup.line("1")
+
+      const waiting = await setup.waitFor(/Waiting for the browser/)
+
+      const url = [
+        ...waiting
+          .replaceAll("\n", "")
+          .matchAll(/(http\S+?\/oauth2\/authorize\?\S+?code_challenge_method=S256)/g),
+      ].at(-1)?.[1]
+
+      await answerLogin(url ?? "")
+      await setup.waitFor(/Phoenix accepted the key\./)
+      await setup.waitFor(/Saved the key to the keychain\./)
+      await setup.waitFor(/Sessions directory/)
+      await setup.key("enter")
+      await setup.waitFor(/Saved /)
+      await setup.exited()
+
+      const saved = fs.readFileSync(path.join(s.sandbox.configDir, "config.json"), "utf8")
+
+      expect(JSON.parse(saved).phoenix).toEqual({ endpoint: PHOENIX_AUTH_ENDPOINT, project })
+
+      const key = execFileSync("security", ["find-generic-password", "-s", KEYCHAIN, "-a", "phoenix", "-w"], {
+        encoding: "utf8",
+      }).trim()
+
+      expect(saved).not.toContain(key)
+      expect(await setup.screen()).not.toContain(key)
+
+      const accepted = await fetch(`${PHOENIX_AUTH_ENDPOINT}/v1/projects?limit=1`, {
+        headers: { authorization: `Bearer ${key}` },
+      })
+
+      expect(accepted.status).toBe(200)
+    },
+  )
+
   scenario(
     "choosing Haiku without an Anthropic key, setup and the terminal say that learning from corrections will not run",
     { needs: ["rex"] },

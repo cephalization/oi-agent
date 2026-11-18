@@ -180,3 +180,21 @@ export const fakeTextOnlyModel = (): Promise<FakeServer> =>
     type: "application/json",
     body: JSON.stringify({ error: { message: NO_IMAGES, type: "invalid_request_error" } }),
   }))
+
+/**
+ * An OpenAI-compatible server whose model answers every prompt with `reply`.
+ * For scenarios that need a turn to exist and are not about what a model
+ * says: they run without credentials, and the same in replay.
+ */
+export const fakeChatModel = (reply: string): Promise<FakeServer> =>
+  listen(() => ({
+    status: 200,
+    type: "text/event-stream",
+    body: [
+      { id: "fake", model: "fake", choices: [{ delta: { content: reply } }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+    ]
+      .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
+      .concat("data: [DONE]\n\n")
+      .join(""),
+  }))
