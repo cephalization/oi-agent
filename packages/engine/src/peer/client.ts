@@ -1,8 +1,9 @@
 import { Option, Schema } from "effect"
-import { type EndedSpan, printSpan, spanFileName } from "../format.ts"
+import type { NewImage } from "../attachments.ts"
+import { type EndedSpan, printAttachment, printSpan, spanFileName } from "../format.ts"
 import { isoToNs } from "../ids.ts"
 import type { Store } from "../store.ts"
-import { Manifest, SessionInfo, type SessionState, WireEvent } from "./protocol.ts"
+import { Manifest, type PromptRequest, SessionInfo, type SessionState, WireEvent } from "./protocol.ts"
 
 export interface PeerConnection {
   /** Older hosts can sync conversation files without publishing live task status. */
@@ -10,8 +11,12 @@ export interface PeerConnection {
   readonly state: () => SessionState
   readonly info: SessionInfo
   readonly sessionId: string
-  /** Submit a prompt to the host. Resolves to an error message, if any. */
-  readonly prompt: (text: string, mode?: "steer" | "queue") => Promise<string | undefined>
+  /** Submit a prompt to the host, with any images. Resolves to an error message, if any. */
+  readonly prompt: (
+    text: string,
+    mode?: "steer" | "queue",
+    images?: ReadonlyArray<NewImage>,
+  ) => Promise<string | undefined>
   /** Resolves when the event stream ends. */
   readonly closed: Promise<void>
   readonly close: () => void
@@ -24,6 +29,7 @@ const HOST_TIMEOUT_MS = 10_000
 const decodeInfo = Schema.decodeUnknownOption(SessionInfo)
 const decodeManifest = Schema.decodeUnknownOption(Manifest)
 const decodeEvent = Schema.decodeUnknownOption(Schema.fromJsonString(WireEvent))
+const decodeRefusal = Schema.decodeUnknownOption(Schema.Struct({ error: Schema.String }))
 
 const spanPath = (span: EndedSpan): string =>
   `traces/${span.context.trace_id}/${spanFileName(isoToNs(span.start_time), span.context.span_id)}.json`
@@ -52,6 +58,10 @@ const apply = (store: Store, sessionId: string, event: WireEvent, spans: Map<str
       `annotations/${event.annotation.id}.json`,
       JSON.stringify(event.annotation, null, 2),
     )
+  }
+
+  if (event.type === "attachment") {
+    store.importFile(sessionId, `attachments/${event.attachment.id}.json`, printAttachment(event.attachment))
   }
 
   if (event.type === "inbox") {
@@ -196,16 +206,32 @@ export const joinSession = async (
     sessionId,
     closed: pump(),
     close: () => controller.abort(),
-    prompt: async (text, mode = "steer") => {
+    prompt: async (text, mode = "steer", images = []) => {
+      // An older host would take the text and drop the images without saying so.
+      if (images.length > 0 && info.features?.includes("images") !== true)
+        return "The host runs an older oi that cannot take images. Ask them to update, or send the prompt without them."
+
+      const sent = images.map((image) => ({ name: image.name, data: image.bytes.toString("base64") }))
+
+      const body: typeof PromptRequest.Type =
+        sent.length === 0 ? { text, mode } : { text, mode, images: sent }
+
       try {
         const response = await fetch(`${baseUrl}/v1/prompt`, {
           method: "POST",
           headers: { ...headers, "content-type": "application/json" },
-          body: JSON.stringify({ text, mode }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         })
 
-        return response.ok ? undefined : `The host rejected the prompt (HTTP ${response.status}).`
+        if (response.ok) return undefined
+
+        // The host says why in words when it can: an image too large, or not an image at all.
+        const reason = Option.getOrUndefined(decodeRefusal(await response.json().catch(() => undefined)))
+
+        return reason === undefined
+          ? `The host rejected the prompt (HTTP ${response.status}).`
+          : `The host rejected the prompt (HTTP ${response.status}): ${reason.error}`
       } catch {
         controller.abort()
 

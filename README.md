@@ -30,6 +30,8 @@ session, and run `oi setup` to change your provider or settings.
 
 - **Work with your models.** Use Anthropic, OpenAI, a ChatGPT plan or local
   models, and switch providers during a session.
+- **Show it a screenshot.** Drop image files on the terminal, or paste one from
+  the clipboard with ctrl+v, and they go to the model with your message.
 - **Keep working while tasks run.** Background commands and subagents report
   back when finished. Set `"delegation": "off"` in config if you prefer work
   in one conversation.

@@ -2,11 +2,19 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import * as http from "node:http"
 import type { AddressInfo } from "node:net"
 import { Option, Schema } from "effect"
+import { isProblem, MAX_PROMPT_IMAGE_BYTES } from "../attachments.ts"
 import { pendingInbox } from "../fold.ts"
 import type { Engine } from "../engine.ts"
 import type { StoreEvent } from "../store.ts"
 import type { Json } from "../wire.ts"
-import { type Manifest, PromptRequest, type Role, type SessionInfo, type SessionState } from "./protocol.ts"
+import {
+  FEATURES,
+  type Manifest,
+  PromptRequest,
+  type Role,
+  type SessionInfo,
+  type SessionState,
+} from "./protocol.ts"
 
 export interface ShareTokens {
   /** Can watch. */
@@ -28,12 +36,21 @@ const decodePrompt = Schema.decodeUnknownOption(Schema.fromJsonString(PromptRequ
 const same = (a: string, b: string): boolean =>
   a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
-const readBody = async (request: http.IncomingMessage): Promise<string> => {
+/** The most a prompt can be: its images as base64, and room for the text. */
+const MAX_PROMPT_BODY = Math.ceil((MAX_PROMPT_IMAGE_BYTES * 4) / 3) + 1024 * 1024
+
+/** The request's body, or undefined when it is larger than a prompt can be. The rest is read and dropped. */
+const readBody = async (request: http.IncomingMessage): Promise<string | undefined> => {
   const chunks: Array<Buffer> = []
+  let size = 0
 
-  for await (const chunk of request) chunks.push(Buffer.from(chunk))
+  for await (const chunk of request) {
+    size += Buffer.byteLength(chunk)
 
-  return Buffer.concat(chunks).toString("utf8")
+    if (size <= MAX_PROMPT_BODY) chunks.push(Buffer.from(chunk))
+  }
+
+  return size > MAX_PROMPT_BODY ? undefined : Buffer.concat(chunks).toString("utf8")
 }
 
 const json = (response: http.ServerResponse, status: number, body: Json): void => {
@@ -93,12 +110,25 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
     response: http.ServerResponse,
     name: string,
   ): Promise<void> => {
-    const body = Option.getOrUndefined(decodePrompt(await readBody(request)))
+    const raw = await readBody(request)
 
-    if (body === undefined || body.text.trim() === "")
+    if (raw === undefined) return json(response, 413, { error: "the prompt and its images are too large" })
+
+    const body = Option.getOrUndefined(decodePrompt(raw))
+    const images = body?.images ?? []
+
+    if (body === undefined || (body.text.trim() === "" && images.length === 0))
       return json(response, 400, { error: "expected { text }" })
 
-    const input = { userId: name, text: body.text }
+    // The bytes arrive with the prompt and are kept here: nothing on the joiner's disk is read later.
+    const attachments = engine.attach(
+      sessionId,
+      images.map((image) => ({ name: image.name, bytes: Buffer.from(image.data, "base64") })),
+    )
+
+    if (isProblem(attachments)) return json(response, 400, { error: attachments })
+
+    const input = { userId: name, text: body.text, attachments }
     const steered = body.mode === "queue" ? undefined : engine.steer(sessionId, input)
     const entry = steered ?? engine.queue(sessionId, input)
     json(response, 202, { inbox_id: entry.id })
@@ -114,7 +144,7 @@ export const servePeers = async (engine: Engine, sessionId: string): Promise<Pee
       return json(response, 401, { error: "invalid share token" })
 
     if (request.method === "GET" && url.pathname === "/v1/session") {
-      const info: SessionInfo = { header, role, host: engine.config.user }
+      const info: SessionInfo = { header, role, host: engine.config.user, features: [...FEATURES] }
 
       return json(response, 200, info)
     }

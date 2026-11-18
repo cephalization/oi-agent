@@ -7,12 +7,14 @@
  * continues a conversation in the dialect its last call used, replaying the
  * stored bodies verbatim. Only when the next model speaks a different dialect
  * is the conversation translated, through the neutral `Transcript` below,
- * which keeps text, tool calls and tool results and drops what one provider
- * cannot read from another (reasoning, signatures, provider-specific blocks).
+ * which keeps text, images a user attached, tool calls and tool results, and
+ * drops what one provider cannot read from another (reasoning, signatures,
+ * provider-specific blocks).
  */
 import { Option, Schema } from "effect"
+import type { Image } from "./attachments.ts"
 import { Effort } from "./config.ts"
-import type { Api, AttrValue } from "./format.ts"
+import { type Api, type AttrValue, ImageType } from "./format.ts"
 import type { Json } from "./wire.ts"
 
 /** Span attributes under construction. */
@@ -43,7 +45,7 @@ export interface ToolResult {
 
 /** A conversation in no particular dialect: what survives a change of provider. */
 export type TranscriptEntry =
-  | { readonly role: "user"; readonly text: string }
+  | { readonly role: "user"; readonly text: string; readonly images?: ReadonlyArray<Image> }
   | { readonly role: "assistant"; readonly text: string; readonly calls: ReadonlyArray<ToolCall> }
   | { readonly role: "tool"; readonly id: string; readonly output: string; readonly isError: boolean }
 
@@ -60,8 +62,8 @@ export interface Dialect {
     rawResponse: string,
     results: ReadonlyArray<ToolResult>,
   ) => Array<Json>
-  /** A user message made of these text parts. */
-  readonly userMessage: (parts: ReadonlyArray<string>) => Json
+  /** A user message made of these text parts, and of images when the user attached some. */
+  readonly userMessage: (parts: ReadonlyArray<string>, images?: ReadonlyArray<Image>) => Json
   readonly toTranscript: (messages: ReadonlyArray<Json>) => Transcript
   readonly fromTranscript: (transcript: Transcript) => Array<Json>
   /** OpenInference attributes for the request; `vendor` is `llm.provider`, who served it. */
@@ -81,6 +83,28 @@ export const effortIn = (value: Json | undefined): Effort | undefined =>
 /** Tool results as the model reads them when one never finished. */
 export const INTERRUPTED_RESULT =
   "This tool call was interrupted before it completed. Its effects are unknown."
+
+// --- images ------------------------------------------------------------------
+
+/** An image as a `data:` URL: how the OpenAI APIs take one, and how OpenInference records one. */
+export const dataUrl = (image: Image): string => `data:${image.media_type};base64,${image.data}`
+
+const DATA_URL = /^data:([a-z/]+);base64,([\s\S]*)$/
+const decodeImageType = Schema.decodeUnknownOption(ImageType)
+
+/** The image in a `data:` URL; undefined for a link to one, which cannot be carried to another provider. */
+export const imageFromDataUrl = (url: string): Image | undefined => {
+  const [, type, data] = DATA_URL.exec(url) ?? []
+
+  return Option.match(decodeImageType(type), {
+    onNone: () => undefined,
+    onSome: (media_type) => (data === undefined ? undefined : { media_type, data }),
+  })
+}
+
+/** A user entry, with `images` only when there are some. */
+export const userEntry = (text: string, images: ReadonlyArray<Image>): TranscriptEntry =>
+  images.length === 0 ? { role: "user", text } : { role: "user", text, images }
 
 // --- shared helpers for flattening a transcript into OpenInference messages -------
 
@@ -108,6 +132,21 @@ export const flattenTranscript = (prefix: string, start: number, entries: Transc
     if (entry.role === "tool") {
       out.set(`${key}.tool_call_id`, entry.id)
       out.set(`${key}.content`, entry.output)
+    } else if (entry.role === "user" && entry.images !== undefined) {
+      // A message with images is a list of contents in OpenInference, not one string.
+      const texts = entry.text === "" ? [] : [entry.text]
+
+      for (const [position, text] of texts.entries()) {
+        out.set(`${key}.contents.${position}.message_content.type`, "text")
+        out.set(`${key}.contents.${position}.message_content.text`, text)
+      }
+
+      for (const [position, image] of entry.images.entries()) {
+        const content = `${key}.contents.${texts.length + position}.message_content`
+
+        out.set(`${content}.type`, "image")
+        out.set(`${content}.image.image.url`, dataUrl(image))
+      }
     } else {
       out.set(`${key}.content`, entry.text)
     }

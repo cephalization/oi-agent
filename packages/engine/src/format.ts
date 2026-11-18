@@ -162,6 +162,27 @@ export const Delivery = Schema.Struct({
 
 export type Delivery = typeof Delivery.Type
 
+export const ImageType = Schema.Literals(["image/png", "image/jpeg", "image/gif", "image/webp"])
+
+export type ImageType = typeof ImageType.Type
+
+/** An image attached to a prompt, by reference: the bytes are `attachments/<id>.json` in the session. */
+export const AttachmentRef = Schema.Struct({
+  /** SHA-256 of the image's bytes, in hex: the file's name, and the proof a copy is intact. */
+  id: Schema.String,
+  /** The file's name where it came from, for people; never a path. */
+  name: Schema.String,
+  media_type: ImageType,
+  bytes: Schema.Int,
+})
+
+export type AttachmentRef = typeof AttachmentRef.Type
+
+/** An attached image as stored: immutable, since its name is its content. */
+export const AttachmentFile = Schema.Struct({ ...AttachmentRef.fields, data: Schema.String })
+
+export type AttachmentFile = typeof AttachmentFile.Type
+
 /**
  * Input that the host has not started as a trace yet: a prompt submitted by
  * a peer, or the result of background work (`delivers`).
@@ -182,6 +203,8 @@ export const InboxFile = Schema.Struct({
    * its own. If that turn ends first, it runs as an ordinary prompt.
    */
   steers: Schema.optionalKey(Schema.Boolean),
+  /** Images sent with the prompt. */
+  attachments: Schema.optionalKey(Schema.Array(AttachmentRef)),
 })
 
 export type InboxFile = typeof InboxFile.Type
@@ -293,6 +316,7 @@ export const Steered = Schema.Struct({
   after: Schema.String,
   user_id: Schema.String,
   text: Schema.String,
+  attachments: Schema.optionalKey(Schema.Array(AttachmentRef)),
 })
 
 export type Steered = typeof Steered.Type
@@ -334,6 +358,8 @@ export const EngineMetadata = Schema.Struct({
   pid: Schema.optionalKey(Schema.Int),
   /** On session.cancel CHAIN spans: withdrawn inbox entries, never dispatched. */
   cancelled_inbox: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** On a turn's root span: the images sent with its prompt. */
+  attachments: Schema.optionalKey(Schema.Array(AttachmentRef)),
   /** Inbox entry this turn consumed. */
   inbox_id: Schema.optionalKey(Schema.String),
   /**
@@ -472,6 +498,8 @@ export const parseHeader = parser(SessionHeader)
 export const printHeader = printer(SessionHeader)
 export const parseAnnotation = parser(AnnotationFile)
 export const printAnnotation = printer(AnnotationFile)
+export const parseAttachment = parser(AttachmentFile)
+export const printAttachment = printer(AttachmentFile)
 export const parseInbox = parser(InboxFile)
 export const printInbox = printer(InboxFile)
 export const parseDelta = parser(StreamDelta)

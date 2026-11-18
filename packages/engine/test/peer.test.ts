@@ -3,6 +3,7 @@ import * as http from "node:http"
 import { type AddressInfo, createConnection } from "node:net"
 import * as os from "node:os"
 import * as path from "node:path"
+import { Schema } from "effect"
 import { afterEach, describe, expect, it, vi } from "vite-plus/test"
 import { loadConfig } from "../src/config.ts"
 import { Engine } from "../src/engine.ts"
@@ -10,11 +11,14 @@ import { loadSession, pendingInbox } from "../src/fold.ts"
 import { OI, type SpanFile, writeMetadata } from "../src/format.ts"
 import { scriptedModel } from "../src/model.ts"
 import { joinSession, type PeerConnection } from "../src/peer/client.ts"
+import { SessionInfo } from "../src/peer/protocol.ts"
 import { type PeerServer, servePeers } from "../src/peer/server.ts"
 import { formatShareLink, parseShareLink, tailcatForward } from "../src/peer/tailcat.ts"
 import type { StoreEvent } from "../src/store.ts"
 import type { Json } from "../src/wire.ts"
-import { tempStore } from "./helpers.ts"
+import { MAX_IMAGE_BYTES } from "../src/attachments.ts"
+import { readMetadata } from "../src/format.ts"
+import { png, tempStore } from "./helpers.ts"
 
 const say = (value: string): Json => ({ content: [{ type: "text", text: value }], stop_reason: "end_turn" })
 
@@ -547,5 +551,107 @@ describe("peer sync", () => {
       "http://127.0.0.1",
     )
     expect(parseShareLink("nonsense")).toBeUndefined()
+  })
+})
+
+describe("images from a joiner", () => {
+  it("carries a driver's images to the host with the prompt, and to everyone watching", async () => {
+    const { engine, sessionId, server, base } = await host()
+    const { peer, store } = await join(base, server.tokens.driver, "ana")
+    const { store: watching } = await join(base, server.tokens.viewer, "eve")
+
+    expect(peer.info.features).toContain("images")
+    expect(
+      await peer.prompt("what is this?", "steer", [
+        // A path that exists only on the joiner's machine: the host is given bytes and a name.
+        { name: "/Users/ana/Desktop/shot.png", bytes: png("from ana") },
+        { name: "second.png", bytes: png("also from ana") },
+      ]),
+    ).toBeUndefined()
+    await until(() => loadSession(watching, sessionId).head?.state === "complete")
+
+    const turn = loadSession(engine.store, sessionId).head
+    const refs = readMetadata(turn!.root).attachments ?? []
+
+    expect(turn?.user_id).toBe("ana")
+    expect(refs.map((ref) => ref.name)).toEqual(["shot.png", "second.png"])
+    expect(engine.store.readAttachment(sessionId, refs[0]?.id ?? "")?.data).toBe(
+      png("from ana").toString("base64"),
+    )
+
+    // The driver and the viewer hold the same files as the host: the prompt, and what was shown with it.
+    await until(() => watching.manifest(sessionId).length === engine.store.manifest(sessionId).length)
+    expect(store.manifest(sessionId)).toEqual(engine.store.manifest(sessionId))
+    expect(watching.manifest(sessionId)).toEqual(engine.store.manifest(sessionId))
+    expect(watching.readAttachment(sessionId, refs[1]?.id ?? "")?.data).toBe(
+      png("also from ana").toString("base64"),
+    )
+
+    // Someone joining afterwards gets them from the manifest.
+    const { store: late } = await join(base, server.tokens.viewer, "lee")
+
+    expect(late.readAttachment(sessionId, refs[0]?.id ?? "")?.name).toBe("shot.png")
+  })
+
+  it("refuses a viewer's images, what is not an image, and what is too large, storing nothing", async () => {
+    const { engine, sessionId, server, base } = await host()
+    const { peer: viewer } = await join(base, server.tokens.viewer, "eve")
+    const { peer: driver } = await join(base, server.tokens.driver, "ana")
+
+    expect(await viewer.prompt("look", "steer", [{ name: "a.png", bytes: png("a") }])).toContain("403")
+    expect(await driver.prompt("look", "steer", [{ name: "notes.png", bytes: Buffer.from("text") }])).toBe(
+      "The host rejected the prompt (HTTP 400): notes.png is not a PNG, JPEG, GIF or WebP image.",
+    )
+    expect(
+      await driver.prompt("look", "steer", [
+        { name: "huge.png", bytes: Buffer.concat([png(""), Buffer.alloc(MAX_IMAGE_BYTES)]) },
+      ]),
+    ).toMatch(/The host rejected the prompt \(HTTP 400\): huge\.png is 5\.2 MB/)
+
+    // Larger than any prompt can be: refused by size, before it is parsed.
+    const flood = await fetch(`${base}/v1/prompt`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${server.tokens.driver}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "x", images: [{ name: "a.png", data: "A".repeat(30 * 1024 * 1024) }] }),
+    })
+
+    expect(flood.status).toBe(413)
+    expect(engine.store.manifest(sessionId).filter((rel) => rel.startsWith("attachments/"))).toEqual([])
+    expect(loadSession(engine.store, sessionId).turns).toEqual([])
+    expect(pendingInbox(engine.store, sessionId)).toEqual([])
+  })
+
+  it("does not send images to a host too old to take them", async () => {
+    const { engine, sessionId, server } = await host()
+
+    // A host from before images: the same session, described without `features`.
+    const old = http.createServer((request, response) => {
+      void fetch(`http://127.0.0.1:${server.port}${request.url ?? "/"}`, {
+        headers: { authorization: request.headers.authorization ?? "" },
+      }).then(async (upstream) => {
+        if (request.url !== "/v1/session") {
+          response.writeHead(upstream.status, { "content-type": "application/json" })
+
+          return response.end(request.url === "/v1/events" ? "" : await upstream.text())
+        }
+
+        const info = Schema.decodeUnknownSync(SessionInfo)(await upstream.json())
+
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ header: info.header, role: info.role, host: info.host }))
+      })
+    })
+
+    await new Promise<void>((resolve) => old.listen(0, "127.0.0.1", resolve))
+    cleanup.push(() => void old.close())
+
+    // SAFETY: a listening TCP server's address is always an AddressInfo, never a pipe name.
+    const { port } = old.address() as AddressInfo
+    const { peer } = await join(`http://127.0.0.1:${port}`, server.tokens.driver, "ana")
+
+    expect(await peer.prompt("look", "steer", [{ name: "a.png", bytes: png("a") }])).toMatch(
+      /older oi that cannot take images/,
+    )
+    expect(loadSession(engine.store, sessionId).turns).toEqual([])
   })
 })

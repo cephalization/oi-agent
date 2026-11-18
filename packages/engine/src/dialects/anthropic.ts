@@ -1,5 +1,6 @@
 /** The Anthropic Messages dialect: the engine's original, and the default for spans that predate dialects. */
 import { Option, Schema } from "effect"
+import type { Image } from "../attachments.ts"
 import {
   type Dialect,
   effortIn,
@@ -8,6 +9,7 @@ import {
   type ToolResult,
   type Transcript,
   type TranscriptEntry,
+  userEntry,
 } from "../dialect.ts"
 import { requestAttributes, responseAttributes } from "../oi.ts"
 import {
@@ -142,6 +144,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
 
     const texts: Array<string> = []
     const calls: Array<ToolCall> = []
+    const images: Array<Image> = []
 
     for (const part of message.content) {
       const block = asBlock(part)
@@ -162,6 +165,8 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
         calls.push({ id: block.id, name: block.name, input: block.input })
       } else if ("text" in block) {
         texts.push(block.text)
+      } else if ("source" in block) {
+        images.push({ media_type: block.source.media_type, data: block.source.data })
       }
       // Thinking and other provider-specific blocks do not carry over; web tool blocks did, as text, above.
     }
@@ -169,7 +174,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
     const text = texts.join("\n")
 
     if (message.role === "user") {
-      if (text !== "") entries.push({ role: "user", text })
+      if (text !== "" || images.length > 0) entries.push(userEntry(text, images))
     } else if (text !== "" || calls.length > 0) {
       mergeAssistant(entries, { role: "assistant", text, calls })
     }
@@ -205,7 +210,7 @@ const fromTranscript: Dialect["fromTranscript"] = (transcript: Transcript) => {
     flushResults()
 
     if (entry.role === "user") {
-      messages.push({ role: "user", content: entry.text })
+      messages.push(userMessage([entry.text], entry.images))
       continue
     }
 
@@ -222,17 +227,35 @@ const fromTranscript: Dialect["fromTranscript"] = (transcript: Transcript) => {
   return messages
 }
 
+const imageBlock = (image: Image): Json => ({
+  type: "image",
+  source: { type: "base64", media_type: image.media_type, data: image.data },
+})
+
+const userMessage: Dialect["userMessage"] = (parts, images = []) => {
+  // One part stays a plain string, as the engine has always sent it; replays then match byte for byte.
+  if (images.length === 0)
+    return parts.length === 1
+      ? { role: "user", content: parts[0] ?? "" }
+      : { role: "user", content: parts.map((text) => ({ type: "text", text })) }
+
+  // Images first, as Anthropic recommends; an empty text block is refused, and a prompt can be only images.
+  return {
+    role: "user",
+    content: [
+      ...images.map(imageBlock),
+      ...parts.flatMap((text) => (text === "" ? [] : [{ type: "text", text }])),
+    ],
+  }
+}
+
 export const anthropicMessages: Dialect = {
   api: "anthropic-messages",
   requestMessages: (raw) =>
     Option.match(parseRequest(raw), { onNone: () => undefined, onSome: (request) => [...request.messages] }),
   reply,
   continueWith,
-  // One part stays a plain string, as the engine has always sent it; replays then match byte for byte.
-  userMessage: (parts) =>
-    parts.length === 1
-      ? { role: "user", content: parts[0] ?? "" }
-      : { role: "user", content: parts.map((text) => ({ type: "text", text })) },
+  userMessage,
   toTranscript,
   fromTranscript,
   requestAttributes: (raw, vendor) =>

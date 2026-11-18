@@ -6,6 +6,7 @@
  * to the store's event stream; none of them holds session state of its own.
  */
 import { Effect, Exit, Fiber, Layer, Option } from "effect"
+import { attachmentsFrom, isProblem, type NewImage } from "./attachments.ts"
 import {
   type Approval,
   type ApprovalDecision,
@@ -29,6 +30,7 @@ import { completeHandoff, recoverHandoff } from "./handoff.ts"
 import { handoffSeedFor, loadSession, pendingInbox } from "./fold.ts"
 import {
   type AnnotationFile,
+  type AttachmentRef,
   type EngineMetadata,
   type InboxFile,
   OI,
@@ -66,8 +68,21 @@ export interface Prompt {
   readonly operation?: "compact" | "handoff" | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
+  /** Images sent with the prompt: references `attach` returned for this session. */
+  readonly attachments?: ReadonlyArray<AttachmentRef> | undefined
   readonly delivers?: EngineMetadata["delivers"]
   readonly origin?: EngineMetadata["origin"]
+}
+
+/** What a person says to a session that is already busy: to its running turn, or after it. */
+export type Said = Pick<Prompt, "text" | "userId" | "attachments">
+
+const inboxEntry = (prompt: Said): Pick<InboxFile, "user_id" | "text" | "attachments"> => {
+  const entry = { user_id: prompt.userId, text: prompt.text }
+
+  return prompt.attachments === undefined || prompt.attachments.length === 0
+    ? entry
+    : { ...entry, attachments: prompt.attachments }
 }
 
 /** A command or task running in the background of a session. */
@@ -543,20 +558,32 @@ export class Engine {
    * nothing, when no turn is running. If the turn ends before it reads the
    * message, the message runs as the next turn instead.
    */
-  steer(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile | undefined {
+  steer(sessionId: string, prompt: Said): InboxFile | undefined {
     if (!this.steerable(sessionId)) return undefined
 
-    return this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text, steers: true })
+    return this.store.writeInbox(sessionId, { ...inboxEntry(prompt), steers: true })
+  }
+
+  /**
+   * Keep images in a session so a prompt can carry them: the references to
+   * pass as a prompt's `attachments`, or why they cannot be attached. The
+   * bytes are checked here, for a person at this terminal and for a peer's
+   * upload alike, and whether the model can read them is left to its provider.
+   */
+  attach(sessionId: string, images: ReadonlyArray<NewImage>): Array<AttachmentRef> | string {
+    const files = attachmentsFrom(images)
+
+    return isProblem(files) ? files : files.map((file) => this.store.writeAttachment(sessionId, file))
   }
 
   /**
    * Leave a prompt for after the running turn. It is on disk from here on, so
    * it is not lost with this process: whoever serves the session next runs it.
    */
-  queue(sessionId: string, prompt: Pick<Prompt, "text" | "userId">): InboxFile {
+  queue(sessionId: string, prompt: Said): InboxFile {
     this.away.delete(sessionId)
 
-    const entry = this.store.writeInbox(sessionId, { user_id: prompt.userId, text: prompt.text })
+    const entry = this.store.writeInbox(sessionId, inboxEntry(prompt))
 
     // A running turn drains the inbox when it ends, which keeps prompts in the order they were sent.
     if (!this.running.has(sessionId)) this.drainInbox(sessionId)
@@ -660,6 +687,7 @@ export class Engine {
         text: entry.text,
         userId: entry.user_id,
         inboxId: entry.id,
+        attachments: entry.attachments,
         origin: entry.origin,
       })
     }
@@ -882,6 +910,7 @@ export class Engine {
       previous: this.resolvePrevious(sessionId, prompt),
       injected: prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId),
       inboxId: prompt.inboxId,
+      attachments: prompt.attachments,
       delivers: prompt.delivers,
       origin: prompt.origin,
       operation: prompt.operation,

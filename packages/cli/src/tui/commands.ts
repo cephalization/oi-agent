@@ -69,6 +69,12 @@ export const COMMANDS: ReadonlyArray<Command> = [
     summary: "set up Anthropic, OpenAI (key or ChatGPT sign-in), or an OpenAI-compatible server",
     hostOnly: true,
   },
+  {
+    name: "/image",
+    summary: "attach image files to your next message (or drop them on the terminal; ctrl+v pastes one)",
+    argument: { name: "path", required: false },
+    hostOnly: false,
+  },
   { name: "/tour", summary: "have the agent explain how it works, using this session", hostOnly: false },
   {
     name: "/share",
@@ -127,6 +133,8 @@ export const helpLines = (commands: ReadonlyArray<Command>): Array<string> => {
     "Otherwise:  tab cycle ask / auto / yolo · shift+tab cycle reasoning effort",
     "            enter send · alt+enter newline · esc interrupt · ctrl+c clear or exit",
     "            ctrl+t while a turn runs: enter steers it, or queues for the next turn",
+    "Images:     drop files on the terminal, or ctrl+v an image from the clipboard;",
+    "            backspace at the start of the line removes the last one",
   ]
 }
 

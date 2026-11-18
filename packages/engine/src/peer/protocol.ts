@@ -7,19 +7,36 @@
  *   GET  /v1/manifest                immutable file paths + in-flight spans
  *   GET  /v1/file?path=<rel>         one immutable file
  *   GET  /v1/events                  server-sent stream of store events
- *   POST /v1/prompt                  submit a prompt (drivers only)
+ *   POST /v1/prompt                  submit a prompt, with any images (drivers only)
  *
  * Syncing is: fetch the manifest, copy the files you lack, then follow the
  * event stream. Ended spans never change, so there is nothing to merge.
  */
 import { Schema } from "effect"
-import { AnnotationFile, EndedSpan, InboxFile, SessionHeader, SpanFile, StreamDelta } from "../format.ts"
+import {
+  AnnotationFile,
+  AttachmentFile,
+  EndedSpan,
+  InboxFile,
+  SessionHeader,
+  SpanFile,
+  StreamDelta,
+} from "../format.ts"
 
 export const Role = Schema.Literals(["viewer", "driver"])
 
 export type Role = typeof Role.Type
 
-export const SessionInfo = Schema.Struct({ header: SessionHeader, role: Role, host: Schema.String })
+/** What a host can do beyond the first version of this protocol. A joiner checks before relying on one. */
+export const FEATURES = ["images"] as const
+
+export const SessionInfo = Schema.Struct({
+  header: SessionHeader,
+  role: Role,
+  host: Schema.String,
+  /** Absent from hosts that predate it, which is how a joiner knows not to send them images. */
+  features: Schema.optionalKey(Schema.Array(Schema.String)),
+})
 
 export type SessionInfo = typeof SessionInfo.Type
 
@@ -51,9 +68,19 @@ export const Manifest = Schema.Struct({
 
 export type Manifest = typeof Manifest.Type
 
+/** An image sent with a prompt: its bytes travel with it, since the host cannot read the joiner's disk. */
+export const PromptImage = Schema.Struct({
+  name: Schema.String,
+  /** Base64. The host reads the format from the bytes and checks size and count itself. */
+  data: Schema.String,
+})
+
+export type PromptImage = typeof PromptImage.Type
+
 export const PromptRequest = Schema.Struct({
   text: Schema.String,
   mode: Schema.optionalKey(Schema.Literals(["steer", "queue"])),
+  images: Schema.optionalKey(Schema.Array(PromptImage)),
 })
 
 /** A store event as sent to peers. */
@@ -75,6 +102,11 @@ export const WireEvent = Schema.Union([
     annotation: AnnotationFile,
   }),
   Schema.Struct({ type: Schema.Literal("inbox"), session_id: Schema.String, entry: InboxFile }),
+  Schema.Struct({
+    type: Schema.Literal("attachment"),
+    session_id: Schema.String,
+    attachment: AttachmentFile,
+  }),
 ])
 
 export type WireEvent = typeof WireEvent.Type

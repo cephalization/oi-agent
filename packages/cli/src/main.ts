@@ -3,6 +3,7 @@ import { execFile } from "node:child_process"
 import { closeSync, existsSync, writeSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { parseArgs } from "node:util"
+import { readImage } from "./images.ts"
 import { runOnboarding } from "./onboarding.ts"
 import { isCancelled } from "./prompts.ts"
 import { Providers } from "./providers.ts"
@@ -11,6 +12,7 @@ import { type Opened, type Phoenix, Sessions } from "./storage.ts"
 import { ProgramStatus } from "./program-status.ts"
 import { type AppExit, runApp } from "./tui/app.ts"
 import {
+  isProblem,
   type ApprovalMode,
   attachEvals,
   builtinTools,
@@ -91,6 +93,8 @@ Options:
       --effort <level>       Reasoning effort: low, medium, high, xhigh or max
       --approvals <mode>    Tool approvals: ask, auto or allow (overrides config)
       --yolo                 Run tools that change the machine without asking
+      --image <file>         With \`oi run\`: send an image with the prompt (PNG,
+                             JPEG, GIF or WebP; repeat for several)
       --no-wait              With \`oi run\`: exit after the answer, without waiting
                              for background jobs it started
       --json                 With \`oi metrics\`: print the numbers as JSON
@@ -108,6 +112,7 @@ const { values, positionals } = parseArgs({
     approvals: { type: "string" },
     yolo: { type: "boolean", default: false },
     check: { type: "boolean", default: false },
+    image: { type: "string", multiple: true },
     "no-wait": { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -604,10 +609,21 @@ const run = async (prompt: string): Promise<void> => {
 
   engine.attend(sessionId)
 
+  const images = (values.image ?? []).map((file) => {
+    const image = readImage(file, process.cwd())
+
+    return isProblem(image) ? fail(image) : image
+  })
+
+  const attachments = engine.attach(sessionId, images)
+
+  if (isProblem(attachments)) fail(attachments)
+
   const outcome = await engine.submit(sessionId, {
     text: prompt,
     userId: engine.config.user,
     previous: target.from,
+    attachments: isProblem(attachments) ? [] : attachments,
   })
 
   process.stdout.write("\n")
@@ -1022,7 +1038,11 @@ if (values.help) {
 } else if (command === "join") {
   await join(rest[0] ?? fail("Usage: oi join <share-link>"))
 } else if (command === "run") {
-  await run(rest.join(" ") || fail("Usage: oi run <prompt>"))
+  // Images alone are a prompt: the images are what is asked about.
+  await run(
+    rest.join(" ") ||
+      ((values.image ?? []).length > 0 ? "" : fail("Usage: oi run [--image <file>] <prompt>")),
+  )
 } else if (command === "serve") {
   await serve(rest[0] ?? fail("Usage: oi serve <session>"))
 } else if (command === "sessions") {

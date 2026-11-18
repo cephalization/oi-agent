@@ -5,7 +5,7 @@
  * and are what the fold replays. The flattened `llm.*` attributes here are the
  * normalized view every OpenInference consumer understands.
  */
-import type { Attrs } from "./dialect.ts"
+import { type Attrs, dataUrl } from "./dialect.ts"
 import { OI } from "./format.ts"
 import {
   asBlock,
@@ -92,6 +92,9 @@ const flattenMessage = (prefix: string, start: number, role: string, content: Js
     } else if ("text" in block) {
       out.set(`${part}.type`, "text")
       out.set(`${part}.text`, block.text)
+    } else if ("source" in block) {
+      out.set(`${part}.type`, "image")
+      out.set(`${part}.image.image.url`, dataUrl(block.source))
     } else {
       out.set(`${part}.type`, block.type)
     }
