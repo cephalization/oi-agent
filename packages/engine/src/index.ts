@@ -20,6 +20,8 @@ export * from "./metrics.ts"
 
 export * from "./model.ts"
 
+export * from "./oauth.ts"
+
 export * from "./oi.ts"
 
 export * from "./prompt.ts"
@@ -71,6 +73,8 @@ export * from "./peer/tailcat.ts"
 export * from "./workspace.ts"
 
 export * from "./remote/phoenix.ts"
+
+export * from "./remote/phoenix-auth.ts"
 
 export * from "./remote/storage.ts"
 

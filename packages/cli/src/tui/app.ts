@@ -35,16 +35,17 @@ import {
   loadSession,
   renderMetrics,
   sessionMetrics,
+  loadConfig,
   loadEvals,
   type ModelDefault,
   type PeerConnection,
   type PeerServer,
-  type PhoenixExporter,
   type ProviderConfig,
   readRules,
   revertRules,
   saveApprovals,
   saveModel,
+  savePhoenix,
   servePeers,
   type Store,
   tailcatServe,
@@ -52,10 +53,11 @@ import {
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
 import { clipboardImage, droppedImages, readImage, shellWords } from "../images.ts"
+import { type Dialog, setupPhoenix } from "../phoenix-setup.ts"
 import { ProgramStatus } from "../program-status.ts"
 import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
 import type { Providers, ServerForm } from "../providers.ts"
-import type { Sessions } from "../storage.ts"
+import type { PhoenixConnection, Sessions } from "../storage.ts"
 import { clip, control, style, width, wrap } from "./ansi.ts"
 import {
   accept,
@@ -94,7 +96,8 @@ export interface AppOptions {
   readonly engine?: Engine | undefined
   /** Present when this process joined someone else's session. */
   readonly peer?: PeerConnection | undefined
-  readonly phoenix?: PhoenixExporter | undefined
+  /** The Phoenix this process exports to, which `/phoenix` can change while the session runs. */
+  readonly phoenix?: PhoenixConnection | undefined
   /** Providers and their models, for `/model`, `/provider` and effort cycling. */
   readonly providers?: Providers | undefined
   /** Sessions on disk and in Phoenix, for `/resume`. Without it, only those on disk. */
@@ -507,7 +510,7 @@ class App {
 
     if (transcript.sessionBytes > 0) add(style.gray(formatBytes(transcript.sessionBytes)), true)
 
-    if (options.phoenix !== undefined) add(style.gray("→ phoenix"), true)
+    if (options.phoenix?.exporter !== undefined) add(style.gray("→ phoenix"), true)
 
     if (this.held > 0) add(style.yellow(`✉ ${this.held} result${this.held === 1 ? "" : "s"} waiting`), false)
 
@@ -976,18 +979,112 @@ class App {
   }
 
   private async exportNow(): Promise<void> {
-    const { phoenix, sessionId } = this.options
+    const phoenix = this.options.phoenix?.exporter
 
-    if (phoenix === undefined) return this.say(["No Phoenix endpoint is configured."])
+    if (phoenix === undefined) return this.say(["No Phoenix server is set. /phoenix chooses one."])
 
-    phoenix.sweep(sessionId)
+    // The report counts since the exporter was made: say what this sweep sent, not the session's total.
+    const before = phoenix.report()
+
+    phoenix.sweep(this.options.sessionId)
     await phoenix.flush()
 
     const report = phoenix.report()
 
     this.say([
-      `Sent ${report.spans} spans and ${report.annotations} annotations to Phoenix.`,
+      `Sent ${report.spans - before.spans} spans and ${report.annotations - before.annotations} annotations to Phoenix at ${phoenix.target.endpoint} (project ${phoenix.target.project}).`,
+      ...report.errors.slice(before.errors.length),
+    ])
+  }
+
+  // --- /phoenix -------------------------------------------------------------
+
+  /** The Phoenix conversation, held with this terminal's own prompt and menus. Esc backs out. */
+  private phoenixDialog(): Dialog {
+    return {
+      ask: async (label, fallback) => {
+        const answer = await this.ask(label, false, fallback)
+
+        return answer === "" ? fallback : answer
+      },
+      secret: (label) => this.ask(label, true),
+      choose: (title, options) =>
+        this.pick(
+          title,
+          options.map((option) => ({ value: option.value, label: option.label, hint: option.hint ?? "" })),
+        ),
+      ok: (text) => this.screen.commit([`${style.green("✓")} ${text}`]),
+      warn: (text) =>
+        this.screen.commit(wrap(`! ${text}`, this.screen.columns - 1).map((line) => style.yellow(line))),
+      note: (text) => this.say(wrap(text, this.screen.columns - 1)),
+      open: (url) => {
+        openBrowser(url)
+        // Not wrapped by us: a terminal lets a long line be selected whole, and a URL must be copied whole.
+        this.say(["Your browser opens to log in to Phoenix. If it did not, visit:", url])
+      },
+      paste: (label, until) => {
+        const waiting = this.ask(label, false)
+        const mine = this.question
+
+        // What was waited for happened: take the question away, unless another has replaced it.
+        void until.finally(() => {
+          if (this.question === mine) mine?.answer(undefined)
+        })
+
+        return waiting
+      },
+    }
+  }
+
+  /**
+   * `/phoenix`: choose the server, project and login, then switch to it at
+   * once. The live export, `/export` and `/resume`'s listing all follow, and
+   * this session is sent to the new server straight away.
+   */
+  private async choosePhoenix(): Promise<void> {
+    const { phoenix, sessions, sessionId } = this.options
+
+    if (phoenix === undefined) return
+
+    const before = phoenix.exporter?.target
+    const chosen = await setupPhoenix(this.phoenixDialog(), loadConfig().phoenix)
+
+    if (chosen === undefined) return this.say(["Phoenix is unchanged."])
+
+    try {
+      savePhoenix(chosen)
+    } catch (error) {
+      return this.say([
+        `Could not save the config file: ${error instanceof Error ? error.message : String(error)}`,
+      ])
+    }
+
+    await phoenix.connect({ ...chosen, apiKey: getSecret("phoenix") })
+    sessions?.forgetListing()
+
+    const exporter = phoenix.exporter
+
+    if (exporter === undefined) return this.say(["Export to Phoenix is off."])
+
+    exporter.sweep(sessionId)
+    await exporter.flush()
+
+    const report = exporter.report()
+    const moved = before !== undefined && before.endpoint !== exporter.target.endpoint
+
+    // Sessions put away in the old server stay there: oi does not move them, and cannot open them from the new one.
+    const stranded = moved
+      ? (sessions?.all() ?? []).filter((session) => session.storage === "phoenix").length
+      : 0
+
+    this.say([
+      `Exporting to ${exporter.target.endpoint}, project ${exporter.target.project}, from now on. Sent ${report.spans} spans and ${report.annotations} annotations of this session.`,
       ...report.errors,
+      ...(stranded === 0
+        ? []
+        : [
+            `${stranded} ${stranded === 1 ? "session is" : "sessions are"} kept only in the Phoenix at ${before?.endpoint ?? ""}. Switch back with /phoenix to open ${stranded === 1 ? "it" : "them"}.`,
+          ]),
     ])
   }
 
@@ -1159,6 +1256,13 @@ class App {
     if (data === "\r") return question.answer(question.value.trim())
 
     if (data === "\u001B" || data === "\u0003") return question.answer(undefined)
+
+    // Ctrl+U clears the line, as at the prompt: an answer often starts from the current value.
+    if (data === "\u0015") {
+      question.value = ""
+
+      return this.draw()
+    }
 
     // Held backspace can arrive as several in one chunk.
     if (/^[\u007F\b]+$/.test(data)) {
@@ -1632,6 +1736,8 @@ class App {
 
     if (name === "/export") return this.exportNow()
 
+    if (name === "/phoenix") return this.choosePhoenix()
+
     if (name === "/metrics")
       return this.say(
         renderMetrics(sessionMetrics(this.options.store, this.options.sessionId), this.screen.columns - 2),
@@ -1915,8 +2021,8 @@ class App {
     this.lastKeyMs = Date.now()
     this.attachNotice = ""
 
-    // Escape in a picker goes back; only Escape at the prompt stops work.
-    if (data === "\u001B" && this.picker === undefined) {
+    // Escape in a picker or a question goes back; only Escape at the prompt stops work.
+    if (data === "\u001B" && this.picker === undefined && this.question === undefined) {
       const entries = this.options.engine?.cancel(this.options.sessionId) ?? []
 
       const mine = entries.filter((entry) => entry.user_id === this.options.user)

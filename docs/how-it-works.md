@@ -40,10 +40,23 @@ key, and looks for Phoenix on `localhost:6006`. Settings are saved to
 `~/.config/oi-agent/config.json`; keys and sign-ins go to the system
 keychain. Run `oi setup` to change them.
 
+For Phoenix, setup asks the server what it wants before saving anything: a
+Phoenix without auth needs no key, and one that asks for a login offers
+"Log in with your browser". Your browser opens Phoenix, you log in and
+approve oi, and Phoenix makes a personal API key that oi stores in the
+keychain; you never see or paste it. If the browser cannot reach your
+machine (over SSH, in a container), paste the address it ended on. You can
+also paste an API key made in Phoenix's settings. `/phoenix` holds the same
+conversation inside a running session and switches at once: the session is
+sent to the new server, and everything after it goes there, with no restart.
+`/phoenix` then `none` turns export off.
+
 Environment variables override the file: `OI_AGENT_MODEL` (a model id, or
 `provider/model`), `OI_AGENT_PROVIDER`, `OI_AGENT_EFFORT`, `OI_AGENT_USER`,
 `OI_AGENT_HOME`, `OI_AGENT_STEERING`, `OI_AGENT_STEERING_MODEL`, `OI_AGENT_WEB`, `PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_PROJECT_NAME`,
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`. `ANTHROPIC_BASE_URL` and
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `TYPESAFE_API_KEY`, `PHOENIX_API_KEY`. Each key in the
+environment wins over the one in the keychain. `OI_AGENT_NO_BROWSER=1` stops
+oi opening a browser for a sign-in; it shows the address instead. `ANTHROPIC_BASE_URL` and
 `OPENAI_BASE_URL` send model requests somewhere else, such as a proxy.
 OpenAI and ChatGPT models are called over a WebSocket so the prompt cache is
 reused between calls; `OI_AGENT_OPENAI_TRANSPORT=http` uses plain HTTP instead.
@@ -87,7 +100,7 @@ as text, tool calls and tool results. The line under the prompt says what Enter 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`, `/image`,
+`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`, `/image`, `/phoenix`,
 `/session`, `/tour`, `/reload`, `/help` and `/quit`.
 
 To show the agent an image, drop the file on the terminal: PNG, JPEG, GIF or
@@ -387,35 +400,36 @@ creation and crash recovery.
 
 ## Concept to file
 
-| Concept                                          | Where                                                                |
-| ------------------------------------------------ | -------------------------------------------------------------------- |
-| The on-disk format, as schemas                   | `source/engine/src/format.ts`                                        |
-| Reading and writing span files, the event stream | `source/engine/src/store.ts`                                         |
-| Spans become files                               | `source/engine/src/tracer.ts`                                        |
-| State derived from spans (the fold)              | `source/engine/src/fold.ts`                                          |
-| The loop                                         | `source/engine/src/agent.ts`                                         |
-| Talking to the model                             | `source/engine/src/model.ts`, `openai.ts`, `chatgpt.ts`              |
-| Wire formats, and translating between them       | `source/engine/src/dialect.ts`, `source/engine/src/dialects/`        |
-| Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
-| The tools the model can call                     | `source/engine/src/tools.ts`                                         |
-| Images attached to a prompt                      | `source/engine/src/attachments.ts`, `source/cli/src/images.ts`       |
-| Commands that outlive their tool call            | `source/engine/src/jobs.ts`, `jobEnded` in `engine.ts`               |
-| Subagents: delegating, steering, approvals       | `source/engine/src/tasks.ts`, `task-tools.ts`, `serve` in `main.ts`  |
-| Watching a session another process writes        | `follow` in `source/engine/src/store.ts`                             |
-| The system prompt                                | `source/engine/src/prompt.ts`                                        |
-| Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                  |
-| Queueing turns, approvals                        | `source/engine/src/engine.ts`                                        |
-| Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts` |
-| Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `judge.ts`, `detectors.ts`          |
-| Where a session's time went (`/metrics`)         | `source/engine/src/metrics.ts`                                       |
-| Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                          |
-| Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`             |
-| Sharing a session with other people              | `source/engine/src/peer/`                                            |
-| Terminal status (OSC 7501)                       | `source/cli/src/program-status.ts`, `source/cli/src/tui/ansi.ts`     |
-| The terminal interface                           | `source/cli/src/tui/`                                                |
-| Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                     |
-| Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                            |
-| Restarting on new code (`/reload`), the fallback | `source/cli/src/launcher.ts`, `reloadInto` in `main.ts`              |
+| Concept                                          | Where                                                                         |
+| ------------------------------------------------ | ----------------------------------------------------------------------------- |
+| The on-disk format, as schemas                   | `source/engine/src/format.ts`                                                 |
+| Reading and writing span files, the event stream | `source/engine/src/store.ts`                                                  |
+| Spans become files                               | `source/engine/src/tracer.ts`                                                 |
+| State derived from spans (the fold)              | `source/engine/src/fold.ts`                                                   |
+| The loop                                         | `source/engine/src/agent.ts`                                                  |
+| Talking to the model                             | `source/engine/src/model.ts`, `openai.ts`, `chatgpt.ts`                       |
+| Wire formats, and translating between them       | `source/engine/src/dialect.ts`, `source/engine/src/dialects/`                 |
+| Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`               |
+| The tools the model can call                     | `source/engine/src/tools.ts`                                                  |
+| Images attached to a prompt                      | `source/engine/src/attachments.ts`, `source/cli/src/images.ts`                |
+| Commands that outlive their tool call            | `source/engine/src/jobs.ts`, `jobEnded` in `engine.ts`                        |
+| Subagents: delegating, steering, approvals       | `source/engine/src/tasks.ts`, `task-tools.ts`, `serve` in `main.ts`           |
+| Watching a session another process writes        | `follow` in `source/engine/src/store.ts`                                      |
+| The system prompt                                | `source/engine/src/prompt.ts`                                                 |
+| Finding AGENTS.md, CLAUDE.md and skills          | `source/engine/src/instructions.ts`                                           |
+| Queueing turns, approvals                        | `source/engine/src/engine.ts`                                                 |
+| Evaluators, feedback, learned rules              | `source/engine/src/evals.ts`, `eval-tool.ts`, `judge.ts`, `rules.ts`          |
+| Learning evaluators from the user's corrections  | `source/engine/src/steering.ts`, `judge.ts`, `detectors.ts`                   |
+| Where a session's time went (`/metrics`)         | `source/engine/src/metrics.ts`                                                |
+| Export to Phoenix (OTLP protobuf)                | `source/engine/src/export/`                                                   |
+| Choosing a Phoenix server, logging in to one     | `source/cli/src/phoenix-setup.ts`, `source/engine/src/remote/phoenix-auth.ts` |
+| Reading sessions back from Phoenix, storage      | `source/engine/src/remote/`, `source/cli/src/storage.ts`                      |
+| Sharing a session with other people              | `source/engine/src/peer/`                                                     |
+| Terminal status (OSC 7501)                       | `source/cli/src/program-status.ts`, `source/cli/src/tui/ansi.ts`              |
+| The terminal interface                           | `source/cli/src/tui/`                                                         |
+| Slash commands and their tab completion          | `source/cli/src/tui/commands.ts`                                              |
+| Commands and setup                               | `source/cli/src/main.ts`, `onboarding.ts`                                     |
+| Restarting on new code (`/reload`), the fallback | `source/cli/src/launcher.ts`, `reloadInto` in `main.ts`                       |
 
 ## Things worth showing someone
 
@@ -856,6 +870,41 @@ These work best on the session you are in, because the evidence is right there.
   trace URL continues from that turn by passing it as `previous`, which
   forks the session. Each turn's root span records its workspace (directory,
   git remote, commit, dirty), so a resume can say how the checkout differs.
+- **"How do I point oi at another Phoenix, or log in to one?"** `/phoenix`,
+  or the Phoenix step of `oi setup`: both hold the conversation in
+  `setupPhoenix` (`source/cli/src/phoenix-setup.ts`), each through its own
+  `Dialog` (plain prompts, or the terminal's question line and menus).
+  `probePhoenix` (`source/engine/src/remote/phoenix-auth.ts`) sends two
+  plain GETs: `/arize_phoenix_version`, and `/v1/projects?limit=1` without
+  credentials, which answers 200 on a server without auth and 401 on one
+  with it. For a server with auth, `discoverPhoenixLogin` reads
+  `/.well-known/oauth-authorization-server`; only metadata that parses
+  counts, because a Phoenix from before its authorization server answers
+  every unknown path with its web app and a 200. `startPhoenixLogin` then
+  registers oi as a public client once per server (dynamic client
+  registration; the client id, which is not a secret, is kept in
+  `phoenix-clients.json` beside the config), listens on a free loopback port
+  (`listenForCallback` in `source/engine/src/oauth.ts`, shared with the
+  ChatGPT sign-in), and sends the browser to `/oauth2/authorize` with a PKCE
+  challenge. A request to the callback without this login's `state` gets a
+  400 and does not end the login. With the code, oi exchanges it for a
+  token, creates a personal API key with it (`POST /v1/user/api_keys`),
+  and revokes the grant, so only the key remains: it does not expire under
+  a long session, needs no refresh that several oi processes would have to
+  coordinate, and can be revoked in Phoenix. The key is checked against the
+  server and stored in the keychain (`setSecret("phoenix")`); it is never
+  printed, and is not in the config, a span or the transcript. Every request
+  goes to a path under the URL you typed; the discovery document is not used
+  for where to send anything. `PHOENIX_API_KEY` in the environment still
+  wins over a stored key, and the conversation says so. Saving writes only
+  the `phoenix` key of the config file (`savePhoenix`). In a running session
+  the exporter and client live behind `PhoenixConnection`
+  (`source/cli/src/storage.ts`): `connect` flushes what the old server was
+  owed, opens the new one and restarts the live export, and `/export` and
+  `/resume`'s listing follow because they ask the connection each time. What
+  has been sent is remembered per server and project, so the new server is
+  owed the whole session and gets it at once. A session kept only in the old
+  Phoenix stays there: leaving it does not move it to the new one.
 - **"What does keeping a session only in Phoenix do?"** Tab in the `/resume`
   list calls `moveToPhoenix` (`source/engine/src/remote/storage.ts`): send
   anything unsent, query Phoenix until it has every span and annotation,

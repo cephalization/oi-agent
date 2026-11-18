@@ -8,7 +8,7 @@ import { runOnboarding } from "./onboarding.ts"
 import { isCancelled } from "./prompts.ts"
 import { Providers } from "./providers.ts"
 import { ago, summarizeSessions } from "./sessions.ts"
-import { type Opened, type Phoenix, Sessions } from "./storage.ts"
+import { type Opened, PhoenixConnection, Sessions } from "./storage.ts"
 import { ProgramStatus } from "./program-status.ts"
 import { type AppExit, runApp } from "./tui/app.ts"
 import {
@@ -45,7 +45,6 @@ import {
   parsePhoenixLink,
   parseShareLink,
   pendingInbox,
-  PhoenixClient,
   PhoenixExporter,
   phoenixJudge,
   Redactor,
@@ -380,16 +379,9 @@ const inactiveFeatures = (): Array<string> => {
   return problems
 }
 
-/** Phoenix, for reading sessions back as well as exporting, when an endpoint is configured. */
-const connectPhoenix = (): Phoenix | undefined => {
-  const { phoenix } = loadConfig()
-
-  if (phoenix.endpoint === "") return undefined
-
-  const target = { ...phoenix, apiKey: getSecret("phoenix") }
-
-  return { exporter: new PhoenixExporter(store, target), client: new PhoenixClient(target) }
-}
+/** Phoenix, for reading sessions back as well as exporting. Connected to nothing when no endpoint is configured. */
+const connectPhoenix = (): PhoenixConnection =>
+  new PhoenixConnection(store, { ...loadConfig().phoenix, apiKey: getSecret("phoenix") })
 
 /** What to open: a session (id, prefix or Phoenix session id), and maybe a turn to continue from. */
 interface Target {
@@ -398,14 +390,14 @@ interface Target {
 }
 
 /** A session id, prefix, or Phoenix session or trace URL, as something to open. */
-const targetFor = async (text: string, phoenix: Phoenix | undefined): Promise<Target> => {
+const targetFor = async (text: string, phoenix: PhoenixConnection): Promise<Target> => {
   const link = parsePhoenixLink(text)
 
   if (link === undefined) return { identifier: text }
 
   if (link.kind === "session") return { identifier: link.id }
 
-  const client = phoenix?.client ?? fail("A Phoenix URL needs a Phoenix endpoint. Run `oi setup`.")
+  const client = phoenix.client ?? fail("A Phoenix URL needs a Phoenix endpoint. Run `oi setup`.")
   const [root] = await client.spans([link.id], { roots: true, project: link.project })
   const sessionId = root === undefined ? undefined : stringAttr(root, OI.SESSION_ID)
 
@@ -423,7 +415,7 @@ const targetFor = async (text: string, phoenix: Phoenix | undefined): Promise<Ta
 const latestSession = (): string | undefined =>
   summarizeSessions(store).find((session) => session.storage === "local" && session.turns > 0)?.id
 
-const initialTarget = async (engine: Engine, phoenix: Phoenix | undefined): Promise<Target> => {
+const initialTarget = async (engine: Engine, phoenix: PhoenixConnection): Promise<Target> => {
   const named = command === "resume" ? (rest[0] ?? fail("Usage: oi resume <session|url>")) : values.session
 
   if (named !== undefined) return targetFor(named, phoenix)
@@ -604,8 +596,7 @@ const run = async (prompt: string): Promise<void> => {
     if (event.session_id === sessionId) status.event(event)
   })
 
-  const phoenix = remote?.exporter
-  const stopExport = phoenix?.watch()
+  const stopExport = remote.watch()
 
   engine.attend(sessionId)
 
@@ -642,8 +633,8 @@ const run = async (prompt: string): Promise<void> => {
   }
 
   unsubscribe()
-  stopExport?.()
-  await phoenix?.flush()
+  stopExport()
+  await remote.flush()
 
   const away = await sessions.putAway(sessionId)
 
@@ -666,14 +657,14 @@ const serve = async (sessionId: string): Promise<void> => {
   const engine = buildEngine(values.yolo ? "allow" : (approvalChoice() ?? "ask"), true)
   const remote = connectPhoenix()
   const unsubscribe = store.subscribe(printEvents(sessionId))
-  const stopExport = remote?.exporter.watch()
+  const stopExport = remote.watch()
 
   engine.attend(sessionId)
   await engine.settled(sessionId)
   process.stdout.write("\n")
   unsubscribe()
-  stopExport?.()
-  await remote?.exporter.flush()
+  stopExport()
+  await remote.flush()
   engine.close()
   store.close()
 }
@@ -832,7 +823,7 @@ const interactive = async (): Promise<void> => {
       user: engine.config.user,
       label: `${engine.config.provider}/${engine.config.model}`,
       engine,
-      phoenix: remote?.exporter,
+      phoenix: remote,
       sessions,
       from,
       notes,

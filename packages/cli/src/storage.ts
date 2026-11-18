@@ -14,8 +14,9 @@ import {
   lastWorkspace,
   listRemoteSessions,
   moveToPhoenix,
-  type PhoenixClient,
-  type PhoenixExporter,
+  PhoenixClient,
+  PhoenixExporter,
+  type PhoenixTarget,
   readMarker,
   type Store,
   workspaceDrift,
@@ -31,6 +32,74 @@ export interface Phoenix {
   readonly client: PhoenixClient
 }
 
+/**
+ * The Phoenix this process exports to and reads from. It can change while
+ * the process runs (`/phoenix`), so everything that talks to Phoenix holds
+ * this, and asks it for the server of the moment.
+ */
+export class PhoenixConnection {
+  private readonly store: Store
+  private phoenix: Phoenix | undefined
+  /** Stops the live export to the current server, while one is running. */
+  private stop: (() => void) | undefined
+  private watching = false
+
+  constructor(store: Store, target: PhoenixTarget | undefined) {
+    this.store = store
+    this.phoenix = PhoenixConnection.open(store, target)
+  }
+
+  private static open(store: Store, target: PhoenixTarget | undefined): Phoenix | undefined {
+    return target === undefined || target.endpoint === ""
+      ? undefined
+      : { exporter: new PhoenixExporter(store, target), client: new PhoenixClient(target) }
+  }
+
+  /** The server of the moment, or undefined when export is off. */
+  get current(): Phoenix | undefined {
+    return this.phoenix
+  }
+
+  get exporter(): PhoenixExporter | undefined {
+    return this.phoenix?.exporter
+  }
+
+  get client(): PhoenixClient | undefined {
+    return this.phoenix?.client
+  }
+
+  /** Export spans and annotations as they are written, to whichever server is current. Returns a stop function. */
+  watch(): () => void {
+    this.watching = true
+    this.stop = this.phoenix?.exporter.watch()
+
+    return () => {
+      this.watching = false
+      this.stop?.()
+      this.stop = undefined
+    }
+  }
+
+  flush(): Promise<void> {
+    return this.phoenix?.exporter.flush() ?? Promise.resolve()
+  }
+
+  /**
+   * Talk to another server from now on, or to none. The old one is first sent
+   * what it was still owed. What has been sent is remembered per server and
+   * project, so the new one is owed everything it has not seen, and nothing
+   * is sent twice to one that is switched back to.
+   */
+  async connect(target: PhoenixTarget | undefined): Promise<void> {
+    this.stop?.()
+    this.stop = undefined
+    await this.flush()
+    this.phoenix = PhoenixConnection.open(this.store, target)
+
+    if (this.watching) this.stop = this.phoenix?.exporter.watch()
+  }
+}
+
 export interface Opened {
   readonly sessionId: string
   /** Things to tell the user before the session opens. */
@@ -41,13 +110,22 @@ export interface Opened {
 
 export class Sessions {
   private readonly store: Store
-  private readonly phoenix: Phoenix | undefined
+  private readonly connection: PhoenixConnection
   /** Phoenix's sessions, from the last listing. */
   private remote: ReadonlyArray<SessionSummary> = []
 
-  constructor(store: Store, phoenix: Phoenix | undefined) {
+  constructor(store: Store, connection: PhoenixConnection) {
     this.store = store
-    this.phoenix = phoenix
+    this.connection = connection
+  }
+
+  private get phoenix(): Phoenix | undefined {
+    return this.connection.current
+  }
+
+  /** Forget what another server listed: after `/phoenix` its sessions are not this one's. */
+  forgetListing(): void {
+    this.remote = []
   }
 
   get connected(): boolean {
@@ -126,9 +204,17 @@ export class Sessions {
 
   /** After leaving a session: if it is kept in Phoenix, move it back out. Resolves to a message. */
   async putAway(sessionId: string): Promise<string | undefined> {
-    if (this.phoenix === undefined || readMarker(this.store, sessionId) === undefined) return undefined
+    const marker = readMarker(this.store, sessionId)
+
+    if (this.phoenix === undefined || marker === undefined) return undefined
 
     if (this.store.readHeader(sessionId) === undefined) return undefined
+
+    const target = this.phoenix.exporter.target
+
+    // It is kept in the server it came from. After `/phoenix` that is another one: do not move it there.
+    if (marker.endpoint !== target.endpoint || marker.project !== target.project)
+      return `Kept on disk: it belongs to the Phoenix at ${marker.endpoint}, which oi is no longer connected to.`
 
     const moved = await moveToPhoenix(this.store, this.phoenix.exporter, this.phoenix.client, sessionId)
 

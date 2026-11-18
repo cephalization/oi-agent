@@ -15,11 +15,15 @@ const CANCELLED = new Error("Setup cancelled.")
  * Read one line in raw mode. With `mask` set, typed characters are shown as
  * dots so a secret never appears on screen or in scrollback.
  */
-const readLine = (mask: boolean): Promise<string> =>
+const readLine = (mask: boolean, until?: Promise<unknown>): Promise<string | undefined> =>
   new Promise((resolve, reject) => {
     let value = ""
+    let finished = false
 
     const finish = (result: () => void): void => {
+      if (finished) return
+
+      finished = true
       process.stdin.off("data", onData)
       process.stdin.setRawMode(false)
       process.stdin.pause()
@@ -65,13 +69,18 @@ const readLine = (mask: boolean): Promise<string> =>
     process.stdin.setRawMode(true)
     process.stdin.resume()
     process.stdin.on("data", onData)
+    // What was being waited for happened: the question no longer needs an answer.
+    void until?.then(
+      () => finish(() => resolve(undefined)),
+      () => finish(() => resolve(undefined)),
+    )
   })
 
 /** Ask for a line of text. Return on an empty line accepts the default. */
 export const ask = async (question: string, fallback: string = ""): Promise<string> => {
   out(`${style.bold(question)}${fallback === "" ? "" : style.gray(` (${fallback})`)}: `)
 
-  const answer = (await readLine(false)).trim()
+  const answer = ((await readLine(false)) ?? "").trim()
 
   return answer === "" ? fallback : answer
 }
@@ -80,7 +89,14 @@ export const ask = async (question: string, fallback: string = ""): Promise<stri
 export const askSecret = async (question: string): Promise<string> => {
   out(`${style.bold(question)}: `)
 
-  return (await readLine(true)).trim()
+  return ((await readLine(true)) ?? "").trim()
+}
+
+/** Ask for a line while something else is awaited. Resolves to `undefined` when `until` settles first. */
+export const askUntil = async (question: string, until: Promise<unknown>): Promise<string | undefined> => {
+  out(`${style.bold(question)}: `)
+
+  return (await readLine(false, until))?.trim()
 }
 
 export interface Choice<A> {
@@ -111,7 +127,7 @@ export const choose = async <A>(
   for (;;) {
     out(`${style.gray(`choice (${initial + 1})`)}: `)
 
-    const answer = (await readLine(false)).trim()
+    const answer = ((await readLine(false)) ?? "").trim()
     const picked = answer === "" ? choices[initial] : choices[Number(answer) - 1]
 
     if (picked !== undefined) return picked.value

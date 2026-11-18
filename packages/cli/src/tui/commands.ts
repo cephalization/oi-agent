@@ -98,6 +98,11 @@ export const COMMANDS: ReadonlyArray<Command> = [
   { name: "/revert", summary: "undo the most recent learned rule", hostOnly: true },
   { name: "/export", summary: "send this session to Phoenix now", hostOnly: true },
   {
+    name: "/phoenix",
+    summary: "choose the Phoenix server, project and login; export switches to it at once",
+    hostOnly: true,
+  },
+  {
     name: "/reload",
     summary: "restart oi on its current code, keeping this session",
     hostOnly: true,

@@ -305,6 +305,10 @@ export const saveProviders = (
   env: NodeJS.ProcessEnv = process.env,
 ): void => saveKey("providers", encodeProviders(providers), env)
 
+/** Where Phoenix is, as `/phoenix` and `oi setup` choose it. An empty endpoint turns export off. */
+export const savePhoenix = (phoenix: Config["phoenix"], env: NodeJS.ProcessEnv = process.env): void =>
+  saveKey("phoenix", { endpoint: phoenix.endpoint, project: phoenix.project }, env)
+
 /** Make an approval mode the default for the next start, as Tab, /auto and /yolo choose it. */
 export const saveApprovals = (mode: Approvals, env: NodeJS.ProcessEnv = process.env): void =>
   saveKey("approvals", mode, env)
