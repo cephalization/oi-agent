@@ -77,6 +77,14 @@ replay policy, not a standard meaning of `CHAIN`. Live testing verified that
 the new fields and brief survive Phoenix export/import with identical folded
 context. No historical request or response is rewritten.
 
+## Isolated feedback drafts
+
+`metadata.oi_agent.operation = "feedback"` marks a user-requested draft on its
+`AGENT` root. Its `LLM` child is a tool-free call with only the supplied
+feedback description, not conversation history. The fold skips this operation
+when continuing the conversation; its spans are still normal session records.
+OpenInference does not specify context isolation or continuation policy.
+
 ## Handoff between sessions
 
 A root destination `CHAIN` (`handoff.seed`) records the actual bootstrap

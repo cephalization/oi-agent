@@ -8,6 +8,7 @@
  */
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { observeWorkspace, compareWorkspace } from "./evidence.ts"
+import { feedbackDraft, FEEDBACK_PROMPT, scrubFeedback } from "./feedback.ts"
 import { completeHandoff } from "./handoff.ts"
 import { nsToIso, sessionIdForTrace } from "./ids.ts"
 import { contextFor, pendingInbox, renderSaid, steerPoint } from "./fold.ts"
@@ -109,7 +110,7 @@ export interface TurnInput {
   readonly userId: string
   /** The turn to continue from; `null` starts the conversation. */
   readonly previous: { readonly trace_id: string; readonly span_id: string } | null
-  readonly operation?: "compact" | "handoff" | undefined
+  readonly operation?: EngineMetadata["operation"] | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
   /** Images sent with the prompt, already in the session's attachments. */
@@ -171,6 +172,46 @@ const modelStep = (env: TurnEnv, traceId: string) =>
 
     return model.dialect.reply(raw) ?? EMPTY_REPLY
   }).pipe(Effect.withSpan("llm", { attributes: { [OI.SPAN_KIND]: "LLM" } }, UNTRACED))
+
+/** Feedback is not a conversation continuation and cannot run tools, even in yolo mode. */
+const draftFeedback = (env: TurnEnv, input: TurnInput) =>
+  Effect.gen(function* () {
+    const span = yield* currentDiskSpan
+    const model = yield* Model
+
+    const raw = yield* model.run(
+      {
+        system: FEEDBACK_PROMPT,
+        tools: [],
+        messages: [model.dialect.userMessage([scrubFeedback(env.redactor.scrub(input.text))])],
+      },
+      {
+        onRequest: (body) => {
+          span.assign(model.dialect.requestAttributes(body, model.vendor))
+          span.patchMetadata({ api: model.dialect.api, provider: model.provider, billing: model.billing })
+          span.flush()
+        },
+        onDelta: () => undefined,
+      },
+    )
+
+    span.assign(model.dialect.responseAttributes(raw))
+
+    const reply = model.dialect.reply(raw)
+
+    const draft =
+      reply === undefined ||
+      reply.wantsTools ||
+      reply.paused ||
+      !["end_turn", "stop", "completed"].includes(reply.stopReason)
+        ? undefined
+        : feedbackDraft(env.redactor.scrub(reply.text))
+
+    if (draft === undefined)
+      return yield* new ModelError({ message: "Could not draft feedback. Nothing was posted." })
+
+    return draft
+  }).pipe(Effect.withSpan("feedback.draft", { attributes: { [OI.SPAN_KIND]: "LLM" } }, UNTRACED))
 
 /** Summarization has its own CHAIN/LLM subtree; it is never an agent reply. */
 const compactContext = (env: TurnEnv, input: TurnInput) =>
@@ -397,6 +438,16 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
     // The fold reads this turn's input from the root span's in-flight file.
     root.flush()
 
+    if (input.operation === "feedback") {
+      const output = yield* draftFeedback(env, input)
+
+      root.attribute(OI.OUTPUT_VALUE, output)
+      root.attribute(OI.OUTPUT_MIME, "text/plain")
+      root.patchMetadata({ session_bytes: env.store.sessionBytes(env.sessionId) })
+
+      return { traceId, output, stopReason: "feedback", steps: 1 }
+    }
+
     if (input.operation !== undefined) {
       if (input.operation === "handoff" && input.text.trim() === "")
         return yield* new ModelError({ message: "Usage: /handoff <query>" })
@@ -524,9 +575,12 @@ export const runTurn = (
     previous: input.previous,
     device: env.store.device().id,
     pid: process.pid,
-    prompt_version: rulesVersion(env.cwd),
     session_bytes: env.store.sessionBytes(env.sessionId),
-    workspace: workspaceOf(env.cwd),
+  }
+
+  if (input.operation !== "feedback") {
+    metadata.prompt_version = rulesVersion(env.cwd)
+    metadata.workspace = workspaceOf(env.cwd)
   }
 
   const injected = (input.injected ?? []).map((entry) => ({
@@ -558,7 +612,10 @@ export const runTurn = (
           [OI.SPAN_KIND]: "AGENT",
           [OI.AGENT_NAME]: AGENT_NAME,
           [OI.USER_ID]: input.userId,
-          [OI.INPUT_VALUE]: input.text,
+          [OI.INPUT_VALUE]:
+            input.operation === "feedback"
+              ? `/feedback ${scrubFeedback(env.redactor.scrub(input.text))}`
+              : input.text,
           [OI.INPUT_MIME]: "text/plain",
           [OI.METADATA]: writeMetadata(undefined, metadata),
         },

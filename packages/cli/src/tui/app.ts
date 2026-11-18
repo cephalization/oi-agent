@@ -162,6 +162,9 @@ const SHARE_ARGUMENTS: ReadonlyArray<Suggestion> = [
 const TOUR =
   "Give me a short tour of how you work, using this session as the example. Read your guide first, then show me the real files: what a turn looks like on disk, and what you actually sent the model. Keep it brief and offer where to go deeper."
 
+const FEEDBACK_REPO = "github.com/cephalization/oi-agent"
+const FEEDBACK_DESTINATION = `https://${FEEDBACK_REPO}/issues`
+
 interface Question {
   readonly label: string
   /** Shown as dots, and kept out of history. */
@@ -1638,6 +1641,47 @@ class App {
     this.done(this.options.engine?.createSession(process.cwd()).id)
   }
 
+  private async feedback(description: string): Promise<void> {
+    const { engine, sessionId, user } = this.options
+
+    if (description === "")
+      return this.say([
+        "Usage: /feedback <short description of the bug or suggestion>",
+        "Do not include personal details, secrets, or logs. Drafting uses your configured model and is recorded in this session.",
+        `To file manually instead, use ${FEEDBACK_DESTINATION}.`,
+      ])
+
+    if (this.transcript.running) return this.say(["A turn is running. Press esc to interrupt it first."])
+
+    if (engine === undefined) return
+
+    if (this.share !== undefined || this.options.phoenix?.exporter !== undefined)
+      return this.say([
+        "Drafting feedback requires an unshared session with Phoenix export off.",
+        `To file manually instead, use ${FEEDBACK_DESTINATION}.`,
+      ])
+
+    this.say([
+      `Public issue destination: ${FEEDBACK_DESTINATION}`,
+      "Review the exact title and body below for private details. oi does not post issues for you.",
+      `If gh is available and signed in, run gh issue create --repo ${FEEDBACK_REPO} in your terminal and paste the draft.`,
+      "Otherwise, choose New issue at the destination above and paste it there. Submit only if you approve the final content.",
+    ])
+
+    const previous = this.from
+
+    this.from = undefined
+
+    const outcome = await engine.submit(sessionId, {
+      text: description,
+      userId: user,
+      previous,
+      operation: "feedback",
+    })
+
+    if (!outcome.ok && !outcome.interrupted) this.say([outcome.message])
+  }
+
   private async command(text: string): Promise<void> {
     const [typed = ""] = text.split(/\s+/)
     const argument = text.slice(typed.length).trim()
@@ -1661,6 +1705,8 @@ class App {
     if (name === "/quit") return this.done()
 
     if (name === "/tour") return this.submit(TOUR)
+
+    if (name === "/feedback") return this.feedback(argument)
 
     if (name === "/image") return this.image(argument)
 

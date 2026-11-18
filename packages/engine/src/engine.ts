@@ -65,7 +65,7 @@ export interface Prompt {
   readonly userId: string
   /** Trace to continue from. Omitted means the session head; `null` starts over. */
   readonly previous?: string | null
-  readonly operation?: "compact" | "handoff" | undefined
+  readonly operation?: EngineMetadata["operation"] | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
   /** Images sent with the prompt: references `attach` returned for this session. */
@@ -547,7 +547,7 @@ export class Engine {
     return this.running.has(sessionId)
   }
 
-  /** Whether the turn running here reads what is said to it: a `/compact` or `/handoff` does not. */
+  /** Whether the turn running here reads what is said to it: slash-command operations do not. */
   steerable(sessionId: string): boolean {
     return !this.away.has(sessionId) && this.running.get(sessionId)?.operation === false
   }

@@ -108,7 +108,19 @@ and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
 `/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`, `/image`, `/phoenix`,
-`/session`, `/tour`, `/reload`, `/help` and `/quit`.
+`/session`, `/tour`, `/feedback`, `/reload`, `/help` and `/quit`.
+
+Use `/feedback` for filing instructions, or `/feedback <short description>` to
+preview a public issue for `cephalization/oi-agent`. The configured model drafts
+from that description alone, without chat history, attachments or tools. oi adds
+only the Node.js version, OS platform and architecture. Don't include secrets,
+personal details or raw diagnostics: the description goes to the configured
+provider, and the draft is recorded in the session. Drafting is unavailable
+while the session is shared or Phoenix export is enabled. If you later share
+or export that session, it will include the draft.
+Scrubbing is best effort. Review the exact title, body and destination; oi never
+posts the issue. If you approve the final text, submit it yourself with `gh` or
+via the official issue tracker shown in the command output.
 
 To show the agent an image, drop the file on the terminal: PNG, JPEG, GIF or
 WebP, several at once if you like. A terminal pastes a dropped file's path, and
