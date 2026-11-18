@@ -5,7 +5,11 @@
  */
 import { execFileSync } from "node:child_process"
 
-const SERVICE = "oi-agent"
+/**
+ * The keychain service every account is filed under. `$OI_AGENT_KEYCHAIN_SERVICE`
+ * names another, so a test that stores a key cannot touch a real one.
+ */
+const service = (): string => process.env["OI_AGENT_KEYCHAIN_SERVICE"] ?? "oi-agent"
 
 const ENV_NAMES = new Map([
   ["anthropic", "ANTHROPIC_API_KEY"],
@@ -28,8 +32,8 @@ const run = (command: string, args: ReadonlyArray<string>, input?: string): stri
 
 const keychainGet = (account: string): string | undefined =>
   process.platform === "darwin"
-    ? run("security", ["find-generic-password", "-s", SERVICE, "-a", account, "-w"])
-    : run("secret-tool", ["lookup", "service", SERVICE, "account", account])
+    ? run("security", ["find-generic-password", "-s", service(), "-a", account, "-w"])
+    : run("secret-tool", ["lookup", "service", service(), "account", account])
 
 export const getSecret = (account: string): string | undefined => {
   const envName = ENV_NAMES.get(account)
@@ -42,14 +46,14 @@ export const getSecret = (account: string): string | undefined => {
 /** Store a secret in the keychain. Returns whether the keychain accepted it. */
 export const setSecret = (account: string, value: string): boolean =>
   (process.platform === "darwin"
-    ? run("security", ["add-generic-password", "-U", "-s", SERVICE, "-a", account, "-w", value])
+    ? run("security", ["add-generic-password", "-U", "-s", service(), "-a", account, "-w", value])
     : run(
         "secret-tool",
-        ["store", "--label", `${SERVICE} ${account}`, "service", SERVICE, "account", account],
+        ["store", "--label", `${service()} ${account}`, "service", service(), "account", account],
         value,
       )) !== undefined
 
 export const deleteSecret = (account: string): boolean =>
   (process.platform === "darwin"
-    ? run("security", ["delete-generic-password", "-s", SERVICE, "-a", account])
-    : run("secret-tool", ["clear", "service", SERVICE, "account", account])) !== undefined
+    ? run("security", ["delete-generic-password", "-s", service(), "-a", account])
+    : run("secret-tool", ["clear", "service", service(), "account", account])) !== undefined

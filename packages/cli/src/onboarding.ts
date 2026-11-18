@@ -25,7 +25,8 @@ import {
   DEFAULT_DECISION,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
-import { ask, askSecret, choose, confirm, say } from "./prompts.ts"
+import { type Dialog, setupPhoenix } from "./phoenix-setup.ts"
+import { ask, askSecret, askUntil, choose, confirm, say } from "./prompts.ts"
 import { Providers } from "./providers.ts"
 import { style, wrap } from "./tui/ansi.ts"
 
@@ -48,8 +49,6 @@ const EFFORTS: ReadonlyArray<{ value: Effort; label: string; hint: string }> = [
   { value: "xhigh", label: "xhigh", hint: "most thorough, slowest" },
 ]
 
-const LOCAL_PHOENIX = "http://localhost:6006"
-
 const ok = (text: string): void => say(`  ${style.green("✓")} ${text}`)
 const warn = (text: string): void => say(`  ${style.yellow("!")} ${text}`)
 const tilde = (file: string): string => file.replace(homedir(), "~")
@@ -63,18 +62,6 @@ const step = (title: string, detail: string): void => {
 }
 
 /** The version a Phoenix server reports, or `undefined` if none answers. */
-const phoenixVersion = async (endpoint: string): Promise<string | undefined> => {
-  try {
-    const response = await fetch(`${endpoint.replace(/\/+$/, "")}/arize_phoenix_version`, {
-      signal: AbortSignal.timeout(2000),
-    })
-
-    return response.ok ? (await response.text()).trim() : undefined
-  } catch {
-    return undefined
-  }
-}
-
 type ProviderChoice = "anthropic" | "openai" | "chatgpt" | "compatible"
 
 const providerStep = async (current: Config): Promise<ProviderChoice> => {
@@ -348,30 +335,29 @@ const modelStep = async (current: string, apiKey: string | undefined): Promise<s
   return model
 }
 
+/** The Phoenix conversation, held in setup's plain prompts. Ctrl+C cancels all of setup, as everywhere in it. */
+const setupDialog: Dialog = {
+  ask,
+  secret: askSecret,
+  choose,
+  ok,
+  warn,
+  note: (text) => say(style.gray(`  ${text}`)),
+  open: (url) => {
+    openBrowser(url)
+    say(style.gray("  Your browser opens to log in to Phoenix. If it did not, visit:"))
+    say(`  ${url}`)
+  },
+  paste: askUntil,
+}
+
 const phoenixStep = async (current: Config["phoenix"]): Promise<Config["phoenix"]> => {
-  step("Phoenix", "Optional. With a server set, every span and evaluation is exported as it is written.")
+  step(
+    "Phoenix",
+    "Optional. With a server set, every span and evaluation is exported as it is written. Change it later with /phoenix.",
+  )
 
-  const detected = current.endpoint === "" ? await phoenixVersion(LOCAL_PHOENIX) : undefined
-
-  if (detected !== undefined) ok(`Found Phoenix ${detected} at ${LOCAL_PHOENIX}.`)
-
-  const suggestion = current.endpoint === "" && detected !== undefined ? LOCAL_PHOENIX : current.endpoint
-  const answer = await ask("Phoenix URL (type `none` to skip)", suggestion === "" ? "none" : suggestion)
-  const endpoint = answer === "none" ? "" : answer.replace(/\/+$/, "")
-
-  if (endpoint === "") return { endpoint: "", project: current.project }
-
-  const version = await phoenixVersion(endpoint)
-
-  if (version === undefined) warn(`Nothing answered at ${endpoint}. Saved anyway; export will retry.`)
-  else ok(`Connected to Phoenix ${version}.`)
-
-  const project = await ask("Phoenix project", current.project)
-  const key = await askSecret("Phoenix API key (input is hidden; leave empty if the server has no auth)")
-
-  if (key !== "" && setSecret("phoenix", key)) ok("Saved to the keychain.")
-
-  return { endpoint, project }
+  return (await setupPhoenix(setupDialog, current)) ?? current
 }
 
 /** Run setup and write the config file. Resolves to the saved settings. */
