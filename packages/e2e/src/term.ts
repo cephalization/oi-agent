@@ -14,6 +14,8 @@ import { sharedRexSession } from "./rex-session.ts"
 export interface Terminal {
   /** Type text exactly as given. */
   send(text: string): Promise<void>
+  /** Paste text as a terminal does, between bracketed-paste markers: how a dropped file's path arrives. */
+  paste(text: string): Promise<void>
   /** Press keys, in Rex key syntax: `enter`, `ctrl+c`, `down`, `escape`. */
   key(...keys: ReadonlyArray<string>): Promise<void>
   /** Type a line and press enter. */
@@ -172,6 +174,10 @@ export class RexTerminal implements Terminal {
 
   async send(text: string): Promise<void> {
     await exec(this.rex, ["send", ...this.target(), text])
+  }
+
+  async paste(text: string): Promise<void> {
+    await this.send(`\u001B[200~${text}\u001B[201~`)
   }
 
   async key(...keys: ReadonlyArray<string>): Promise<void> {
