@@ -165,3 +165,18 @@ export const fakeSystemOne = (decide: Decide): Promise<FakeServer> =>
       },
     })
   })
+
+/** What a model that reads only text answers when it is sent an image. */
+export const NO_IMAGES = "This model does not support image input."
+
+/**
+ * An OpenAI-compatible server whose model cannot read images, and says so the
+ * way real ones do: with a 400 and a message. oi does not ask first whether
+ * a model reads images, so this error is what a person sees.
+ */
+export const fakeTextOnlyModel = (): Promise<FakeServer> =>
+  listen(() => ({
+    status: 400,
+    type: "application/json",
+    body: JSON.stringify({ error: { message: NO_IMAGES, type: "invalid_request_error" } }),
+  }))
