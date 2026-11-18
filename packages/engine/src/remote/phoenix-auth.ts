@@ -148,7 +148,10 @@ export const discoverPhoenixLogin = async (endpoint: string): Promise<PhoenixLog
     return { status: "unsupported", why: "This Phoenix does not support browser login." }
 
   return metadata.registration_endpoint === undefined
-    ? { status: "unsupported", why: "This Phoenix does not let new apps register for browser login." }
+    ? {
+        status: "unsupported",
+        why: "This Phoenix has client registration disabled, so browser login is unavailable.",
+      }
     : { status: "supported" }
 }
 
@@ -225,13 +228,13 @@ const clientFor = async (endpoint: string, env: NodeJS.ProcessEnv): Promise<stri
   if (response.status === 403)
     throw new PhoenixLoginError(
       "unsupported",
-      "This Phoenix does not let new apps register for browser login.",
+      "This Phoenix has client registration disabled, so browser login is unavailable.",
     )
 
   if (response.status === 429)
     throw new PhoenixLoginError(
       "failed",
-      "Phoenix is limiting how often apps may register. Try again later, or paste an API key.",
+      "Phoenix is rate limiting client registration. Try again later, or paste an API key.",
     )
 
   const registered = response.ok ? Option.getOrUndefined(decodeRegistered(await response.text())) : undefined
@@ -440,11 +443,11 @@ export const startPhoenixLogin = async (options: PhoenixLoginOptions): Promise<P
     paste: (redirectUrl) => {
       const text = redirectUrl.trim()
 
-      if (!URL.canParse(text)) return "That is not a URL. Copy the whole address the browser ended on."
+      if (!URL.canParse(text)) return "That is not a URL. Copy the full redirect URL from the browser."
 
       const result = returnedWith(new URL(text).searchParams, state)
 
-      if (result.kind === "invalid") return `That address cannot be used. ${result.why}`
+      if (result.kind === "invalid") return `That redirect URL cannot be used. ${result.why}`
 
       settle(result)
 

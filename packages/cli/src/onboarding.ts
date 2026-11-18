@@ -123,7 +123,7 @@ const apiKeyStep = async (account: string, name: string, optional: boolean): Pro
   }
 
   if (setSecret(account, entered)) ok("Saved to the keychain.")
-  else warn("The keychain refused the key. Set it in your shell's environment instead.")
+  else warn("Could not save the key to the keychain. Set it in your shell's environment instead.")
 
   return entered
 }
@@ -143,7 +143,7 @@ const keyFor = async (account: string, name: string, why: string, without: strin
   }
 
   if (setSecret(account, entered)) ok("Saved to the keychain.")
-  else warn("The keychain refused the key. Set it in your shell's environment instead.")
+  else warn("Could not save the key to the keychain. Set it in your shell's environment instead.")
 
   return true
 }
@@ -165,7 +165,7 @@ const steeringStep = async (
 ): Promise<{ steering: Steering; steering_model: string }> => {
   step(
     "Learning from corrections",
-    'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. That includes what you type while it is working. One small call per message.',
+    'After each message, a small model checks whether you corrected how oi works in general, not just this task ("we use pnpm here"), and saves that as a check on every later turn. Messages typed while oi works count too. One small call per message.',
   )
 
   const steering = await choose(
@@ -345,7 +345,7 @@ const setupDialog: Dialog = {
   note: (text) => say(style.gray(`  ${text}`)),
   open: (url) => {
     openBrowser(url)
-    say(style.gray("  Your browser opens to log in to Phoenix. If it did not, visit:"))
+    say(style.gray("  Opening your browser to log in to Phoenix. If it did not open, visit:"))
     say(`  ${url}`)
   },
   paste: askUntil,
@@ -365,14 +365,14 @@ const phoenixStep = async (current: Config["phoenix"]): Promise<Config["phoenix"
  * things that need no setting, and so appear nowhere above.
  */
 export const firstTips = (config: Config): Array<string> => [
-  "Show it a picture: drop an image file on the terminal, or press ctrl+v to paste one from the clipboard.",
+  "Show a picture: drop an image file on the terminal, or press ctrl+v to paste one from the clipboard.",
   config.steering === "off"
-    ? "Type while it works: Enter says it to the running turn, and ctrl+t queues it for the next one instead."
-    : "Type while it works: Enter says it to the running turn (ctrl+t queues it instead), and a correction that should last is learned.",
+    ? "Keep typing while oi works: Enter steers current work, and ctrl+t queues follow-up messages."
+    : "Keep typing while oi works: Enter steers current work (ctrl+t queues it instead), and corrections are learned.",
   config.phoenix.endpoint === ""
-    ? "/phoenix sends every span to a Phoenix server, and logs in through your browser if it asks."
+    ? "/phoenix sends every span to a Phoenix server, and logs in through your browser when auth is enabled."
     : "/phoenix changes where spans go, or logs in again; /export sends a session now.",
-  "/share invites someone into the session, /tour has oi explain itself from its own files, and / lists the rest.",
+  "/share invites someone into the session, /tour has oi explain itself from its own files, and / lists the rest of the commands.",
 ]
 
 /** Run setup and write the config file. Resolves to the saved settings. */
@@ -435,7 +435,7 @@ export const runOnboarding = async (): Promise<Config> => {
 
   const effort = await choose("Reasoning effort?", EFFORTS, current.effort)
 
-  step("Tool approvals", "Reading files never asks. This covers shell commands and file edits.")
+  step("Tool approvals", "Reading files needs no approval. This covers shell commands and file edits.")
 
   const approvals = await choose(
     "Before running a tool that changes your machine:",
@@ -444,7 +444,7 @@ export const runOnboarding = async (): Promise<Config> => {
       {
         value: "auto" as const,
         label: "Let a decision model approve safe ones",
-        hint: "TypeSafe Jev; asks about the rest",
+        hint: "TypeSafe Jev; you approve the rest",
       },
       { value: "allow" as const, label: "Just run it" },
     ],
@@ -455,8 +455,8 @@ export const runOnboarding = async (): Promise<Config> => {
     await keyFor(
       DECISION_ACCOUNT,
       "TypeSafe",
-      "Auto approvals ask TypeSafe's Jev decision model, which needs a TypeSafe API key, kept in your keychain.",
-      "Without a TypeSafe key, auto mode asks about every tool call.",
+      "Auto approvals use TypeSafe's Jev decision model, which needs a TypeSafe API key, kept in your keychain.",
+      "Without a TypeSafe key, auto mode asks you to approve every tool call.",
     )
 
   const agentModel = `${provider}/${model}`
@@ -465,7 +465,7 @@ export const runOnboarding = async (): Promise<Config> => {
 
   step(
     "Storage",
-    "Sessions are plain span files, with any images you attach beside them. Point this at a synced folder to share them between machines.",
+    "Sessions are plain span files; attached images are stored with them. Point this at a synced folder to share them between machines.",
   )
 
   const home = expand(await ask("Sessions directory", tilde(first ? defaultHome() : current.home)))
@@ -489,7 +489,7 @@ export const runOnboarding = async (): Promise<Config> => {
   say()
   ok(`Saved ${tilde(file)}`)
   say()
-  say(`Run ${style.bold("oi")} in a project to start. Worth knowing on day one:`)
+  say(`Run ${style.bold("oi")} in a project to start. Quick overview:`)
 
   // Wrapped here, with a hanging indent: a terminal would break each tip mid-word at its edge.
   for (const tip of firstTips(config)) {

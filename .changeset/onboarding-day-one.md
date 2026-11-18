@@ -2,4 +2,4 @@
 "oi-agent": patch
 ---
 
-Setup now ends with a few things worth knowing on day one that no question covers: attaching images, typing while the agent works, `/phoenix` and `/share`. Its learning and storage steps say that messages typed mid-turn count and that attached images are kept with the session.
+Setup now ends with a quick overview of features that need no setting: attaching images, typing while oi works, `/phoenix` and `/share`. Setup and the Phoenix step use plainer wording throughout.

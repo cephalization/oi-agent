@@ -105,13 +105,13 @@ describe("onboarding", () => {
       // The same conversation as /phoenix: the server is asked what it wants before anything is saved.
       await setup.waitFor(/Phoenix URL \(type `none` to turn export off\)/)
       await setup.line(PHOENIX_AUTH_ENDPOINT)
-      await setup.waitFor(/It asks for a login\./)
+      await setup.waitFor(/Auth is enabled\./)
       await setup.waitFor(/Phoenix project/)
       await setup.line(project)
       await setup.waitFor(/How should oi authenticate to Phoenix\?[\s\S]*1\s+Log in with your browser/)
       await setup.line("1")
 
-      const waiting = await setup.waitFor(/Waiting for the browser/)
+      const waiting = await setup.waitFor(/Waiting for browser login/)
 
       const url = [
         ...waiting
@@ -219,7 +219,7 @@ describe("onboarding", () => {
       const tips = screen.replaceAll(/\s+/g, " ")
 
       expect(tips).toContain("drop an image file on the terminal")
-      expect(tips).toContain("a correction that should last is learned")
+      expect(tips).toContain("corrections are learned")
       expect(tips).toContain("/phoenix sends every span to a Phoenix server")
       expect(tips).toContain("/share invites someone into the session")
 

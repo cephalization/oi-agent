@@ -24,15 +24,14 @@ Or try it without installing: `npx oi-agent`.
 
 Ask it to explain some code, fix a bug, or run your tests. Tools ask for
 approval by default. Type `/` for commands, use `oi -c` to continue your latest
-session, and run `oi setup` to change your provider or settings. You can type
-while it works, and Enter says it to the turn that is running.
+session, and run `oi setup` to change your provider or settings.
 
 ## What you can do
 
 - **Work with your models.** Use Anthropic, OpenAI, a ChatGPT plan or local
   models, and switch providers during a session.
-- **Show it a screenshot.** Drop image files on the terminal, or paste one from
-  the clipboard with ctrl+v, and they go to the model with your message.
+- **Share images.** Drop image files on the terminal, or press ctrl+v to paste
+  one from the clipboard.
 - **Keep working while tasks run.** Background commands and subagents report
   back when finished. Set `"delegation": "off"` in config if you prefer work
   in one conversation.
@@ -41,7 +40,7 @@ while it works, and Enter says it to the turn that is running.
 - **Pick up and share work.** Resume from disk or Phoenix, compact context,
   hand off to a new thread, or invite someone to a live session.
 - **Send traces to Phoenix.** `/phoenix` picks the server, and logs in through
-  your browser if it asks for a login.
+  your browser when auth is enabled.
 - **Look inside.** Inspect every model and tool call. oi ships with its own
   source and guide; ask how it works or try `/tour`.
 
