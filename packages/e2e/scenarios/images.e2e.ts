@@ -9,14 +9,24 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { kindOf, OI, parseShareLink, pendingInbox, readMetadata, Store, stringAttr } from "@oi-agent/engine"
+import {
+  kindOf,
+  MAX_IMAGE_BYTES,
+  OI,
+  parseShareLink,
+  pendingInbox,
+  readMetadata,
+  Store,
+  stringAttr,
+} from "@oi-agent/engine"
 import type { Schema } from "effect"
 import { afterAll, describe, expect } from "vite-plus/test"
-import { fakeTextOnlyModel, NO_IMAGES } from "../src/fakes.ts"
+import { fakeChatModel, fakeTextOnlyModel, NO_IMAGES } from "../src/fakes.ts"
 import { BLUE, RED, writeImage } from "../src/images.ts"
 import { expectOk, MODELS, type Scenario, scenario } from "../src/scenario.ts"
 
 const IDLE = /enter starts a new turn/
+const SCREENSHOT = "Screenshot 2026-11-18 at 1.54.09\u202FPM.png"
 
 const COLOURS =
   "What is the main colour of each image, in order? Reply with just the colour words, separated by a comma."
@@ -36,10 +46,60 @@ const requests = (s: Scenario, session: string, traceId: string): string =>
     .join("\n")
 
 const textOnly = await fakeTextOnlyModel()
+const fixtureModel = await fakeChatModel("Got it.")
 
-afterAll(() => textOnly.close())
+afterAll(() => Promise.all([textOnly.close(), fixtureModel.close()]))
 
 describe("images in a prompt", () => {
+  scenario(
+    "an immediate Enter sends a synthetic macOS screenshot without a path in the prompt",
+    {
+      needs: ["rex"],
+      model: "fixture/tiny",
+      config: new Map<string, Schema.Json>([
+        ["steering", "off"],
+        [
+          "providers",
+          [
+            {
+              id: "fixture",
+              name: "Fixture",
+              kind: "openai-compatible",
+              base_url: fixtureModel.url,
+              models: [{ id: "tiny" }],
+            },
+          ],
+        ],
+      ]),
+    },
+    async (s) => {
+      const screenshot = writeImage(path.join(desktop(s), "var", "folders", "fixture"), SCREENSHOT, RED)
+      const oversized = writeImage(desktop(s), "oversized.png", RED)
+      const term = await s.tui()
+
+      fs.truncateSync(oversized, MAX_IMAGE_BYTES + 1)
+      await term.waitFor(IDLE)
+      await term.send(`Keep this draft\u001B[200~${dropped(oversized)}\u001B[201~\r`)
+      await term.waitFor(/oversized\.png is .* an image can be at most/)
+      await term.waitFor(/› Keep this draft/)
+      await term.key("ctrl+u")
+
+      // Enter is in the same PTY write as the paste terminator; there is no text draft.
+      await term.send(`\u001B[200~${dropped(screenshot)}\u001B[201~\r`)
+
+      const session = await s.spans.waitFor("a session", () => s.spans.sessions()[0])
+      const [turn] = await s.spans.settledTurns(session, 1)
+      const sent = requests(s, session, turn!.trace_id)
+
+      expect(turn?.state).toBe("complete")
+      expect(readMetadata(turn!.root).attachments?.map((ref) => ref.name)).toEqual([SCREENSHOT])
+      expect(sent).toContain(RED.toString("base64"))
+      expect(sent).not.toContain(desktop(s))
+      expect(sent).not.toContain("Keep this draft")
+      expect(s.spans.turns(session)).toHaveLength(1)
+    },
+  )
+
   scenario(
     "dropped images are listed, can be removed, go to the model with the prompt, and outlive their files",
     { needs: ["rex"], approvals: "allow", config: new Map([["steering", "off"]]) },
@@ -237,7 +297,7 @@ describe("images in a prompt", () => {
 
       // The driver attaches two images, and then the files are deleted: from here on they exist
       // only in the driver's process, so the host can only have what was sent to it.
-      const red = writeImage(desktop(s), "red square.png", RED)
+      const red = writeImage(desktop(s), SCREENSHOT, RED)
       const blue = writeImage(desktop(s), "blue.png", BLUE)
 
       await driver.paste(`${dropped(red)} ${dropped(blue)}`)
@@ -250,12 +310,13 @@ describe("images in a prompt", () => {
       const refs = readMetadata(turn!.root).attachments ?? []
 
       expect(turn?.user_id).toBe("ana")
-      expect(refs.map((ref) => ref.name)).toEqual(["red square.png", "blue.png"])
+      expect(refs.map((ref) => ref.name)).toEqual([SCREENSHOT, "blue.png"])
       expect(turn?.output?.toLowerCase()).toMatch(/red\W+blue/)
       expect(requests(s, session, turn!.trace_id)).toContain(RED.toString("base64"))
 
       // Everyone watching sees the prompt with what was attached to it, and holds the images themselves.
-      for (const term of [host, driver, viewer]) await term.waitFor(/▣ red square\.png[\s\S]*▣ blue\.png/)
+      for (const term of [host, driver, viewer])
+        await term.waitFor(/▣ Screenshot 2026-11-18 at 1\.54\.09\u202FPM\.png[\s\S]*▣ blue\.png/)
 
       for (const home of [homes.driver, homes.viewer]) {
         const copy = await s.spans.waitFor("the images to be synced", () => {
@@ -264,7 +325,10 @@ describe("images in a prompt", () => {
           return refs.every((ref) => store.readAttachment(session, ref.id) !== undefined) ? store : undefined
         })
 
-        expect(copy.readAttachment(session, refs[0]!.id)?.data).toBe(RED.toString("base64"))
+        expect(refs.map((ref) => copy.readAttachment(session, ref.id)?.data)).toEqual([
+          RED.toString("base64"),
+          BLUE.toString("base64"),
+        ])
         expect(copy.manifest(session).filter((rel) => rel.startsWith("attachments/"))).toHaveLength(2)
       }
 
@@ -279,7 +343,9 @@ describe("images in a prompt", () => {
         ]),
       })
 
-      await again.waitFor(/▣ red square\.png[\s\S]*▣ blue\.png[\s\S]*view only/)
+      await again.waitFor(
+        /▣ Screenshot 2026-11-18 at 1\.54\.09\u202FPM\.png[\s\S]*▣ blue\.png[\s\S]*view only/,
+      )
       expect(new Store(homes.viewer).readAttachment(session, refs[1]!.id)?.data).toBe(BLUE.toString("base64"))
 
       // A view link attaches nothing in the terminal, and the host refuses an upload made with its token.

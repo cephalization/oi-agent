@@ -53,6 +53,7 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
+import { StringDecoder } from "node:string_decoder"
 import { FEEDBACK_DESTINATION, FEEDBACK_MANUAL, postFeedback } from "../feedback.ts"
 import { clipboardImage, droppedImages, readImage, shellWords } from "../images.ts"
 import { type Dialog, setupPhoenix } from "../phoenix-setup.ts"
@@ -207,6 +208,7 @@ class App {
   private attached: Array<NewImage> = []
   /** Why the last attempt to attach something did nothing; shown until the next key. */
   private attachNotice = ""
+  private failedDrop = false
   /** Prompts sent from here that no turn has taken yet, as last read from the inbox. */
   private waiting: ReadonlyArray<InboxFile> = []
   /** Messages sent to a running turn from here, until it reads them or they become a turn. */
@@ -243,6 +245,16 @@ class App {
     this.from = options.from
     this.transcript = new Transcript(this.screen, options.user)
     this.editor.onPaste = (text) => this.paste(text)
+    this.editor.canSubmit = (text) => {
+      // A recognized but rejected drop must not send the draft without its image.
+      if (this.failedDrop) {
+        this.failedDrop = false
+
+        return false
+      }
+
+      return text !== "" || this.attached.length > 0
+    }
   }
 
   // --- completion ---------------------------------------------------------
@@ -2022,6 +2034,7 @@ class App {
     if (dropped === undefined) return text
 
     this.attachFiles(dropped)
+    this.failedDrop = this.attachNotice !== ""
 
     return ""
   }
@@ -2105,10 +2118,17 @@ class App {
   }
 
   private input(raw: string): void {
-    const data = raw.includes("\u001B[200~") ? raw : normalizeKeys(raw)
-
     this.program.acknowledge()
     this.lastKeyMs = Date.now()
+
+    // A continuation may look like a shortcut on its own. Leave it to the paste parser.
+    if (this.editor.inPaste) return this.editInput(raw)
+
+    const data = raw.includes("\u001B[200~") ? raw : normalizeKeys(raw)
+
+    if (this.failedDrop && data === "\r") return this.editInput(raw)
+
+    this.failedDrop = false
     this.attachNotice = ""
 
     // Escape in a picker or a question goes back; only Escape at the prompt stops work.
@@ -2178,13 +2198,6 @@ class App {
       return this.draw()
     }
 
-    // An empty line with images is a message: the images are what is said.
-    if (data === "\r" && this.editor.text.trim() === "" && this.attached.length > 0) {
-      this.submit("")
-
-      return this.draw()
-    }
-
     // Ctrl+C clears what is being composed before it means leaving.
     if (data === "\u0003" && this.editor.text === "" && this.attached.length > 0) {
       this.attached = []
@@ -2192,6 +2205,10 @@ class App {
       return this.draw()
     }
 
+    this.editInput(data)
+  }
+
+  private editInput(data: string): void {
     const before = this.editor.text
     const action = this.editor.feed(data)
 
@@ -2287,7 +2304,14 @@ class App {
       if (this.transcript.running || this.share !== undefined || changed) this.draw()
     }, 100)
 
-    const onData = (data: Buffer): void => this.input(data.toString("utf8"))
+    const decoder = new StringDecoder("utf8")
+
+    const onData = (data: Buffer): void => {
+      const input = decoder.write(data)
+
+      if (input !== "") this.input(input)
+    }
+
     const onResize = (): void => this.draw()
 
     process.stdin.setRawMode(true)
