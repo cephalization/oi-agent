@@ -269,6 +269,7 @@ describe("onboarding", () => {
       expect(tips).toContain("corrections are learned")
       expect(tips).toContain("/phoenix sends every span to a Phoenix server")
       expect(tips).toContain("/share invites someone into the session")
+      expect(tips).toContain("/feedback")
 
       const term = await s.tui([], { env: NO_KEY })
 

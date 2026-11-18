@@ -75,6 +75,12 @@ export const COMMANDS: ReadonlyArray<Command> = [
     argument: { name: "path", required: false },
     hostOnly: false,
   },
+  {
+    name: "/feedback",
+    summary: "draft a public issue for oi without posting it",
+    argument: { name: "description", required: false },
+    hostOnly: true,
+  },
   { name: "/tour", summary: "have the agent explain how it works, using this session", hostOnly: false },
   {
     name: "/share",

@@ -243,7 +243,14 @@ export class Transcript {
     ])
   }
 
-  private readonly compactions = new Set<string>()
+  private readonly operations = new Set<string>()
+
+  private turnOutput(span: SpanFile): Array<string> {
+    const lines = (stringAttr(span, OI.OUTPUT_VALUE) ?? "").split("\n")
+
+    // The public issue preview must be copyable as written, not rendered as Markdown.
+    return readMetadata(span).operation === "feedback" ? lines : this.prose(lines)
+  }
 
   private turnEnded(span: EndedSpan): void {
     this.flushText()
@@ -261,7 +268,7 @@ export class Transcript {
 
     // A peer that joined after the text streamed still needs to see the answer.
     if (!this.wroteText) {
-      this.screen.commit(this.prose((stringAttr(span, OI.OUTPUT_VALUE) ?? "").split("\n")))
+      this.screen.commit(this.turnOutput(span))
     }
 
     this.screen.commit([style.gray(`  ⎿ ${seconds(span)}`)])
@@ -309,7 +316,7 @@ export class Transcript {
     if (kind === "AGENT" && span.parent_id === null) {
       this.turns.add(span.context.trace_id)
 
-      if (readMetadata(span).operation !== undefined) this.compactions.add(span.context.trace_id)
+      if (readMetadata(span).operation !== undefined) this.operations.add(span.context.trace_id)
       this.active += 1
       this.startedMs = Date.now()
       this.wroteText = false
@@ -347,13 +354,13 @@ export class Transcript {
     if (span.end_time < this.contextEnd) return
 
     this.contextEnd = span.end_time
-    this.context = this.compactions.has(span.context.trace_id)
+    this.context = this.operations.has(span.context.trace_id)
       ? numberAttr(span, OI.TOKENS_COMPLETION)
       : numberAttr(span, OI.TOKENS_TOTAL)
   }
 
   private delta(event: Extract<StoreEvent, { type: "delta" }>): void {
-    if (!this.turns.has(event.trace_id) || this.compactions.has(event.trace_id)) return
+    if (!this.turns.has(event.trace_id) || this.operations.has(event.trace_id)) return
 
     if (event.delta.k === "text") this.text(event.delta.d)
 
@@ -397,7 +404,7 @@ export class Transcript {
     for (const turn of branch) {
       this.turns.add(turn.trace_id)
 
-      if (readMetadata(turn.root).operation !== undefined) this.compactions.add(turn.trace_id)
+      if (readMetadata(turn.root).operation !== undefined) this.operations.add(turn.trace_id)
     }
 
     for (const traceId of store.listTraceIds(sessionId)) {
@@ -422,7 +429,7 @@ export class Transcript {
       this.bytes = readMetadata(turn.root).session_bytes ?? this.bytes
       this.prompt(turn.root)
       this.steered(readMetadata(turn.root).steered ?? [])
-      this.screen.commit(this.prose((turn.output ?? "").split("\n")))
+      this.screen.commit(this.turnOutput(turn.root))
       this.markdown.reset()
 
       if (turn.state !== "complete") this.screen.commit([style.red(`  ⎿ ${turn.state}`)])

@@ -296,6 +296,15 @@ export const contextFor = (
   dialect: Dialect = dialectFor(undefined),
 ): Array<Json> => {
   const trace = store.readTrace(sessionId, traceId)
+  const found = rootOf(trace)
+
+  if (found === undefined) return []
+
+  const metadata = readMetadata(found.root)
+
+  if (metadata.operation === "handoff" || metadata.operation === "feedback")
+    return metadata.previous == null ? [] : contextFor(store, sessionId, metadata.previous.trace_id, dialect)
+
   const call = lastModelCall(trace)
 
   if (call !== undefined) {
@@ -318,15 +327,6 @@ export const contextFor = (
 
     return translate(call.dialect, dialect, native)
   }
-
-  const found = rootOf(trace)
-
-  if (found === undefined) return []
-
-  const metadata = readMetadata(found.root)
-
-  if (metadata.operation === "handoff")
-    return metadata.previous == null ? [] : contextFor(store, sessionId, metadata.previous.trace_id, dialect)
 
   if (metadata.handoff_seed !== undefined && metadata.previous == null) {
     const seed = store

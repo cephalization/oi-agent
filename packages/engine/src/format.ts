@@ -334,8 +334,8 @@ export type Billing = typeof Billing.Type
 export const EngineMetadata = Schema.Struct({
   /** The turn this turn continues. `null` for the first turn of a session. */
   previous: Schema.optionalKey(Schema.NullOr(SpanRef)),
-  /** A user-requested context transformation, not an ordinary model turn. */
-  operation: Schema.optionalKey(Schema.Literals(["compact", "handoff"])),
+  /** A slash-command operation, not an ordinary model turn. */
+  operation: Schema.optionalKey(Schema.Literals(["compact", "handoff", "feedback"])),
   /** The ended CHAIN checkpoint: activation for compact, durable intent for handoff. */
   checkpoint: Schema.optionalKey(SpanRef),
   /** Source command's destination, also recorded before creating it for crash recovery. */
