@@ -12,9 +12,8 @@
  * tokens rotate: every refresh stores the new one before it is used.
  */
 import { execFile } from "node:child_process"
-import { createHash, randomBytes } from "node:crypto"
-import { createServer, type Server } from "node:http"
 import { Option, Schema } from "effect"
+import { listenForCallback, pkceChallenge, randomToken } from "./oauth.ts"
 import { deleteSecret, getSecret, setSecret } from "./secrets.ts"
 
 const ISSUER = "https://auth.openai.com"
@@ -83,8 +82,6 @@ const parseStored = Schema.decodeUnknownOption(Schema.fromJsonString(Stored))
 const encodeStored = Schema.encodeSync(Stored)
 
 export class ChatGPTError extends Error {}
-
-const random = (): string => randomBytes(32).toString("base64url")
 
 const discover = async (): Promise<Discovery> => {
   const response = await fetch(`${ISSUER}/.well-known/openid-configuration`, { redirect: "error" })
@@ -169,34 +166,25 @@ export const chatgptAccount = (): string | undefined => {
   return stored === undefined ? undefined : (stored.email ?? stored.subject)
 }
 
-const listen = (server: Server, port: number): Promise<number> =>
-  new Promise((resolve, reject) => {
-    server.once("error", reject)
-    server.listen({ port, host: "127.0.0.1" }, () => {
-      server.off("error", reject)
-
-      const address = server.address()
-
-      resolve(address !== null && !Schema.is(Schema.String)(address) ? address.port : port)
-    })
-  })
-
-const PAGE = (message: string): string =>
-  `<!doctype html><meta charset="utf-8"><title>oi-agent</title><body style="font:16px system-ui;max-width:32rem;margin:20vh auto"><h1>${message}</h1><p>You can close this tab and return to the terminal.</p>`
-
 interface Callback {
   readonly code: string
   readonly clientId: string
 }
 
-/** Opens a URL in the default browser. Failure is fine: the URL is also shown to the user. */
+/** How each system opens a URL in the default browser. */
 const OPENERS = new Map<string, readonly [string, ReadonlyArray<string>]>([
   ["darwin", ["open", []]],
   ["win32", ["cmd", ["/c", "start", ""]]],
 ])
 
-/** Opens a URL in the default browser. Failure is fine: the URL is also shown to the user. */
+/**
+ * Opens a URL in the default browser. Failure is fine: the URL is also shown
+ * to the user. `$OI_AGENT_NO_BROWSER` leaves it at showing, for a machine
+ * whose browser is not the person's (and for tests).
+ */
 export const openBrowser = (url: string): void => {
+  if ((process.env["OI_AGENT_NO_BROWSER"] ?? "") !== "") return
+
   const [command, args] = OPENERS.get(process.platform) ?? ["xdg-open", []]
 
   execFile(command, [...args, url], () => undefined)
@@ -212,43 +200,35 @@ export interface SignInOptions {
 export const chatgptSignIn = async (options: SignInOptions): Promise<string> => {
   const discovery = await discover()
   const previous = read()
-  const state = random()
-  const nonce = random()
-  const verifier = random()
+  const state = randomToken()
+  const nonce = randomToken()
+  const verifier = randomToken()
 
   let settle: (callback: Callback | Error) => void = () => undefined
   const result = new Promise<Callback | Error>((resolve) => (settle = resolve))
 
-  const server = createServer((request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1")
+  const server = await listenForCallback({
+    path: CALLBACK_PATH,
+    preferredPort: PREFERRED_PORT,
+    onCallback: (params) => {
+      const code = params.get("code")
+      const clientId = params.get("client_id") ?? previous?.client_id
+      const error = params.get("error")
+      const ok = error === null && params.get("state") === state && code !== null && clientId !== undefined
 
-    if (url.pathname !== CALLBACK_PATH) {
-      response.writeHead(404).end()
+      if (ok && clientId !== "dynamic_agent_client") settle({ code, clientId })
+      else
+        settle(
+          new ChatGPTError(
+            error === null ? "ChatGPT sign-in did not complete." : `ChatGPT sign-in failed: ${error}`,
+          ),
+        )
 
-      return
-    }
-
-    const code = url.searchParams.get("code")
-    const clientId = url.searchParams.get("client_id") ?? previous?.client_id
-    const error = url.searchParams.get("error")
-
-    const ok =
-      error === null && url.searchParams.get("state") === state && code !== null && clientId !== undefined
-
-    response.writeHead(ok ? 200 : 400, { "content-type": "text/html; charset=utf-8" })
-    response.end(PAGE(ok ? "Signed in to ChatGPT" : "ChatGPT sign-in did not complete"))
-
-    if (ok && clientId !== "dynamic_agent_client") settle({ code, clientId })
-    else
-      settle(
-        new ChatGPTError(
-          error === null ? "ChatGPT sign-in did not complete." : `ChatGPT sign-in failed: ${error}`,
-        ),
-      )
+      return { ok, title: ok ? "Signed in to ChatGPT" : "ChatGPT sign-in did not complete" }
+    },
   })
 
-  const port = await listen(server, PREFERRED_PORT).catch(() => listen(server, 0))
-  const redirectUri = `http://127.0.0.1:${port}${CALLBACK_PATH}`
+  const redirectUri = server.redirectUri
   const timer = setTimeout(() => settle(new ChatGPTError("ChatGPT sign-in timed out.")), SIGN_IN_TIMEOUT_MS)
 
   options.signal?.addEventListener("abort", () => settle(new ChatGPTError("ChatGPT sign-in was cancelled.")))
@@ -265,7 +245,7 @@ export const chatgptSignIn = async (options: SignInOptions): Promise<string> => 
       state,
       nonce,
       code_challenge_method: "S256",
-      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge: pkceChallenge(verifier),
       agent_name_hint: "oi-agent",
     }).toString()
 
