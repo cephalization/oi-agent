@@ -422,6 +422,8 @@ export const EngineMetadata = Schema.Struct({
   purpose: Schema.optionalKey(Schema.Literals(["approval", "steering"])),
   /** The trace an `EVALUATOR` span judged. */
   evaluates: Schema.optionalKey(Schema.String),
+  /** The AGENT root that owns this auxiliary span in the Phoenix view. */
+  turn_owner: Schema.optionalKey(SpanRef),
   /** On an `LLM` span: the wire format of its request and response bodies. Absent means Anthropic Messages. */
   api: Schema.optionalKey(Api),
   /** On an `LLM` span: the configured provider that served it. */

@@ -15,6 +15,7 @@
 import { Effect, Option, Schema } from "effect"
 import {
   definitionFrom,
+  endedTurnRoot,
   EvalInput,
   type EvalRuntime,
   loadEvals,
@@ -23,6 +24,7 @@ import {
   saveEval,
   turnRecord,
   type UsageReporter,
+  withTurnOwner,
 } from "./evals.ts"
 import { type AnnotationFile, type EndedSpan, OI, readMetadata, stringAttr, writeMetadata } from "./format.ts"
 import { newId, nowNs, nsToIso } from "./ids.ts"
@@ -108,10 +110,8 @@ interface Heard {
  * the turn as it stood. A correction given mid-turn is judged on its own:
  * it is said at the moment the agent goes wrong, and seldom repeats the prompt.
  */
-const heardIn = (runtime: EvalRuntime, sessionId: string, traceId: string): Array<Heard> => {
-  const root = runtime.store.readTrace(sessionId, traceId).ended.find((span) => span.parent_id === null)
-
-  if (root === undefined) return []
+const heardIn = (runtime: EvalRuntime, sessionId: string, root: EndedSpan): Array<Heard> => {
+  const traceId = root.context.trace_id
 
   const metadata = readMetadata(root)
   const previous = metadata.previous?.trace_id
@@ -243,8 +243,12 @@ export const detectSteering = async (
 
   const outcomes: Array<SteeringOutcome> = []
 
-  for (const heard of heardIn(runtime, sessionId, traceId))
-    outcomes.push(await detectOne(runtime, detect, sessionId, traceId, cwd, heard))
+  const root = endedTurnRoot(runtime.store, sessionId, traceId)
+
+  if (root === undefined) return outcomes
+
+  for (const heard of heardIn(runtime, sessionId, root))
+    outcomes.push(await detectOne(runtime, detect, sessionId, root.context, cwd, heard))
 
   return outcomes
 }
@@ -253,14 +257,15 @@ const detectOne = (
   runtime: EvalRuntime,
   detect: Detector,
   sessionId: string,
-  traceId: string,
+  owner: EndedSpan["context"],
   cwd: string,
   heard: Heard,
 ): Promise<SteeringOutcome> => {
+  const traceId = owner.trace_id
   const input = inputFor(heard, cwd)
 
   const run = Effect.gen(function* () {
-    const usage = yield* reporterFor(runtime, sessionId)
+    const usage = yield* reporterFor(runtime, sessionId, owner)
     const parent = yield* Effect.orDie(Effect.currentSpan)
 
     const report: DetectorReport = {
@@ -268,7 +273,7 @@ const detectOne = (
       span: (build) =>
         runtime.store.endSpan(
           sessionId,
-          build({ sessionId, traceId: parent.traceId, spanId: parent.spanId }),
+          withTurnOwner(build({ sessionId, traceId: parent.traceId, spanId: parent.spanId }), owner),
         ),
     }
 
@@ -316,7 +321,7 @@ const detectOne = (
           [OI.SPAN_KIND]: "EVALUATOR",
           [OI.INPUT_VALUE]: input.prompt,
           [OI.INPUT_MIME]: "text/plain",
-          [OI.METADATA]: writeMetadata(undefined, { evaluates: traceId }),
+          [OI.METADATA]: writeMetadata(undefined, { evaluates: traceId, turn_owner: owner }),
         },
       },
       { captureStackTrace: false },

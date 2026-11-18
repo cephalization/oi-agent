@@ -6,7 +6,16 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { kindOf, OI, PhoenixClient, projectDir, readMetadata, stringAttr } from "@oi-agent/engine"
+import {
+  importSession,
+  kindOf,
+  OI,
+  PhoenixClient,
+  projectDir,
+  readMetadata,
+  Store,
+  stringAttr,
+} from "@oi-agent/engine"
 import { Option, Schema } from "effect"
 import { afterAll, describe, expect } from "vite-plus/test"
 import { type Decide, fakeSystemOne, type FakeServer } from "../src/fakes.ts"
@@ -237,6 +246,7 @@ describe("decision model", () => {
   scenario(
     "steering screens every prompt with the decision model and writes an evaluator only for durable ones",
     {
+      phoenix: true,
       config: new Map<string, Schema.Json>([
         ...withDecider(server).config,
         ["steering", "auto"],
@@ -246,6 +256,27 @@ describe("decision model", () => {
       env: new Map([...withDecider(server).env, ["ANTHROPIC_API_KEY", ""]]),
     },
     async (s) => {
+      // A skipped evaluator still records a verdict span, without needing a judge model.
+      const dir = path.join(projectDir(s.sandbox.cwd, { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }), "evals")
+
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        path.join(dir, "check.json"),
+        JSON.stringify({
+          name: "check",
+          description: "Check commits",
+          kind: "code",
+          pattern: "unused",
+          target: "output",
+          match_label: "fail",
+          otherwise_label: "pass",
+          fail_labels: ["fail"],
+          applicability: { any: ["commit"] },
+          feedback: false,
+          learn: false,
+        }),
+      )
+
       expectOk(
         await s.run([
           "run",
@@ -282,13 +313,69 @@ describe("decision model", () => {
       expect(s.spans.modelOf(children[1]![1]!).model).toBe(MODELS.main)
 
       // One evaluator was learned, and the verdict's confidence is the decision model's probability.
-      const evals = path.join(
-        projectDir(s.sandbox.cwd, { OI_AGENT_CONFIG_DIR: s.sandbox.configDir }),
-        "evals",
-      )
-
-      expect(fs.existsSync(evals) ? fs.readdirSync(evals) : []).toHaveLength(1)
+      expect(fs.readdirSync(dir).filter((name) => name !== "check.json")).toHaveLength(1)
       expect(stringAttr(detections[1]!, OI.OUTPUT_VALUE)).toContain('"confidence":0.95')
+
+      const client = new PhoenixClient({ endpoint: PHOENIX_ENDPOINT, project: PHOENIX_PROJECT })
+      const turns = await s.spans.settledTurns(session, 2)
+
+      const evalsOnDisk = s.spans
+        .ended(session)
+        .filter((span) => kindOf(span) === "EVALUATOR" && span.name.startsWith("eval "))
+
+      const auxiliaries = [...detections, ...children.flat(), ...evalsOnDisk]
+
+      expect(evalsOnDisk.filter((span) => span.name === "eval check")).toHaveLength(2)
+
+      // First wait for every ID via the session listing, including old-style traces on a regression.
+      const remote = await s.spans.waitFor("all auxiliary spans in Phoenix", async () => {
+        const info = await client.session(session)
+        const traces = info?.traces.map((trace) => trace.trace_id) ?? []
+        const spans = await client.spans(traces)
+        const byId = new Map(spans.map((span) => [span.context.span_id, span]))
+
+        return [...auxiliaries, ...turns.map((turn) => turn.root)].every((span) =>
+          byId.has(span.context.span_id),
+        )
+          ? { traces, byId }
+          : undefined
+      })
+
+      expect(remote.traces.toSorted()).toEqual(turns.map((turn) => turn.trace_id).toSorted())
+
+      for (const span of [...detections, ...evalsOnDisk]) {
+        const owner = turns.find((turn) => turn.trace_id === readMetadata(span).evaluates)
+
+        expect(remote.byId.get(span.context.span_id)).toMatchObject({
+          context: { trace_id: owner!.trace_id },
+          parent_id: owner!.root.context.span_id,
+        })
+      }
+
+      for (const child of children.flat()) {
+        expect(remote.byId.get(child.context.span_id)).toMatchObject({
+          context: { trace_id: remote.byId.get(child.parent_id!)!.context.trace_id },
+          parent_id: child.parent_id,
+        })
+      }
+
+      const restored = new Store(path.join(s.sandbox.root, "restored"))
+      const header = s.spans.store.readHeader(session)
+
+      await importSession(restored, client, session, { cwd: s.sandbox.cwd, device: header!.device })
+
+      for (const span of auxiliaries) {
+        const imported = restored
+          .readTrace(session, span.context.trace_id)
+          .ended.find((candidate) => candidate.context.span_id === span.context.span_id)
+
+        expect(imported).toMatchObject({ context: span.context, parent_id: span.parent_id })
+        expect(stringAttr(imported!, OI.INPUT_VALUE)).toBe(stringAttr(span, OI.INPUT_VALUE))
+      }
+
+      s.note(
+        `Phoenix session ${session}: ${remote.traces.length} turn traces, ${auxiliaries.length} nested auxiliary spans`,
+      )
     },
   )
 

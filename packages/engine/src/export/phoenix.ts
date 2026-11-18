@@ -14,6 +14,7 @@ import * as path from "node:path"
 import { type AnnotationFile, type EndedSpan, METADATA_KEY } from "../format.ts"
 import type { Store, StoreEvent } from "../store.ts"
 import { encodeTraceRequest } from "./otlp.ts"
+import { phoenixTurnSpan } from "./turn-tree.ts"
 
 export interface PhoenixTarget {
   readonly endpoint: string
@@ -174,7 +175,11 @@ export class PhoenixExporter {
 
     if (batch.length === 0) return
 
-    const body = encodeTraceRequest(batch, { project: this.destination.project, serviceName: "oi-agent" })
+    const body = encodeTraceRequest(batch.map(phoenixTurnSpan), {
+      project: this.destination.project,
+      serviceName: "oi-agent",
+    })
+
     const error = await this.post("traces", "application/x-protobuf", new Uint8Array(body))
 
     if (error !== undefined) {

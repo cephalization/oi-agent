@@ -534,6 +534,24 @@ const runCode = (definition: CodeEval, record: TurnRecord): Verdict => {
   }
 }
 
+type TurnOwner = EndedSpan["context"] | undefined
+
+/** Only an explicitly named, ended turn owns after-turn work. Never use the current session head. */
+export const endedTurnRoot = (store: Store, sessionId: string, traceId: string): EndedSpan | undefined =>
+  store.readTraceRoots(sessionId, traceId).ended.find((span) => kindOf(span) === "AGENT")
+
+/** Record ownership on children too: they can export before the auxiliary root ends. */
+export const withTurnOwner = (span: EndedSpan, owner: TurnOwner): EndedSpan =>
+  owner === undefined
+    ? span
+    : {
+        ...span,
+        attributes: {
+          ...span.attributes,
+          [OI.METADATA]: writeMetadata(span.attributes[OI.METADATA], { turn_owner: owner }),
+        },
+      }
+
 /** An `LLM` span for a model call an evaluator made, so its tokens and cost are visible. */
 const usageSpan = (
   sessionId: string,
@@ -573,11 +591,12 @@ const usageSpan = (
 })
 
 /** Report each model call an evaluator makes as an `LLM` span under the current one. */
-export const reporterFor = (runtime: EvalRuntime, sessionId: string) =>
+export const reporterFor = (runtime: EvalRuntime, sessionId: string, owner: TurnOwner) =>
   Effect.gen(function* () {
     const span = yield* Effect.orDie(Effect.currentSpan)
 
-    return (usage: ModelUsage): void => runtime.store.endSpan(sessionId, usageSpan(sessionId, span, usage))
+    return (usage: ModelUsage): void =>
+      runtime.store.endSpan(sessionId, withTurnOwner(usageSpan(sessionId, span, usage), owner))
   })
 
 const describeMetric = (metric: Metric, value: number): string =>
@@ -688,9 +707,11 @@ const runOne = (
   definition: EvalDefinition,
   record: TurnRecord,
   options: RunOptions = {},
-): Effect.Effect<AnnotationFile | undefined> =>
-  Effect.gen(function* () {
-    const report = yield* reporterFor(runtime, sessionId)
+): Effect.Effect<AnnotationFile | undefined> => {
+  const owner = endedTurnRoot(runtime.store, sessionId, traceId)?.context
+
+  return Effect.gen(function* () {
+    const report = yield* reporterFor(runtime, sessionId, owner)
     const gate = applicabilityFor(definition.applicability, record)
 
     const verdict =
@@ -724,7 +745,7 @@ const runOne = (
           [OI.SPAN_KIND]: "EVALUATOR",
           [OI.INPUT_VALUE]: record.transcript,
           [OI.INPUT_MIME]: "text/plain",
-          [OI.METADATA]: writeMetadata(undefined, { evaluates: traceId }),
+          [OI.METADATA]: writeMetadata(undefined, { evaluates: traceId, turn_owner: owner }),
         },
       },
       { captureStackTrace: false },
@@ -733,6 +754,7 @@ const runOne = (
     // A broken evaluator must never break the session it is watching.
     Effect.catchDefect(() => Effect.succeed(undefined)),
   )
+}
 
 /** Distill a failure into a rule, recorded as a `CHAIN` trace of its own. */
 const learn = (
@@ -742,9 +764,12 @@ const learn = (
   definition: EvalDefinition,
   annotation: AnnotationFile,
   record: TurnRecord,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const report = yield* reporterFor(runtime, sessionId)
+): Effect.Effect<void> => {
+  const traceId = annotation.target.trace_id
+  const owner = traceId === undefined ? undefined : endedTurnRoot(runtime.store, sessionId, traceId)?.context
+
+  return Effect.gen(function* () {
+    const report = yield* reporterFor(runtime, sessionId, owner)
 
     const verdict: Verdict = {
       label: annotation.annotation.label ?? "",
@@ -763,7 +788,10 @@ const learn = (
 
     const version = addRule(cwd, { text, source: definition.name })
 
-    yield* Effect.annotateCurrentSpan(OI.METADATA, writeMetadata(undefined, { prompt_version: version }))
+    yield* Effect.annotateCurrentSpan(
+      OI.METADATA,
+      writeMetadata(undefined, { prompt_version: version, turn_owner: owner }),
+    )
   }).pipe(
     Effect.withSpan(
       `learn ${definition.name}`,
@@ -771,6 +799,7 @@ const learn = (
         root: true,
         attributes: {
           [OI.SPAN_KIND]: "CHAIN",
+          [OI.METADATA]: writeMetadata(undefined, { turn_owner: owner }),
           [OI.INPUT_VALUE]: annotation.annotation.explanation ?? annotation.annotation.label ?? "",
           [OI.INPUT_MIME]: "text/plain",
           [OI.OUTPUT_MIME]: "text/plain",
@@ -781,6 +810,7 @@ const learn = (
     Effect.withTracer(diskTracer(runtime.store, sessionId)),
     Effect.catchDefect(() => Effect.void),
   )
+}
 
 /** The evaluator, run regardless of its trigger, as a recheck of an earlier failure. */
 const obligation = (definition: EvalDefinition): EvalDefinition => {

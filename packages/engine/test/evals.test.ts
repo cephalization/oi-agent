@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config.ts"
 import { attachEvals, createEvalTool } from "../src/eval-tool.ts"
 import { loadEvals, saveEval } from "../src/evals.ts"
 import { Engine } from "../src/engine.ts"
+import { localTurnSpan, phoenixTurnSpan } from "../src/export/turn-tree.ts"
 import { loadSession } from "../src/fold.ts"
 import { kindOf, readMetadata } from "../src/format.ts"
 import { type ModelCall, scriptedModel } from "../src/model.ts"
@@ -194,6 +195,31 @@ describe("evaluators", () => {
         .map((traceId) => store.readTraceRoots(sessionId, traceId).ended[0])
         .filter((root) => root !== undefined && kindOf(root) === "EVALUATOR"),
     ).toHaveLength(2)
+
+    const first = view.turns[0]!
+
+    const learned = store
+      .listTraceIds(sessionId)
+      .map((id) => store.readTraceRoots(sessionId, id).ended[0])
+      .filter((span) => span?.name === "learn ran_tests")
+      .find((span) => readMetadata(span!).turn_owner?.trace_id === first.trace_id)
+
+    const projected = phoenixTurnSpan(learned!)
+
+    expect(projected.context.trace_id).toBe(first.trace_id)
+    expect(projected.parent_id).toBe(first.root.context.span_id)
+    expect(readMetadata(projected).prompt_version).toBeDefined()
+    expect(localTurnSpan(projected)).toEqual(learned)
+
+    // A session operation without an owning turn must keep its own trace.
+    engine.cancel(sessionId)
+
+    const cancelled = store
+      .listTraceIds(sessionId)
+      .map((id) => store.readTraceRoots(sessionId, id).ended[0])
+      .find((span) => span?.name === "session.cancel")
+
+    expect(phoenixTurnSpan(cancelled!)).toBe(cancelled)
 
     await engine.submit(sessionId, { text: "and again", userId: "tony" })
 

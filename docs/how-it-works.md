@@ -456,7 +456,8 @@ These work best on the session you are in, because the evidence is right there.
   and end-to-end latency in Phoenix. Older spans without this boundary retain
   their inclusive duration because execution time cannot be recovered. Traces
   that are not turns (evaluators, learning, steering detection) run after a turn and are
-  reported apart, as judge time. A span still open in a running turn counts
+  reported apart, as judge time. Phoenix shows this work beneath the turn it belongs to,
+  but it does not change the turn's own wall time. A span still open in a running turn counts
   up to now; one left open by a crash counts up to the last thing its trace
   recorded, and the turn is marked interrupted. Tool time is grouped by
   tool, and for `bash` by what the command ran: the command is split into
@@ -725,7 +726,7 @@ These work best on the session you are in, because the evidence is right there.
   the latest agent `LLM` span's `llm.token_count.total` (prompt, cached
   tokens included, plus reply, which the next request also sends):
   `contextTokens` in `source/cli/src/tui/transcript.ts`. Evaluator,
-  steering and decision calls are separate traces and do not count.
+  steering and decision calls are not agent model calls and do not count.
   `Transcript.replay` restores these counts from the stored spans when a session
   is reopened. `/session` also prints the session's total across every model
   call, with cached history counted again on each call.
@@ -877,6 +878,16 @@ These work best on the session you are in, because the evidence is right there.
   trace URL continues from that turn by passing it as `previous`, which
   forks the session. Each turn's root span records its workspace (directory,
   git remote, commit, dirty), so a resume can say how the checkout differs.
+- **"Why does Phoenix show fewer traces than the session folder?"** Evaluator
+  runs, rule distillation and steering detection happen after the turn ends.
+  They are separate traces on disk, but the Phoenix exporter nests them and
+  their model or decision calls under the `AGENT` span of the turn that
+  scheduled them. This is the prompt's own turn even when steering reads the
+  previous turn for context; deferred evaluations belong to the turn carrying
+  their verdict. Import puts the spans back in their original traces, leaving
+  replay, annotations and local timing unchanged. Standalone work and older
+  spans without explicit ownership keep their original traces; old Phoenix
+  data is not rewritten.
 - **"How do I point oi at another Phoenix, or log in to one?"** `/phoenix`,
   or the Phoenix step of `oi setup`: both hold the conversation in
   `setupPhoenix` (`source/cli/src/phoenix-setup.ts`), each through its own

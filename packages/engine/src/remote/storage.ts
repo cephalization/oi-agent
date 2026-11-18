@@ -27,6 +27,7 @@ import {
   type Workspace,
 } from "../format.ts"
 import type { PhoenixExporter, PhoenixTarget } from "../export/phoenix.ts"
+import { localTurnSpan } from "../export/turn-tree.ts"
 import { jobsOf } from "../jobs.ts"
 import type { Store } from "../store.ts"
 import { annotationFromRemote, type PhoenixClient } from "./phoenix.ts"
@@ -258,7 +259,7 @@ export const importSession = async (
 
   let written = 0
 
-  for (const span of spans) if (store.importSpan(sessionId, span)) written += 1
+  for (const span of spans) if (store.importSpan(sessionId, localTurnSpan(span))) written += 1
 
   const existing = new Set(store.listAnnotations(sessionId).map((annotation) => annotation.id))
 
