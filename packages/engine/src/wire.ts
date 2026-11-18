@@ -6,6 +6,7 @@
  * does not recognize is carried through untouched as JSON.
  */
 import { Option, Schema } from "effect"
+import { ImageType } from "./format.ts"
 
 export type Json = typeof Schema.Json.Type
 
@@ -38,6 +39,12 @@ const ToolResultBlock = Schema.Struct({
   is_error: Schema.optionalKey(Schema.Boolean),
 })
 
+/** An image sent inline. One given as a link is an `OtherBlock`: the engine never sends those. */
+const ImageBlock = Schema.Struct({
+  type: Schema.Literal("image"),
+  source: Schema.Struct({ type: Schema.Literal("base64"), media_type: ImageType, data: Schema.String }),
+})
+
 const OtherBlock = Schema.Struct({ type: Schema.String })
 
 /** A content block, narrowed where the engine cares and opaque otherwise. */
@@ -47,6 +54,7 @@ export const ContentBlock = Schema.Union([
   RedactedThinkingBlock,
   ToolUseBlock,
   ToolResultBlock,
+  ImageBlock,
   OtherBlock,
 ])
 

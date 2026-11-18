@@ -1,5 +1,9 @@
 export * from "./agent.ts"
 
+export * from "./attachments.ts"
+
+export * from "./bytes.ts"
+
 export * from "./config.ts"
 
 export * from "./engine.ts"

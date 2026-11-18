@@ -9,13 +9,16 @@
 import { Option, Schema } from "effect"
 import {
   type Attrs,
+  dataUrl,
   type Dialect,
   effortIn,
   flattenTranscript,
+  imageFromDataUrl,
   mergeAssistant,
   parseArguments,
   type ToolCall,
   type TranscriptEntry,
+  userEntry,
 } from "../dialect.ts"
 import { OI } from "../format.ts"
 import type { Json } from "../wire.ts"
@@ -27,9 +30,14 @@ const ChatToolCall = Schema.Struct({
   function: Schema.Struct({ name: Schema.String, arguments: Schema.String }),
 })
 
-const TextPart = Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) })
+const ContentPart = Schema.Struct({
+  type: Schema.String,
+  text: Schema.optionalKey(Schema.String),
+  /** On an `image_url` part: a `data:` URL when the engine sent it. */
+  image_url: Schema.optionalKey(Schema.Struct({ url: Schema.String })),
+})
 
-const Content = Schema.Union([Schema.String, Schema.Array(TextPart)])
+const Content = Schema.Union([Schema.String, Schema.Array(ContentPart)])
 
 const ChatMessage = Schema.Struct({
   role: Schema.String,
@@ -81,6 +89,29 @@ const textOf = (content: ChatMessage["content"]): string => {
   if (Schema.is(Schema.String)(content)) return content
 
   return content.map((part) => part.text ?? "").join("")
+}
+
+/** The images a user attached to a message, among its content parts. */
+const imagesOf = (content: ChatMessage["content"]) =>
+  content === undefined || content === null || Schema.is(Schema.String)(content)
+    ? []
+    : content.flatMap((part) =>
+        part.image_url === undefined ? [] : (imageFromDataUrl(part.image_url.url) ?? []),
+      )
+
+const userMessage: Dialect["userMessage"] = (parts, images = []) => {
+  const text = parts.filter((part) => part !== "").join("\n\n")
+
+  // Plain text stays a string: every compatible server reads that, and not all read a list of parts.
+  if (images.length === 0) return { role: "user", content: parts.join("\n\n") }
+
+  return {
+    role: "user",
+    content: [
+      ...(text === "" ? [] : [{ type: "text", text }]),
+      ...images.map((image) => ({ type: "image_url", image_url: { url: dataUrl(image) } })),
+    ],
+  }
 }
 
 const isSystem = (role: string): boolean => role === "system" || role === "developer"
@@ -182,7 +213,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
         calls: callsOf(message.tool_calls),
       })
     } else {
-      entries.push({ role: "user", text: textOf(message.content) })
+      entries.push(userEntry(textOf(message.content), imagesOf(message.content)))
     }
   }
 
@@ -191,7 +222,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
 
 const fromTranscript: Dialect["fromTranscript"] = (transcript) =>
   transcript.map((entry): Json => {
-    if (entry.role === "user") return { role: "user", content: entry.text }
+    if (entry.role === "user") return userMessage([entry.text], entry.images)
 
     if (entry.role === "tool") return toolMessage(entry.id, entry.output, entry.isError)
 
@@ -293,7 +324,7 @@ export const openaiChat: Dialect = {
     }),
   reply,
   continueWith,
-  userMessage: (parts) => ({ role: "user", content: parts.join("\n\n") }),
+  userMessage,
   toTranscript,
   fromTranscript,
   requestAttributes,

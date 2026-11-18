@@ -13,6 +13,7 @@ import { nsToIso, sessionIdForTrace } from "./ids.ts"
 import { contextFor, pendingInbox, renderSaid, steerPoint } from "./fold.ts"
 import {
   type AnnotationFile,
+  type AttachmentRef,
   type EngineMetadata,
   OI,
   type SessionSpanRef,
@@ -111,6 +112,8 @@ export interface TurnInput {
   readonly operation?: "compact" | "handoff" | undefined
   readonly handoffSeed?: EngineMetadata["handoff_seed"] | undefined
   readonly inboxId?: string | undefined
+  /** Images sent with the prompt, already in the session's attachments. */
+  readonly attachments?: ReadonlyArray<AttachmentRef> | undefined
   /** The `TOOL` span in another session that sent this turn's prompt. */
   readonly origin?: SessionSpanRef | undefined
   /** Results of background work that this turn's text delivers to the model. */
@@ -455,7 +458,11 @@ const loop = (env: TurnEnv, input: TurnInput): Effect.Effect<TurnResult, ModelEr
       if (after === undefined) return false
 
       steered.push(
-        ...waiting.map((entry) => ({ inbox_id: entry.id, after, user_id: entry.user_id, text: entry.text })),
+        ...waiting.map((entry) => {
+          const said: Steered = { inbox_id: entry.id, after, user_id: entry.user_id, text: entry.text }
+
+          return entry.attachments === undefined ? said : { ...said, attachments: entry.attachments }
+        }),
       )
       root.patchMetadata({ steered })
       root.flush()
@@ -532,6 +539,9 @@ export const runTurn = (
   if (input.handoffSeed !== undefined) metadata.handoff_seed = input.handoffSeed
 
   if (input.inboxId !== undefined) metadata.inbox_id = input.inboxId
+
+  if (input.attachments !== undefined && input.attachments.length > 0)
+    metadata.attachments = input.attachments
 
   if (input.delivers !== undefined) metadata.delivers = input.delivers
 

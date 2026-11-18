@@ -5,11 +5,13 @@
  * step, a resumed session and a crash recovery all take the same path. There
  * is no in-memory conversation to fall out of sync with disk.
  */
+import { type Image, missingImageNote } from "./attachments.ts"
 import type { Effort } from "./config.ts"
 import { type Dialect, INTERRUPTED_RESULT, type Reply, type ToolResult } from "./dialect.ts"
 import { dialectFor, translate } from "./dialects/index.ts"
 import {
   type AnnotationFile,
+  type AttachmentRef,
   type EndedSpan,
   type InboxFile,
   kindOf,
@@ -239,16 +241,39 @@ export const renderFeedback = (annotations: ReadonlyArray<AnnotationFile>): stri
   ].join("\n")
 }
 
-const userMessage = (store: Store, sessionId: string, root: SpanFile, dialect: Dialect): Json => {
-  const injected = readMetadata(root).injected ?? []
-  const text = stringAttr(root, OI.INPUT_VALUE) ?? ""
+/**
+ * Attached images as a request carries them, read from the session's
+ * attachment files. A machine that has the spans but not the files (a session
+ * restored from Phoenix) says so in text where the image would be, so the
+ * model knows something was shown that it cannot see.
+ */
+const imagesFor = (store: Store, sessionId: string, refs: ReadonlyArray<AttachmentRef> = []) => {
+  const images: Array<Image> = []
+  const missing: Array<string> = []
 
-  if (injected.length === 0) return dialect.userMessage([text])
+  for (const ref of refs) {
+    const file = store.readAttachment(sessionId, ref.id)
+
+    if (file === undefined) missing.push(missingImageNote(ref))
+    else images.push({ media_type: file.media_type, data: file.data })
+  }
+
+  return { images, missing }
+}
+
+const userMessage = (store: Store, sessionId: string, root: SpanFile, dialect: Dialect): Json => {
+  const metadata = readMetadata(root)
+  const injected = metadata.injected ?? []
+  const text = stringAttr(root, OI.INPUT_VALUE) ?? ""
+  const { images, missing } = imagesFor(store, sessionId, metadata.attachments)
+  const said = [...missing, text]
+
+  if (injected.length === 0) return dialect.userMessage(said, images)
 
   const ids = new Set(injected.map((entry) => entry.annotation_id))
   const annotations = store.listAnnotations(sessionId).filter((annotation) => ids.has(annotation.id))
 
-  return dialect.userMessage([renderFeedback(annotations), text])
+  return dialect.userMessage([renderFeedback(annotations), ...said], images)
 }
 
 /**
@@ -281,7 +306,15 @@ export const contextFor = (
       (entry) => entry.after === call.span.context.span_id,
     )
 
-    if (steered.length > 0) native.push(call.dialect.userMessage(steered.map(renderSteer)))
+    if (steered.length > 0) {
+      const { images, missing } = imagesFor(
+        store,
+        sessionId,
+        steered.flatMap((entry) => entry.attachments ?? []),
+      )
+
+      native.push(call.dialect.userMessage([...steered.map(renderSteer), ...missing], images))
+    }
 
     return translate(call.dialect, dialect, native)
   }

@@ -11,6 +11,9 @@ import {
   type ApprovalRequest,
   chatgptAccount,
   DECISION_ACCOUNT,
+  attachmentsFrom,
+  describeAttachment,
+  isProblem,
   getSecret,
   handoffSeedFor,
   readMetadata,
@@ -24,6 +27,7 @@ import {
   openBrowser,
   splitModel,
   type ModelOption,
+  type NewImage,
   formatBytes,
   formatShareLink,
   branchTo,
@@ -47,6 +51,7 @@ import {
   type Tunnel,
 } from "@oi-agent/engine"
 import { homedir } from "node:os"
+import { clipboardImage, droppedImages, readImage, shellWords } from "../images.ts"
 import { ProgramStatus } from "../program-status.ts"
 import { ago, type SessionSummary, summarizeSessions } from "../sessions.ts"
 import type { Providers, ServerForm } from "../providers.ts"
@@ -142,6 +147,7 @@ const UP = "\u001B[A"
 const DOWN = "\u001B[B"
 const SHIFT_TAB = "\u001B[Z"
 const CTRL_T = "\u0014"
+const CTRL_V = "\u0016"
 
 /** How many waiting prompts are listed above the status line. */
 const WAITING_ROWS = 3
@@ -190,6 +196,10 @@ class App {
   private held = 0
   /** What Enter does with a prompt while a turn runs: say it to that turn, or leave it for the next. */
   private whileRunning: "steer" | "queue" = "steer"
+  /** Images that go with the next message, in the order they were attached. */
+  private attached: Array<NewImage> = []
+  /** Why the last attempt to attach something did nothing; shown until the next key. */
+  private attachNotice = ""
   /** Prompts sent from here that no turn has taken yet, as last read from the inbox. */
   private waiting: ReadonlyArray<InboxFile> = []
   /** Messages sent to a running turn from here, until it reads them or they become a turn. */
@@ -225,6 +235,7 @@ class App {
     }, options.engine?.redactor)
     this.from = options.from
     this.transcript = new Transcript(this.screen, options.user)
+    this.editor.onPaste = (text) => this.paste(text)
   }
 
   // --- completion ---------------------------------------------------------
@@ -598,7 +609,9 @@ class App {
           ? "↳ steering, when the turn's current step ends: "
           : "⧗ queued for the next turn: "
 
-      const sender = ` (${entry.user_id})`
+      const count = entry.attachments?.length ?? 0
+      const images = count === 0 ? "" : ` ▣ ${count} ${count === 1 ? "image" : "images"}`
+      const sender = `${images} (${entry.user_id})`
 
       return `${style.yellow(label)}${clip(entry.text.replaceAll(/\s+/g, " "), Math.max(columns - label.length - sender.length - 1, 8))}${style.gray(sender)}`
     })
@@ -713,6 +726,8 @@ class App {
 
     if (this.notice !== "") lines.push(style.yellow(this.notice))
 
+    if (this.attachNotice !== "") lines.push(style.yellow(this.attachNotice))
+
     const question = this.question
 
     if (question !== undefined) {
@@ -750,6 +765,9 @@ class App {
     const canPrompt = this.options.peer === undefined || this.options.peer.info.role === "driver"
     const before = this.editor.text.slice(0, this.editor.cursor).split("\n")
     const input = this.editor.text.split("\n")
+
+    lines.push(...this.attachedLines())
+
     const first = lines.length
 
     const completion = this.completion()
@@ -1540,6 +1558,8 @@ class App {
 
     if (name === "/tour") return this.submit(TOUR)
 
+    if (name === "/image") return this.image(argument)
+
     if (name === "/resume") return this.resume(argument)
 
     if (name === "/handoff") {
@@ -1680,24 +1700,41 @@ class App {
 
     if (peer?.info.role === "viewer") return
 
-    if (engine !== undefined && engine.busy(sessionId)) {
-      const steered =
-        this.whileRunning === "steer" ? engine.steer(sessionId, { text, userId: user }) : undefined
+    // The message takes the images with it; a command above leaves them for the message that follows.
+    const images = this.attached
 
-      if (steered === undefined) engine.queue(sessionId, { text, userId: user })
-      else this.steers.add(steered.id)
-
-      this.watchPrompts()
-
-      return
-    }
+    this.attached = []
 
     if (engine !== undefined) {
+      const attachments = engine.attach(sessionId, images)
+
+      // Checked when each was attached, so this is a file that changed since: keep them, and say why.
+      if (isProblem(attachments)) {
+        this.attached = images
+        this.editor.set(text)
+
+        return this.say([attachments])
+      }
+
+      const said = { text, userId: user, attachments }
+
+      if (engine.busy(sessionId)) {
+        const steered = this.whileRunning === "steer" ? engine.steer(sessionId, said) : undefined
+
+        if (steered === undefined) engine.queue(sessionId, said)
+        else this.steers.add(steered.id)
+
+        this.watchPrompts()
+
+        return
+      }
+
       const from = this.from
 
       this.from = undefined
-      void engine.submit(sessionId, { text, userId: user, previous: from }).then((outcome) => {
-        if (!outcome.ok && !outcome.interrupted) this.say([outcome.message])
+      void engine.submit(sessionId, { ...said, previous: from }).then((outcome) => {
+        if (!outcome.ok && !outcome.interrupted)
+          this.say([outcome.message, ...this.imageHint(outcome.message)])
 
         this.draw()
       })
@@ -1706,14 +1743,143 @@ class App {
     }
 
     this.program.report("working", text)
-    void peer?.prompt(text, this.whileRunning).then((error) => {
+    void peer?.prompt(text, this.whileRunning, images).then((error) => {
       if (error !== undefined) {
         this.program.report("error", error)
         this.say([error])
+
+        // Nothing was sent: give the images back instead of making them be found again.
+        if (this.attached.length === 0) this.attached = images
       }
 
       this.draw()
     })
+  }
+
+  // --- images -------------------------------------------------------------
+
+  /** The images waiting to go with the next message, above the line being typed. */
+  private attachedLines(): Array<string> {
+    if (this.attached.length === 0) return []
+
+    const names = this.attached
+      .map((image) => describeAttachment({ name: image.name, bytes: image.bytes.length }))
+      .join(" · ")
+
+    const hint = "backspace at the start of the line removes the last"
+
+    return [
+      `${style.cyan("▣")} ${clip(names, Math.max(this.screen.columns - 4, 8))}`,
+      style.gray(
+        `  ${this.attached.length === 1 ? "1 image" : `${this.attached.length} images`} attached · ${hint}`,
+      ),
+    ]
+  }
+
+  /** Attach images to the next message, all or none: a prompt that would be refused is refused here, with the reason. */
+  private attachImages(images: ReadonlyArray<NewImage>): void {
+    if (this.options.peer?.info.role === "viewer") {
+      this.attachNotice = "view only: the host has not let you prompt, so images cannot be attached"
+
+      return
+    }
+
+    const problem = attachmentsFrom([...this.attached, ...images])
+
+    if (isProblem(problem)) {
+      this.attachNotice = problem
+
+      return
+    }
+
+    this.attachNotice = ""
+    this.attached.push(...images)
+  }
+
+  /** Read image files and attach them. Returns false, attaching nothing, when one cannot be read. */
+  private attachFiles(files: ReadonlyArray<string>): boolean {
+    const cwd = this.options.store.readHeader(this.options.sessionId)?.cwd ?? process.cwd()
+    const images: Array<NewImage> = []
+
+    for (const file of files) {
+      const image = readImage(file, cwd)
+
+      if (isProblem(image)) {
+        this.attachNotice = image
+
+        return false
+      }
+
+      images.push(image)
+    }
+
+    this.attachImages(images)
+
+    return true
+  }
+
+  /** A paste that is nothing but image files is a drop: attach them, and insert nothing. */
+  private paste(text: string): string {
+    const cwd = this.options.store.readHeader(this.options.sessionId)?.cwd ?? process.cwd()
+    const dropped = droppedImages(text, cwd)
+
+    if (dropped === undefined) return text
+
+    this.attachFiles(dropped)
+
+    return ""
+  }
+
+  private pasteClipboard(): void {
+    const image = clipboardImage()
+
+    if (image === undefined) this.attachNotice = "There is no image on the clipboard."
+    else this.attachImages([image])
+  }
+
+  /** `/image a.png b.jpg` attaches files; alone, it says what is attached and how else to attach. */
+  private image(argument: string): void {
+    if (argument !== "") {
+      this.attachFiles(shellWords(argument))
+
+      return
+    }
+
+    this.say([
+      this.attached.length === 0
+        ? "No images attached."
+        : `Attached: ${this.attached.map((image) => describeAttachment({ name: image.name, bytes: image.bytes.length })).join(", ")}`,
+      "Drop image files on the terminal, press ctrl+v to paste one from the clipboard, or /image <path>.",
+      "They go with your next message. Backspace at the start of the line removes the last one.",
+    ])
+  }
+
+  /**
+   * After a turn fails in a conversation that has images: the likeliest cause
+   * worth naming. oi does not ask whether a model reads images before sending
+   * them, so the provider's own error is what was shown above.
+   */
+  private imageHint(message: string): Array<string> {
+    const { store, sessionId } = this.options
+    const view = loadSession(store, sessionId)
+
+    const images =
+      view.head !== undefined &&
+      branchTo(view, view.head.trace_id).some((turn) => {
+        const metadata = readMetadata(turn.root)
+
+        return (
+          metadata.attachments !== undefined ||
+          (metadata.steered ?? []).some((entry) => entry.attachments !== undefined)
+        )
+      })
+
+    return images && /image|vision|multimodal|modalit/i.test(message)
+      ? wrap(
+          "This conversation has images in it. If this model cannot read them, switch to one that can with /model: the images are still here.",
+          this.screen.columns - 1,
+        )
+      : []
   }
 
   // --- input --------------------------------------------------------------
@@ -1747,14 +1913,24 @@ class App {
 
     this.program.acknowledge()
     this.lastKeyMs = Date.now()
+    this.attachNotice = ""
 
     // Escape in a picker goes back; only Escape at the prompt stops work.
     if (data === "\u001B" && this.picker === undefined) {
       const entries = this.options.engine?.cancel(this.options.sessionId) ?? []
 
-      this.editor.restore(
-        entries.filter((entry) => entry.user_id === this.options.user).map((entry) => entry.text),
-      )
+      const mine = entries.filter((entry) => entry.user_id === this.options.user)
+
+      this.editor.restore(mine.map((entry) => entry.text))
+
+      // The prompt back in the editor gets its images back too; they are still in the session.
+      const withdrawn = (mine.at(-1)?.attachments ?? []).flatMap((ref) => {
+        const file = this.options.store.readAttachment(this.options.sessionId, ref.id)
+
+        return file === undefined ? [] : [{ name: ref.name, bytes: Buffer.from(file.data, "base64") }]
+      })
+
+      if (withdrawn.length > 0) this.attached = withdrawn
       this.approvals.length = 0
       this.watchPrompts()
       this.program.report("idle")
@@ -1789,6 +1965,33 @@ class App {
 
     if (data === CTRL_T) {
       this.whileRunning = this.whileRunning === "steer" ? "queue" : "steer"
+
+      return this.draw()
+    }
+
+    if (data === CTRL_V) {
+      this.pasteClipboard()
+
+      return this.draw()
+    }
+
+    // At the start of the line there is nothing left to delete but the last image.
+    if ((data === "\u007F" || data === "\b") && this.editor.cursor === 0 && this.attached.length > 0) {
+      this.attached.pop()
+
+      return this.draw()
+    }
+
+    // An empty line with images is a message: the images are what is said.
+    if (data === "\r" && this.editor.text.trim() === "" && this.attached.length > 0) {
+      this.submit("")
+
+      return this.draw()
+    }
+
+    // Ctrl+C clears what is being composed before it means leaving.
+    if (data === "\u0003" && this.editor.text === "" && this.attached.length > 0) {
+      this.attached = []
 
       return this.draw()
     }

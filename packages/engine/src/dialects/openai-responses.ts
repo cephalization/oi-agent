@@ -12,20 +12,28 @@
 import { Option, Schema } from "effect"
 import {
   type Attrs,
+  dataUrl,
   type Dialect,
   effortIn,
   flattenTranscript,
+  imageFromDataUrl,
   mergeAssistant,
   parseArguments,
   type ToolCall,
   type TranscriptEntry,
+  userEntry,
 } from "../dialect.ts"
 import { OI } from "../format.ts"
 import type { Json } from "../wire.ts"
 
 const Nullable = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.NullOr(schema))
 
-const Part = Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) })
+const Part = Schema.Struct({
+  type: Schema.String,
+  text: Schema.optionalKey(Schema.String),
+  /** On an `input_image` part: a `data:` URL when the engine sent it. */
+  image_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
+})
 
 /** Any input or output item, narrowed only where the engine looks. */
 const Item = Schema.Struct({
@@ -84,6 +92,14 @@ const textOf = (content: Item["content"]): string => {
 
   return content.map((part) => part.text ?? "").join("")
 }
+
+/** The images a user attached to a message, among its content parts. */
+const imagesOf = (content: Item["content"]) =>
+  content === undefined || Schema.is(Schema.String)(content)
+    ? []
+    : content.flatMap((part) =>
+        part.type === "input_image" && part.image_url != null ? (imageFromDataUrl(part.image_url) ?? []) : [],
+      )
 
 /** A message item; an easy input message (`{ role, content }`) has no `type`. */
 const isMessage = (item: Item): boolean =>
@@ -162,7 +178,7 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
     } else if (isMessage(item) && item.role === "assistant") {
       mergeAssistant(entries, { role: "assistant", text: textOf(item.content), calls: [] })
     } else if (isMessage(item) && item.role === "user") {
-      entries.push({ role: "user", text: textOf(item.content) })
+      entries.push(userEntry(textOf(item.content), imagesOf(item.content)))
     }
     // Reasoning items and system or developer messages do not carry over.
   }
@@ -170,15 +186,22 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
   return entries
 }
 
-const userMessage: Dialect["userMessage"] = (parts) => ({
+const userMessage: Dialect["userMessage"] = (parts, images = []) => ({
   type: "message",
   role: "user",
-  content: parts.map((text) => ({ type: "input_text", text })),
+  content:
+    images.length === 0
+      ? parts.map((text) => ({ type: "input_text", text }))
+      : [
+          ...images.map((image) => ({ type: "input_image", image_url: dataUrl(image) })),
+          // A prompt can be only images, and an empty text part says nothing.
+          ...parts.flatMap((text) => (text === "" ? [] : [{ type: "input_text", text }])),
+        ],
 })
 
 const fromTranscript: Dialect["fromTranscript"] = (transcript) =>
   transcript.flatMap((entry): Array<Json> => {
-    if (entry.role === "user") return [userMessage([entry.text])]
+    if (entry.role === "user") return [userMessage([entry.text], entry.images)]
 
     if (entry.role === "tool") return [resultItem(entry.id, entry.output, entry.isError)]
 

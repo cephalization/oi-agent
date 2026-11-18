@@ -39,6 +39,14 @@ export class Editor {
   private historyIndex = 0
   private draft = ""
   private pasting = false
+  private pasted = ""
+
+  /**
+   * What a finished paste puts in the line. The application can take a paste
+   * for something else (files dropped on the terminal paste their paths) and
+   * return what is left to insert, which may be nothing.
+   */
+  onPaste: (text: string) => string = (text) => text
 
   get text(): string {
     return this.buffer
@@ -168,8 +176,14 @@ export class Editor {
       const end = data.indexOf(PASTE_END)
       const from = start === -1 ? 0 : start + PASTE_START.length
 
-      this.insert(data.slice(from, end === -1 ? undefined : end).replaceAll("\r", "\n"))
+      // Held until the paste ends: a path split across chunks must be read whole.
+      this.pasted += data.slice(from, end === -1 ? undefined : end)
       this.pasting = end === -1
+
+      if (!this.pasting) {
+        this.insert(this.onPaste(this.pasted).replaceAll("\r", "\n"))
+        this.pasted = ""
+      }
 
       return { type: "redraw" }
     }

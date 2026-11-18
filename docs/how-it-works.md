@@ -87,8 +87,22 @@ as text, tool calls and tool results. The line under the prompt says what Enter 
 and yolo), and Shift+Tab cycles reasoning effort
 through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
-`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`,
+`/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`, `/image`,
 `/session`, `/tour`, `/reload`, `/help` and `/quit`.
+
+To show the agent an image, drop the file on the terminal: PNG, JPEG, GIF or
+WebP, several at once if you like. A terminal pastes a dropped file's path, and
+oi takes a paste that is nothing but image files as attachments instead of
+text. Ctrl+V attaches an image from the clipboard (a screenshot taken to the
+clipboard has no file to drop), and `/image <path>` attaches one by name. What
+is attached is listed above the prompt and goes with your next message,
+whether that starts a turn, steers the running one or waits in the queue;
+Backspace at the start of the line removes the last one. An image can be at
+most 5.2 MB, and a message takes up to ten. oi does not check whether the
+model can read images: it sends them, and a model that cannot says so through
+its provider's own error. The images stay in the conversation, so you can
+switch to a model that reads them with `/model`. Headless, `oi run --image
+shot.png "what is wrong here?"` does the same.
 
 The status bar keeps a session-id prefix visible, including after switching or
 handing off threads. Run `/session` to print the full copyable ID, an
@@ -384,6 +398,7 @@ creation and crash recovery.
 | Wire formats, and translating between them       | `source/engine/src/dialect.ts`, `source/engine/src/dialects/`        |
 | Providers, keys, model lists                     | `source/engine/src/providers.ts`, `source/cli/src/providers.ts`      |
 | The tools the model can call                     | `source/engine/src/tools.ts`                                         |
+| Images attached to a prompt                      | `source/engine/src/attachments.ts`, `source/cli/src/images.ts`       |
 | Commands that outlive their tool call            | `source/engine/src/jobs.ts`, `jobEnded` in `engine.ts`               |
 | Subagents: delegating, steering, approvals       | `source/engine/src/tasks.ts`, `task-tools.ts`, `serve` in `main.ts`  |
 | Watching a session another process writes        | `follow` in `source/engine/src/store.ts`                             |
@@ -940,12 +955,48 @@ These work best on the session you are in, because the evidence is right there.
   are not billed per token, and `api` otherwise. Phoenix prices every call
   from its model name, so plan calls still show a list-price cost there;
   `billing` is how to tell them apart.
+- **"What happens to an image I attach?"** Its bytes become a file in the
+  session, `attachments/<sha256>.json` (`Store.writeAttachment`), named by
+  its content: immutable like an ended span, written once however often the
+  same picture is attached, and synced like every other file. The format is
+  read from the bytes (`imageTypeOf` in `source/engine/src/attachments.ts`),
+  never from the name. The prompt carries references
+  (`{ id, name, media_type, bytes }`): on its inbox entry while it waits, on
+  the turn's root span as `metadata.oi_agent.attachments`, or on the
+  `steered` record of a message given mid-turn. `contextFor` turns the
+  references into image blocks of the first request that sends them
+  (`imagesFor` in `fold.ts`, `userMessage` in each dialect: an `image` block
+  for Anthropic, `input_image` for OpenAI Responses and ChatGPT, `image_url`
+  for Chat Completions). From then on the image is part of that request's
+  stored body and is replayed verbatim; a switch of provider translates it
+  with the rest (`images` on a user entry of the neutral transcript). The
+  `LLM` span records each image as an OpenInference `message_content` of type
+  `image` with a `data:` URL, so Phoenix shows it. A machine that has the
+  spans but not the attachment file (a session restored from Phoenix whose
+  turn never reached a model) says so in text where the image would be. There
+  is no check of what a model can read: `Engine.attach` checks only that the
+  bytes are an image, its size and the count, and a provider that cannot read
+  one refuses the request in its own words. Because each `LLM` span holds its
+  whole request, an image is stored again in every later call of the
+  conversation; that is the disk cost noted under "Status" in PLAN.md, and
+  images make it larger.
+  In the terminal, `droppedImages` (`source/cli/src/images.ts`) recognizes a
+  paste that is only image paths, `clipboardImage` reads the clipboard with
+  `osascript`, `wl-paste` or `xclip`, and the editor hands a finished paste
+  to the application before inserting it (`Editor.onPaste`).
 - **"How do two people share one agent?"** `peer/server.ts` serves a list of
   files and a stream of events; `peer/client.ts` copies what is missing.
   Finished spans never change, so there is nothing to merge. Drivers send
   `{ text, mode }` to `/v1/prompt`: the default `steer` calls `Engine.steer`
   when the turn accepts input, otherwise `Engine.queue`; explicit `queue`
   always waits for a new turn. Ctrl+T selects the mode on host and driver.
+  A driver's images travel in the same request, as base64 under `images`:
+  the host reads the format, size and count from the bytes, stores them in
+  its own session and never reads a path on the joiner's machine. A host
+  says it takes images in `features` of `/v1/session`; a joiner does not send
+  them to one that does not, instead of having them dropped silently.
+  Attachment files reach both roles like any other file: in the manifest for
+  someone joining, and as an `attachment` event for those already watching.
   Viewers cannot submit or control work, and tool approvals stay host-owned.
   Both roles receive an authenticated, read-only derived status snapshot in
   the manifest and every 500 ms on the event stream: all senders' pending

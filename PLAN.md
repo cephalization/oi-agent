@@ -29,6 +29,7 @@ sessions/<session-id>/
     <start-ns>-<span-id>.stream.jsonl streaming deltas for the open span
   annotations/<id>.json               eval results, labels, names, human feedback
   inbox/<id>.json                     queued inputs (peer prompts, results of background work), consumed by a trace
+  attachments/<sha256>.json           an image attached to a prompt, named by its content; prompts refer to it
 ```
 
 Not synced, rebuildable: a local index for session lists and search, and
@@ -141,3 +142,6 @@ Spike answers:
   quadratically: 95 MB after 100 turns and 848 MB after 300 in the benchmark
   (`packages/engine/bench/resume.ts`). History is stored twice per `LLM`
   span, once raw and once flattened. This decision needs revisiting.
+  Images attached to prompts make it more pressing: an image is base64 in
+  every later request of its conversation, so a 1 MB screenshot adds about
+  2.7 MB to each `LLM` span that follows it (raw and flattened).

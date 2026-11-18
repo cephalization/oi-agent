@@ -2,14 +2,18 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { loadConfig } from "./config.ts"
+import { intact, refOf } from "./attachments.ts"
 import {
   type AnnotationFile,
+  type AttachmentFile,
+  type AttachmentRef,
   type Device,
   type EndedSpan,
   FORMAT_VERSION,
   type InboxFile,
   kindOf,
   parseAnnotation,
+  parseAttachment,
   parseDelta,
   parseDevice,
   parseEndedSpan,
@@ -17,6 +21,7 @@ import {
   parseInbox,
   parseSpan,
   printAnnotation,
+  printAttachment,
   printDevice,
   printHeader,
   printInbox,
@@ -57,6 +62,7 @@ export type StoreEvent =
     }
   | { readonly type: "annotation"; readonly session_id: string; readonly annotation: AnnotationFile }
   | { readonly type: "inbox"; readonly session_id: string; readonly entry: InboxFile }
+  | { readonly type: "attachment"; readonly session_id: string; readonly attachment: AttachmentFile }
 
 export interface OpenSpan {
   readonly span: SpanFile
@@ -115,6 +121,7 @@ const OPEN_NAME = /^\d{20}-[0-9a-f]{16}\.open\.json$/
 const TRACE_NAME = /^[0-9a-f]{32}$/
 const SYNC_SPAN = /^traces\/[0-9a-f]{32}\/\d{20}-[0-9a-f]{16}\.json$/
 const SYNC_SIDE = /^(?:annotations|inbox)\/[0-9a-zA-Z-]+\.json$/
+const SYNC_ATTACHMENT = /^attachments\/[0-9a-f]{64}\.json$/
 
 const readText = (file: string): string | undefined => {
   try {
@@ -652,6 +659,36 @@ export class Store {
     )
   }
 
+  // --- attachments --------------------------------------------------------
+
+  private attachmentPath(sessionId: string, id: string): string {
+    return path.join(this.sessionDir(sessionId), "attachments", `${id}.json`)
+  }
+
+  /**
+   * Keep an image in the session, and return the reference a prompt carries.
+   * The file is named by its content: attaching the same image again writes
+   * nothing.
+   */
+  writeAttachment(sessionId: string, attachment: AttachmentFile): AttachmentRef {
+    const file = this.attachmentPath(sessionId, attachment.id)
+
+    if (!fs.existsSync(file)) {
+      writeAtomic(file, printAttachment(attachment), true)
+      this.emit({ type: "attachment", session_id: sessionId, attachment })
+    }
+
+    // The name it was given this time: the same picture can be attached under another one.
+    return refOf(attachment)
+  }
+
+  /** An attached image's bytes, or undefined on a machine that never received them. */
+  readAttachment(sessionId: string, id: string): AttachmentFile | undefined {
+    return /^[0-9a-f]{64}$/.test(id)
+      ? readWith(parseAttachment, this.attachmentPath(sessionId, id))
+      : undefined
+  }
+
   // --- sync ---------------------------------------------------------------
 
   /**
@@ -670,7 +707,8 @@ export class Store {
       }
     }
 
-    for (const sub of ["annotations", "inbox"]) {
+    // Attachments before the inbox entries that refer to them: a peer copying in order never holds a dangling reference.
+    for (const sub of ["annotations", "attachments", "inbox"]) {
       for (const name of listDir(path.join(root, sub))) {
         if (name.endsWith(".json") && !name.startsWith(".")) paths.push(`${sub}/${name}`)
       }
@@ -680,7 +718,7 @@ export class Store {
   }
 
   static isSyncPath(rel: string): boolean {
-    return rel === "session.json" || SYNC_SPAN.test(rel) || SYNC_SIDE.test(rel)
+    return rel === "session.json" || SYNC_SPAN.test(rel) || SYNC_SIDE.test(rel) || SYNC_ATTACHMENT.test(rel)
   }
 
   readSyncFile(sessionId: string, rel: string): string | undefined {
@@ -730,6 +768,19 @@ export class Store {
 
       writeAtomic(file, contents, true)
       this.emit({ type: "annotation", session_id: sessionId, annotation })
+
+      return true
+    }
+
+    if (rel.startsWith("attachments/")) {
+      const attachment = parseAttachment(contents)
+
+      // The name is the content's hash, so a copy that does not match it is not that file.
+      if (attachment === undefined || rel !== `attachments/${attachment.id}.json` || !intact(attachment))
+        return false
+
+      writeAtomic(file, contents, true)
+      this.emit({ type: "attachment", session_id: sessionId, attachment })
 
       return true
     }

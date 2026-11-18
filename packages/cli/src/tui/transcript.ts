@@ -4,6 +4,7 @@
  * session looks identical on both ends.
  */
 import {
+  describeAttachment,
   type AnnotationFile,
   DECISION_ATTR,
   shownInTerminal,
@@ -164,6 +165,7 @@ export class Transcript {
         "",
         `${style.cyan("↳")} ${who}${style.bold(first)} ${style.gray("(steered the running turn)")}`,
         ...rest.map((line) => `  ${style.bold(line)}`),
+        ...(entry.attachments ?? []).map((attachment) => style.gray(`  ▣ ${describeAttachment(attachment)}`)),
         "",
       ])
     }
@@ -187,10 +189,14 @@ export class Transcript {
     const who = user === this.self || user === "" ? "" : style.yellow(`${user} `)
     const [first = "", ...rest] = (stringAttr(span, OI.INPUT_VALUE) ?? "").split("\n")
 
+    const attachments = readMetadata(span).attachments ?? []
+
     this.screen.commit([
       "",
       `${style.cyan("›")} ${who}${style.bold(first)}`,
       ...rest.map((line) => `  ${style.bold(line)}`),
+      // What was shown to the model with the words, for everyone reading along.
+      ...attachments.map((attachment) => style.gray(`  ▣ ${describeAttachment(attachment)}`)),
       "",
     ])
   }

@@ -1,4 +1,9 @@
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import { pathToFileURL } from "node:url"
 import { describe, expect, it } from "vite-plus/test"
+import { droppedImages, readImage, shellWords } from "../src/images.ts"
 import { clip, rowsOf, strip, style, width, wrap } from "../src/tui/ansi.ts"
 import {
   accept,
@@ -67,6 +72,27 @@ describe("editor", () => {
 
     expect(editor.feed("\u001B[200~line one\rline two\u001B[201~").type).toBe("redraw")
     expect(editor.text).toBe("line one\nline two")
+  })
+
+  it("hands a finished paste to the application, whole, however it arrived", () => {
+    const editor = new Editor()
+    const pastes: Array<string> = []
+
+    editor.onPaste = (text) => {
+      pastes.push(text)
+
+      // Taken as something else (dropped files): nothing goes into the line.
+      return text.includes("shot") ? "" : text
+    }
+
+    editor.feed("see ")
+    editor.feed("\u001B[200~/tmp/sh")
+    expect(pastes).toEqual([])
+    editor.feed("ot.png\u001B[201~")
+    expect(pastes).toEqual(["/tmp/shot.png"])
+    expect(editor.text).toBe("see ")
+    editor.feed("\u001B[200~plain text\u001B[201~")
+    expect(editor.text).toBe("see plain text")
   })
 
   it("normalizes modified-key shortcuts without changing Shift+Enter", () => {
@@ -428,5 +454,49 @@ describe("evaluator verdicts", () => {
       annotation: { ...waiting.annotation, label: "pending" },
     })
     expect(transcript.passedEvals).toBe(0)
+  })
+})
+
+describe("images dropped on the terminal", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oi-drop-"))
+  const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+
+  fs.writeFileSync(path.join(dir, "plain.png"), pngBytes)
+  fs.writeFileSync(path.join(dir, "with space.png"), pngBytes)
+  fs.writeFileSync(path.join(dir, "it's.png"), pngBytes)
+  fs.writeFileSync(path.join(dir, "notes.txt"), "not an image")
+  fs.writeFileSync(path.join(dir, "liar.png"), "not an image either")
+
+  it("splits a paste the way each terminal quotes a dropped path", () => {
+    expect(shellWords(String.raw`/a/with\ space.png /b/plain.png`)).toEqual([
+      "/a/with space.png",
+      "/b/plain.png",
+    ])
+    expect(shellWords(`'/a/with space.png' "/b/it's.png"`)).toEqual(["/a/with space.png", "/b/it's.png"])
+    expect(shellWords("  /a.png\n/b.png\n")).toEqual(["/a.png", "/b.png"])
+  })
+
+  it("takes a paste as a drop only when all of it is image files", () => {
+    const plain = path.join(dir, "plain.png")
+    const spaced = path.join(dir, "with space.png")
+
+    expect(droppedImages(plain, dir)).toEqual([plain])
+    expect(droppedImages(`${plain} ${spaced.replaceAll(" ", String.raw`\ `)}`, dir)).toEqual([plain, spaced])
+    expect(droppedImages(`'${spaced}'`, dir)).toEqual([spaced])
+    expect(droppedImages(pathToFileURL(spaced).href, dir)).toEqual([spaced])
+    expect(droppedImages("plain.png", dir)).toEqual([plain])
+
+    // Prose, a path in prose, a file that is not an image, one that only claims to be: all stay text.
+    expect(droppedImages("look at this", dir)).toBeUndefined()
+    expect(droppedImages(`look at ${plain}`, dir)).toBeUndefined()
+    expect(droppedImages(path.join(dir, "notes.txt"), dir)).toBeUndefined()
+    expect(droppedImages(path.join(dir, "liar.png"), dir)).toBeUndefined()
+    expect(droppedImages(`${plain} ${path.join(dir, "missing.png")}`, dir)).toBeUndefined()
+    expect(droppedImages(dir, dir)).toBeUndefined()
+  })
+
+  it("reads an image for attaching, or says why it cannot", () => {
+    expect(readImage("plain.png", dir)).toEqual({ name: "plain.png", bytes: pngBytes })
+    expect(readImage("missing.png", dir)).toBe("Could not read missing.png.")
   })
 })

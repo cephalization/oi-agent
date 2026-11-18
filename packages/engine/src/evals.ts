@@ -11,11 +11,13 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Effect, Match, Option, Schema } from "effect"
+import { formatBytes } from "./bytes.ts"
 import { projectDir } from "./config.ts"
 import { branchTo, loadSession, renderSaid, SAID_MID_TURN, type TurnSummary } from "./fold.ts"
 import {
   type AnnotationBody,
   type AnnotationFile,
+  type AttachmentRef,
   type Billing,
   type EndedSpan,
   type SessionSpanRef,
@@ -256,13 +258,6 @@ const linkedEvidence = (store: Store, ref: SessionSpanRef) => {
   }
 }
 
-/** `104857600` as `100.0 MB`. */
-export const formatBytes = (bytes: number): string => {
-  if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} kB`
-
-  return bytes < 1e9 ? `${(bytes / 1e6).toFixed(1)} MB` : `${(bytes / 1e9).toFixed(2)} GB`
-}
-
 /** Told to a judge only about a turn its person steered. */
 const STEERED_FACT =
   " The user said more while the agent was working (input.said_while_working, and marked in a transcript). Each message is an instruction from the user that binds the agent from the point it was given: after_calls is how many of the turn's tool calls had already been made by then, and those earlier calls cannot have gone against it."
@@ -289,6 +284,7 @@ const turnSpans = (store: Store, sessionId: string, traceId: string): TurnSpans 
 
 /** A message given to the turn while it ran, placed among its tool calls. */
 interface SaidMidTurn {
+  /** The message, with a note of any images sent with it. */
   readonly text: string
   /** How many of the turn's tool calls had been made when the agent was given it. */
   readonly after_calls: number
@@ -313,7 +309,7 @@ const saidMidTurn = ({ trace, root, tools }: TurnSpans): Array<SaidMidTurn> => {
     const reader = followed === -1 ? undefined : calls[followed + 1]
 
     return {
-      text: entry.text,
+      text: `${entry.text}${imagesNote(entry.attachments)}`,
       // No later model call: the turn was stopped before the message was read, after everything it did.
       after_calls:
         reader === undefined
@@ -322,6 +318,10 @@ const saidMidTurn = ({ trace, root, tools }: TurnSpans): Array<SaidMidTurn> => {
     }
   })
 }
+
+/** ` [with images: a.png, b.png]`: a judge cannot see them, but should know the words were not all that was said. */
+const imagesNote = (refs: ReadonlyArray<AttachmentRef> = []): string =>
+  refs.length === 0 ? "" : ` [with images: ${refs.map((ref) => ref.name).join(", ")}]`
 
 const stepOf = (tool: EndedSpan): string =>
   `[tool call] ${tool.name} ${stringAttr(tool, OI.INPUT_VALUE) ?? ""}\n[tool result] ${truncate(stringAttr(tool, OI.OUTPUT_VALUE) ?? "", 2000)}`
@@ -335,8 +335,10 @@ const turnLines = (spans: TurnSpans, said: ReadonlyArray<SaidMidTurn>, upTo = sa
   const saidAfter = (count: number): Array<string> =>
     heard.flatMap((entry) => (entry.after_calls === count ? [`${SAID_MID_TURN} ${entry.text}`] : []))
 
+  const images = spans.root === undefined ? "" : imagesNote(readMetadata(spans.root).attachments)
+
   return [
-    `[user] ${input}`,
+    `[user] ${input}${images}`,
     ...saidAfter(0),
     ...tools.flatMap((tool, index) => [stepOf(tool), ...saidAfter(index + 1)]),
   ]
