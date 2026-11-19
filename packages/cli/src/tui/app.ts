@@ -828,6 +828,13 @@ class App {
     })
   }
 
+  /** A turn's failure, unless its turn already printed it, plus any hint about it. */
+  private failed(message: string, hint: ReadonlyArray<string> = []): void {
+    const lines = this.transcript.showedError(message) ? hint : [message, ...hint]
+
+    if (lines.length > 0) this.say(lines)
+  }
+
   private say(lines: ReadonlyArray<string>): void {
     this.screen.commit(lines.map((line) => style.gray(line)))
   }
@@ -1801,7 +1808,7 @@ class App {
         operation: "handoff",
       })
 
-      if (!outcome.ok) return this.say([outcome.message])
+      if (!outcome.ok) return this.failed(outcome.message)
 
       this.done(outcome.result.destination)
 
@@ -1821,7 +1828,7 @@ class App {
 
       const outcome = await engine.submit(sessionId, { text, userId: user, previous, operation: "compact" })
 
-      if (!outcome.ok) this.say([outcome.message])
+      if (!outcome.ok) this.failed(outcome.message)
 
       return
     }
@@ -1953,8 +1960,7 @@ class App {
 
       this.from = undefined
       void engine.submit(sessionId, { ...said, previous: from }).then((outcome) => {
-        if (!outcome.ok && !outcome.interrupted)
-          this.say([outcome.message, ...this.imageHint(outcome.message)])
+        if (!outcome.ok && !outcome.interrupted) this.failed(outcome.message, this.imageHint(outcome.message))
 
         this.draw()
       })
@@ -2331,7 +2337,7 @@ class App {
     this.draw()
     this.options.onStart?.()
     void engine?.resumeHandoff(sessionId).then((outcome) => {
-      if (outcome !== undefined && !outcome.ok && !outcome.interrupted) this.say([outcome.message])
+      if (outcome !== undefined && !outcome.ok && !outcome.interrupted) this.failed(outcome.message)
 
       this.draw()
     })

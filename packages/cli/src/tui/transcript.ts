@@ -88,6 +88,7 @@ export class Transcript {
   private bytes = 0
   private passes = 0
   private verdictTrace = ""
+  private shownErrors = new Set<string>()
 
   constructor(screen: Screen, self: string) {
     this.screen = screen
@@ -280,6 +281,7 @@ export class Transcript {
     if (span.status_code === "ERROR") {
       const reason = span.status_message === "interrupted" ? "interrupted" : `error: ${span.status_message}`
 
+      this.shownErrors.add(span.status_message)
       this.screen.commit([style.red(`  ⎿ ${reason}`)])
 
       return
@@ -322,6 +324,11 @@ export class Transcript {
       file.annotation.explanation === undefined ? "" : style.gray(` — ${file.annotation.explanation}`)
 
     this.screen.commit([`${mark} ${style.bold(file.annotation.name)}: ${verdict}${reason}`])
+  }
+
+  /** Whether a failed turn already printed this error, so the caller need not repeat it. */
+  showedError(message: string): boolean {
+    return this.shownErrors.delete(message)
   }
 
   /** Evaluators that passed the most recent turn they reviewed. */
