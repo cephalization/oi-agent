@@ -117,7 +117,9 @@ both are set). Select `google/gemini-4-hydrogen`, `google/gemini-4-neon`, or
 that ID already names a configured server. `google` is now reserved for the
 built-in provider; rename a compatible server with that ID and re-add its
 key if needed. Carbon accepts `low`, `medium`, and `high`; Neon and Hydrogen
-also accept `xhigh`. Gemini uses oi's regular tools, not Google's hosted tools.
+also accept `xhigh`. oi caps synchronous output at 32,768 tokens for
+Carbon and 65,536 for Neon and Hydrogen, matching Google's model catalog.
+Gemini uses oi's regular tools, not Google's hosted tools.
 
 Use `/feedback` for filing instructions, or `/feedback <short description>` to
 preview a public issue for `cephalization/oi-agent`. The configured model drafts
