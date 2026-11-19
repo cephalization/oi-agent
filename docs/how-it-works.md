@@ -177,9 +177,12 @@ example "warn me when this conversation is larger than 100 MB".
 #### Automatic evaluator correction
 
 By default, evaluator feedback waits for the next turn. To let oi start a
-corrective turn itself, set `"auto_correction": true` in
-`~/.config/oi-agent/config.json`. `"max_correction_turns"` defaults to 2 and
-accepts integers from 1 to 10. The budget is fixed when the cycle starts.
+corrective turn itself, choose **Automatically try to fix eligible failed checks**
+under **Failed evaluator checks** in `oi setup`, or set `"auto_correction": true`
+in `~/.config/oi-agent/config.json`. This is separate from **Learning from
+corrections**. Running setup again defaults to your saved choice and leaves the
+attempt limit alone. `"max_correction_turns"` defaults to 2 and accepts integers
+from 1 to 10. The budget is fixed when the cycle starts.
 
 Only feedback-enabled failures of immediate LLM evaluators and regex checks
 on the answer (`target: "output"`) can start or join the initial batch.

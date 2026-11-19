@@ -28,6 +28,8 @@ const SavedConfig = Schema.fromJsonString(
     approvals: Schema.String,
     steering: Schema.String,
     steering_model: Schema.String,
+    auto_correction: Schema.Boolean,
+    max_correction_turns: Schema.Int,
   }),
 )
 
@@ -71,8 +73,23 @@ const setupUntilLearning = async (term: Terminal): Promise<void> => {
   await term.waitFor(/Learning from corrections[\s\S]*When you correct oi:/)
 }
 
+const chooseCorrection = async (term: Terminal, initial = 1, selection?: number): Promise<void> => {
+  // An old setup skips straight to Phoenix; fail immediately rather than waiting for a missing prompt.
+  const screen = await term.waitFor(/When a check fails:[\s\S]*choice \(\d+\)|Phoenix URL/)
+
+  expect(screen).toMatch(
+    new RegExp(
+      `When a check fails:\\s+1\\s+Wait until my next message\\s+2\\s+Automatically try to fix eligible failed checks\\s+choice \\(${initial}\\)`,
+    ),
+  )
+
+  if (selection === undefined) await term.key("enter")
+  else await term.line(String(selection))
+}
+
 /** The rest of setup: no Phoenix, the default sessions directory. */
-const finishSetup = async (term: Terminal): Promise<string> => {
+const finishSetup = async (term: Terminal, initial = 1, selection?: number): Promise<string> => {
+  await chooseCorrection(term, initial, selection)
   await term.waitFor(/Phoenix URL/)
   await term.line("none")
   await term.waitFor(/Sessions directory/)
@@ -130,7 +147,12 @@ describe("onboarding", () => {
       expect(hints).toContain("Enter the provider and model ID yourself.")
       await setup.key("enter")
       await finishSetup(setup)
-      expect(savedConfig(s)).toMatchObject({ model: "gpt-5.10", approvals: "ask" })
+      expect(savedConfig(s)).toMatchObject({
+        model: "gpt-5.10",
+        approvals: "ask",
+        auto_correction: false,
+        max_correction_turns: 2,
+      })
     },
   )
 
@@ -148,6 +170,8 @@ describe("onboarding", () => {
       await setup.key("enter")
       await setup.waitFor(/Which model reads your messages/)
       await setup.key("enter")
+
+      await chooseCorrection(setup)
 
       // The same conversation as /phoenix: the server is asked what it wants before anything is saved.
       await setup.waitFor(/Phoenix URL \(type `none` to turn export off\)/)
@@ -234,10 +258,14 @@ describe("onboarding", () => {
       // 1 learn lasting preferences, 2 don't learn.
       await setup.line("2")
 
-      const screen = await finishSetup(setup)
+      const screen = await finishSetup(setup, 1, 2)
 
       expect(screen).not.toMatch(/Anthropic API key/)
-      expect(savedConfig(s).steering).toBe("off")
+      expect(savedConfig(s)).toMatchObject({
+        steering: "off",
+        auto_correction: true,
+        max_correction_turns: 2,
+      })
 
       const term = await s.tui([], { env: NO_KEY })
 
@@ -279,7 +307,15 @@ describe("onboarding", () => {
   )
   scenario(
     "rerunning setup preserves configured approvals and a custom correction model",
-    { needs: ["rex"], approvals: "allow", config: new Map([["steering_model", "other/custom-model"]]) },
+    {
+      needs: ["rex"],
+      approvals: "allow",
+      config: new Map<string, string | boolean | number>([
+        ["steering_model", "other/custom-model"],
+        ["auto_correction", true],
+        ["max_correction_turns", 4],
+      ]),
+    },
     async (s) => {
       const setup = await s.tui(["setup"], { env: NO_KEY })
 
@@ -289,8 +325,13 @@ describe("onboarding", () => {
         /Which model reads your messages[\s\S]*other\/custom-model[\s\S]*Your current model for checking corrections/,
       )
       await setup.key("enter")
-      await finishSetup(setup)
-      expect(savedConfig(s)).toMatchObject({ approvals: "allow", steering_model: "other/custom-model" })
+      await finishSetup(setup, 2)
+      expect(savedConfig(s)).toMatchObject({
+        approvals: "allow",
+        steering_model: "other/custom-model",
+        auto_correction: true,
+        max_correction_turns: 4,
+      })
     },
   )
 })

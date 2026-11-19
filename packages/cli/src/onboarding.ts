@@ -473,6 +473,21 @@ export const runOnboarding = async (): Promise<Config> => {
 
   const agentModel = `${provider}/${model}`
   const { steering, steering_model } = await steeringStep(current, agentModel)
+
+  step(
+    "Failed evaluator checks",
+    "When a check finds a problem, oi can start a follow-up to try to fix it. Tool approvals still apply.",
+  )
+
+  const auto_correction = await choose(
+    "When a check fails:",
+    [
+      { value: false, label: "Wait until my next message" },
+      { value: true, label: "Automatically try to fix eligible failed checks" },
+    ],
+    current.auto_correction,
+  )
+
   const phoenix = await phoenixStep(current.phoenix)
 
   step(
@@ -492,6 +507,7 @@ export const runOnboarding = async (): Promise<Config> => {
     approvals,
     steering,
     steering_model,
+    auto_correction,
     phoenix,
     home,
   }
