@@ -41,18 +41,21 @@ export const GOOGLE_MODELS: ReadonlyArray<ModelOption> = [
     name: "Gemini 4 Carbon",
     provider: "google",
     efforts: LEVELS,
-    maxOutput: MAX_OUTPUT,
+    // Conservative limit reported by models.list for the synchronous API.
+    maxOutput: 32_768,
   },
 ]
 
 const modelId = (model: string): string => model.replace(/^models\//, "")
 
-export const googleEfforts = (model: string): ReadonlyArray<Effort> =>
-  GOOGLE_MODELS.find((option) => option.id === modelId(model))?.efforts ?? []
+const googleOption = (model: string): ModelOption | undefined =>
+  GOOGLE_MODELS.find((option) => option.id === modelId(model))
+
+export const googleEfforts = (model: string): ReadonlyArray<Effort> => googleOption(model)?.efforts ?? []
 
 const requestBody = (settings: ModelSettings, call: ModelCall): string => {
   const generationConfig: Array<[string, Json]> = [
-    ["maxOutputTokens", Math.min(settings.maxTokens, MAX_OUTPUT)],
+    ["maxOutputTokens", Math.min(settings.maxTokens, googleOption(settings.model)?.maxOutput ?? MAX_OUTPUT)],
   ]
 
   const efforts = googleEfforts(settings.model)

@@ -6,6 +6,7 @@ import {
   BUILTIN_PROVIDERS,
   describeModels,
   findProvider,
+  GOOGLE_MODELS,
   googleEfforts,
   listOpenAIModels,
   openaiEfforts,
@@ -160,6 +161,14 @@ describe("Google Gemini", () => {
       provider: "gemini",
       model: "org/custom",
     })
+  })
+
+  it("caps synchronous model output at the limits advertised by the Google catalog", () => {
+    expect(GOOGLE_MODELS.map(({ id, maxOutput }) => [id, maxOutput])).toEqual([
+      ["gemini-4-hydrogen", 65_536],
+      ["gemini-4-neon", 65_536],
+      ["gemini-4-carbon", 32_768],
+    ])
   })
 
   it("only offers documented thinking levels for the supported model IDs", () => {
