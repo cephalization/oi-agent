@@ -151,6 +151,36 @@ describe("OpenAI dialects through the agent loop", () => {
   })
 })
 
+describe.each([
+  { dialect: openaiChat, response: { choices: [{ message: { content: "hi" } }] } },
+  { dialect: openaiResponses, response: { output: [] } },
+])("$dialect.api provider cost", ({ dialect, response }) => {
+  it.each([0, 0.000125, undefined, null, "0.25", -1])(
+    "reads usage.cost %j without changing the response",
+    (cost) => {
+      const raw = JSON.stringify({
+        ...response,
+        usage: {
+          prompt_tokens: 10,
+          input_tokens: 10,
+          cost,
+          cost_details: { upstream_inference_prompt_cost: 1, upstream_inference_output_cost: 2 },
+        },
+      })
+
+      const attributes = dialect.responseAttributes(raw)
+      const expected = Schema.is(Schema.Number)(cost) && cost >= 0 ? cost : undefined
+
+      expect(attributes.get(OI.COST_TOTAL)).toBe(expected)
+      expect(attributes.get(OI.TOKENS_TOTAL)).toBe(10)
+      expect(attributes.get(OI.OUTPUT_VALUE)).toBe(raw)
+      expect(attributes.has("llm.cost.prompt")).toBe(false)
+      expect(attributes.has("llm.cost.completion")).toBe(false)
+      expect(dialect.reply(raw)).toBeDefined()
+    },
+  )
+})
+
 describe("switching provider mid-session", () => {
   it("carries text, tool calls and results across dialects, and drops reasoning", async () => {
     const env = tempEnv()
@@ -381,7 +411,11 @@ describe("the OpenAI HTTP model", () => {
   })
 
   it("returns the completed response from a Responses stream, with store off", async () => {
-    const final = responsesText("Hello.")
+    const final = {
+      status: "completed",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Hello." }] }],
+      usage: { input_tokens: 20, output_tokens: 5, cost: 0.00042 },
+    }
 
     const local = await serve(() => ({
       status: 200,
@@ -396,7 +430,10 @@ describe("the OpenAI HTTP model", () => {
 
     local.close()
 
-    expect(Exit.isSuccess(exit) ? JSON.parse(exit.value) : undefined).toEqual(final)
+    const raw = Exit.isSuccess(exit) ? exit.value : ""
+
+    expect(JSON.parse(raw)).toEqual(final)
+    expect(openaiResponses.responseAttributes(raw).get(OI.COST_TOTAL)).toBe(0.00042)
     expect(JSON.parse(local.requests[0]?.body ?? "{}")).toMatchObject({
       store: false,
       instructions: "be brief",

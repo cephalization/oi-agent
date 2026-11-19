@@ -245,6 +245,7 @@ export const OI = {
   TOKENS_PROMPT: "llm.token_count.prompt",
   TOKENS_COMPLETION: "llm.token_count.completion",
   TOKENS_TOTAL: "llm.token_count.total",
+  COST_TOTAL: "llm.cost.total",
   TOKENS_CACHE_READ: "llm.token_count.prompt_details.cache_read",
   TOKENS_CACHE_WRITE: "llm.token_count.prompt_details.cache_write",
   TOOL_NAME: "tool.name",
@@ -283,6 +284,12 @@ export const numberAttr = (span: SpanFile, key: string): number => {
 
   return Number.isFinite(value) ? value : 0
 }
+
+const finiteNumber = Schema.is(Schema.Finite)
+
+/** A reported USD charge, without coercing missing or malformed data to zero. */
+export const reportedCost = (value: Schema.Json | AttrValue | undefined): number | undefined =>
+  finiteNumber(value) && value >= 0 ? value : undefined
 
 // --- metadata: where everything the spec cannot express lives --------------
 

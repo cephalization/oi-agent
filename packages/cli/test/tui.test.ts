@@ -315,6 +315,7 @@ describe("decision usage", () => {
 
     transcript.onEvent({ type: "span_end", session_id: "session", span: decision })
     expect(transcript.totalTokens).toBe(0)
+    expect(transcript.sessionCost).toBeUndefined()
     expect(transcript.decisionTokens).toBe(1050)
     expect(transcript.decisionCost).toBeCloseTo(0.000042, 8)
   })
@@ -326,7 +327,7 @@ describe("context usage", () => {
     kind: string,
     end: string,
     tokens: { prompt: number; completion: number },
-    extra: Readonly<Record<string, string>> = {},
+    extra: Readonly<Record<string, string | number>> = {},
   ): EndedSpan => ({
     name: kind.toLowerCase(),
     context: { trace_id: trace, span_id: `${trace}-${end}` },
@@ -377,6 +378,24 @@ describe("context usage", () => {
     // Loading a session can deliver an older call last.
     end(transcript, span("turn", "LLM", "2026-11-13T00:00:00.500Z", { prompt: 10, completion: 1 }))
     expect(transcript.contextTokens).toBe(1250)
+  })
+
+  it("counts each ended LLM span once and discloses missing costs", () => {
+    const transcript = new Transcript(new Screen(process.stdout), "tony")
+    const tokens = { prompt: 10, completion: 1 }
+    const priced = span("turn", "LLM", "2026-11-13T00:00:01.000Z", tokens, { [OI.COST_TOTAL]: 0.000125 })
+    const unpriced = span("judge", "LLM", "2026-11-13T00:00:02.000Z", tokens)
+
+    expect(transcript.sessionCost).toBeUndefined()
+    transcript.onEvent({ type: "span_open", session_id: "session", span: priced })
+    expect(transcript.sessionCost).toBeUndefined()
+    end(transcript, unpriced)
+    expect(transcript.sessionCost).toBe("LLM cost unavailable")
+    end(transcript, priced)
+    end(transcript, priced)
+    expect(transcript.sessionCost).toBe("LLM $0.000125 (partial)")
+    expect(transcript.totalTokens).toBe(22)
+    expect(transcript.decisionTokens).toBe(0)
   })
 
   it("after a compaction, the context is the brief", () => {

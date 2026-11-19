@@ -186,15 +186,22 @@ export const fakeTextOnlyModel = (): Promise<FakeServer> =>
  * For scenarios that need a turn to exist and are not about what a model
  * says: they run without credentials, and the same in replay.
  */
-export const fakeChatModel = (reply: string): Promise<FakeServer> =>
-  listen(() => ({
+export const fakeChatModel = (
+  reply: string,
+  costs: ReadonlyArray<number | undefined> = [],
+): Promise<FakeServer> => {
+  let call = 0
+
+  return listen(() => ({
     status: 200,
     type: "text/event-stream",
     body: [
       { id: "fake", model: "fake", choices: [{ delta: { content: reply } }] },
-      { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+      { choices: [{ delta: {}, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, cost: costs[call++] } },
     ]
       .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
       .concat("data: [DONE]\n\n")
       .join(""),
   }))
+}

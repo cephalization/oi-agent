@@ -20,7 +20,7 @@ import {
   type TranscriptEntry,
   userEntry,
 } from "../dialect.ts"
-import { OI } from "../format.ts"
+import { OI, reportedCost } from "../format.ts"
 import type { Json } from "../wire.ts"
 
 const Nullable = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.NullOr(schema))
@@ -70,6 +70,8 @@ const ChatResponse = Schema.Struct({
   ),
   usage: Nullable(
     Schema.Struct({
+      // OpenRouter reports USD here; keep unexpected values from invalidating the reply.
+      cost: Schema.optionalKey(Schema.Json),
       prompt_tokens: Nullable(Schema.Finite),
       completion_tokens: Nullable(Schema.Finite),
       prompt_tokens_details: Nullable(Schema.Struct({ cached_tokens: Nullable(Schema.Finite) })),
@@ -293,6 +295,10 @@ const responseAttributes: Dialect["responseAttributes"] = (raw) => {
   if (response === undefined || parsed === undefined) return out
 
   const usage = response.usage
+  const cost = reportedCost(usage?.cost)
+
+  if (cost !== undefined) out.set(OI.COST_TOTAL, cost)
+
   // OpenAI counts cached tokens inside the prompt total, as OpenInference does.
   const prompt = usage?.prompt_tokens ?? 0
   const completion = usage?.completion_tokens ?? 0
