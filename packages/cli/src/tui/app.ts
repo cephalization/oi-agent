@@ -476,10 +476,9 @@ class App {
           ? ref.model
           : `${ref.provider}/${ref.model}`
 
-    const session = style.gray(`session ${options.sessionId.slice(0, 18)}`)
-    const parts = [session]
+    const parts = [style.gray(`session ${options.sessionId.slice(0, 18)}`)]
     // Dropped last-added first when the line is wider than the terminal.
-    const optional = [session]
+    const optional: Array<string> = []
 
     const add = (part: string, droppable: boolean): void => {
       parts.push(part)
@@ -491,7 +490,7 @@ class App {
 
     if (engine !== undefined) {
       if (ref !== undefined && effortsFor(this.catalog(), ref).length > 0) {
-        add(style.gray(`effort ${engine.config.effort}`), false)
+        add(style.gray(`effort ${engine.config.effort}`), true)
       }
 
       add(approvalLabel(engine.approvals), false)
@@ -500,7 +499,7 @@ class App {
     if (this.share !== undefined) {
       const peers = this.share.server.peers()
 
-      add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), false)
+      add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), true)
     }
 
     if (transcript.contextTokens > 0) {
