@@ -248,13 +248,18 @@ export const scenario = (
       const provider = providerOf(model)
 
       const google =
-        provider === "google" || provider === "gemini"
+        MODE !== "replay" && (provider === "google" || provider === "gemini")
           ? process.env["GOOGLE_API_KEY"] || process.env["GEMINI_API_KEY"]
           : undefined
 
-      const modelEnv = new Map(proxy?.env())
+      // Rex launches with a command line. Pass the real Gemini key only to headless subprocesses via spawn's env.
+      const headlessEnv = (overrides?: ReadonlyMap<string, string>): Map<string, string> => {
+        const env = new Map<string, string>()
 
-      if (google !== undefined && google !== "") modelEnv.set("GOOGLE_API_KEY", google)
+        if (google !== undefined && google !== "") env.set("GOOGLE_API_KEY", google)
+
+        return new Map([...env, ...(overrides ?? [])])
+      }
 
       const phoenix = options.phoenix === true
 
@@ -276,7 +281,7 @@ export const scenario = (
         // A developer's decision key must not add auto mode to unrelated TUI tests,
         // or turn replay into real decision calls. Only the live service scenario opts in.
         env: new Map([
-          ...modelEnv,
+          ...(proxy?.env() ?? []),
           ["TYPESAFE_API_KEY", needs.has("typesafe") ? (getSecret("typesafe") ?? "") : ""],
           ...(options.env ?? []),
         ]),
@@ -309,7 +314,7 @@ export const scenario = (
 
           return terminal
         },
-        run: (args, env) => sandbox.run(args, env),
+        run: (args, env) => sandbox.run(args, headlessEnv(env)),
         samples: async (entries, body) => {
           if (options.samples !== true) throw new Error("Declare samples: true to run isolated samples")
 
@@ -320,7 +325,7 @@ export const scenario = (
               const sample: Sample = {
                 sandbox: child,
                 spans: new Spans(child.home),
-                run: (args, env) => child.run(args, env),
+                run: (args, env) => child.run(args, headlessEnv(env)),
               }
 
               children.push(sample)
