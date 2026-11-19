@@ -595,7 +595,10 @@ These work best on the session you are in, because the evidence is right there.
 - **"How do I write a multiline prompt or stop everything?"** Shift+Enter
   inserts a newline; Enter submits. The TUI enables the terminal's modified-key
   protocol while open and restores it on exit; the editor also understands
-  xterm modified Enter and Alt+Enter. The idle hint separates Enter's action
+  xterm modified Enter and Alt+Enter. Before routing shortcuts, the TUI separates
+  text, control keys and bracketed pastes even when they share a terminal read.
+  Typing immediately after Enter or Escape still reaches the composer.
+  The idle hint separates Enter's action
   from the available editing hotkeys with a dot.
   Escape calls `Engine.cancel`: it interrupts the current turn, recursively
   stops delegated tasks and their commands, and kills session background jobs.
