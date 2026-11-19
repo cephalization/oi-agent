@@ -476,9 +476,10 @@ class App {
           ? ref.model
           : `${ref.provider}/${ref.model}`
 
-    const parts = [style.gray(`session ${options.sessionId.slice(0, 18)}`)]
+    const session = style.gray(`session ${options.sessionId.slice(0, 18)}`)
+    const parts = [session]
     // Dropped last-added first when the line is wider than the terminal.
-    const optional: Array<string> = []
+    const optional = [session]
 
     const add = (part: string, droppable: boolean): void => {
       parts.push(part)
@@ -515,6 +516,16 @@ class App {
         style.green(`◆ ${transcript.passedEvals} eval${transcript.passedEvals === 1 ? "" : "s"} passed`),
         false,
       )
+
+    const sessionCost = transcript.sessionCost
+
+    if (sessionCost !== undefined) {
+      const cost = style.gray(sessionCost)
+
+      parts.push(cost)
+      // Keep the cost and its completeness marker together, even on narrower terminals.
+      optional.unshift(cost)
+    }
 
     if (transcript.decisionTokens > 0)
       add(

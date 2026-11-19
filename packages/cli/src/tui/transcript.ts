@@ -18,6 +18,7 @@ import {
   numberAttr,
   OI,
   readMetadata,
+  reportedCost,
   type SpanFile,
   type Steered,
   type Store,
@@ -73,7 +74,10 @@ export class Transcript {
   private pending = ""
   private thinking = ""
   private wroteText = false
+  private readonly measuredUsage = new Set<string>()
   private tokens = 0
+  private llmCost: number | undefined
+  private unpricedCalls = 0
   private context = 0
   private contextEnd = ""
   private decisionInput = 0
@@ -114,6 +118,17 @@ export class Transcript {
    */
   get contextTokens(): number {
     return this.context
+  }
+
+  /** Provider-reported charges only; missing amounts are not zero. */
+  get sessionCost(): string | undefined {
+    const cost = this.llmCost
+
+    if (cost === undefined) return this.unpricedCalls > 0 ? "LLM cost unavailable" : undefined
+
+    const dollars = cost > 0 && cost < 0.000001 ? "<$0.000001" : `$${cost.toFixed(6)}`
+
+    return `LLM ${dollars}${this.unpricedCalls > 0 ? " (partial)" : ""}`
   }
 
   /** Decision usage is separate: it is not billed like generated LLM tokens. */
@@ -332,15 +347,33 @@ export class Transcript {
     if (kind === "TOOL") this.tools.set(span.context.span_id, { span, tail: "" })
   }
 
-  private ended(span: EndedSpan): void {
+  private measureUsage(span: EndedSpan): void {
     const kind = kindOf(span)
 
-    if (kind === "LLM") this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
+    if (kind !== "LLM" && kind !== "DECISION") return
 
-    if (kind === "DECISION") {
+    const key = `${span.context.trace_id}:${span.context.span_id}`
+
+    if (this.measuredUsage.has(key)) return
+
+    this.measuredUsage.add(key)
+
+    if (kind === "LLM") {
+      this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
+      const cost = reportedCost(span.attributes[OI.COST_TOTAL])
+
+      if (cost !== undefined) this.llmCost = (this.llmCost ?? 0) + cost
+      else this.unpricedCalls += 1
+    } else {
       this.decisionInput += numberAttr(span, DECISION_ATTR.TOKENS_INPUT)
       this.decisionOutput += numberAttr(span, DECISION_ATTR.TOKENS_OUTPUT)
     }
+  }
+
+  private ended(span: EndedSpan): void {
+    const kind = kindOf(span)
+
+    this.measureUsage(span)
 
     if (!this.turns.has(span.context.trace_id)) return
 
@@ -413,18 +446,9 @@ export class Transcript {
 
     for (const traceId of store.listTraceIds(sessionId)) {
       for (const span of store.readTrace(sessionId, traceId).ended) {
-        const kind = kindOf(span)
+        this.measureUsage(span)
 
-        if (kind === "LLM") {
-          this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
-
-          if (this.turns.has(traceId)) this.measureContext(span)
-        }
-
-        if (kind === "DECISION") {
-          this.decisionInput += numberAttr(span, DECISION_ATTR.TOKENS_INPUT)
-          this.decisionOutput += numberAttr(span, DECISION_ATTR.TOKENS_OUTPUT)
-        }
+        if (kindOf(span) === "LLM" && this.turns.has(traceId)) this.measureContext(span)
       }
     }
 

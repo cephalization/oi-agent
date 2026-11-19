@@ -23,7 +23,7 @@ import {
   type TranscriptEntry,
   userEntry,
 } from "../dialect.ts"
-import { OI } from "../format.ts"
+import { OI, reportedCost } from "../format.ts"
 import type { Json } from "../wire.ts"
 
 const Nullable = <S extends Schema.Top>(schema: S) => Schema.optionalKey(Schema.NullOr(schema))
@@ -64,6 +64,8 @@ const ResponsesResponse = Schema.Struct({
   incomplete_details: Nullable(Schema.Struct({ reason: Nullable(Schema.String) })),
   usage: Nullable(
     Schema.Struct({
+      // OpenRouter reports USD here; keep unexpected values from invalidating the reply.
+      cost: Schema.optionalKey(Schema.Json),
       input_tokens: Nullable(Schema.Finite),
       output_tokens: Nullable(Schema.Finite),
       input_tokens_details: Nullable(
@@ -268,6 +270,10 @@ const responseAttributes: Dialect["responseAttributes"] = (raw) => {
   if (response === undefined || parsed === undefined) return out
 
   const usage = response.usage
+  const cost = reportedCost(usage?.cost)
+
+  if (cost !== undefined) out.set(OI.COST_TOTAL, cost)
+
   // Responses counts cached tokens inside `input_tokens`, as OpenInference does.
   const prompt = usage?.input_tokens ?? 0
   const completion = usage?.output_tokens ?? 0

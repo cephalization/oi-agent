@@ -344,6 +344,14 @@ Ask oi how it works, or try `/tour`: it reads the bundled source and your
 actual spans rather than explaining from general knowledge. The sections
 below map those concepts to implementation files and evidence to inspect.
 
+The TUI status bar sums provider-reported USD charges from the session's
+finished `LLM` spans (`llm.cost.total`). It shows zero only when the provider
+reports zero, marks a known subtotal as **partial** when some calls have no
+charge recorded, and says **LLM cost unavailable** when none do. The total
+covers only this session (subagents have their own sessions); it survives
+resume and is derived from the same synced spans on the host, driver and
+read-only viewer. The TypeSafe decision estimate is separate.
+
 On a TTY, oi reports working, approval-blocked, done and error states with
 [OSC 7501](https://www.superlogical.com/rex/docs/build/program-status), so
 supporting terminals such as Rex can show which panes need attention. Unknown
@@ -1031,6 +1039,14 @@ These work best on the session you are in, because the evidence is right there.
   are not billed per token, and `api` otherwise. Phoenix prices every call
   from its model name, so plan calls still show a list-price cost there;
   `billing` is how to tell them apart.
+  For providers that report OpenRouter-style `usage.cost` in USD, both
+  OpenAI-compatible dialects copy it to `llm.cost.total`. OpenRouter's
+  upstream cost breakdown is a different charge, so oi does not use it as
+  the prompt or completion split of the reported total. Native Anthropic and
+  OpenAI replies give oi token usage, not per-call dollar amounts; ChatGPT
+  plan usage likewise supplies no dollar amount. oi does not price those
+  tokens, query billing endpoints, or backfill older spans. Phoenix can
+  compute its own costs independently of this local display.
 - **"What happens to an image I attach?"** Its bytes become a file in the
   session, `attachments/<sha256>.json` (`Store.writeAttachment`), named by
   its content: immutable like an ended span, written once however often the
