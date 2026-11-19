@@ -1,5 +1,15 @@
 # oi-agent
 
+## 0.14.0
+
+### Minor Changes
+
+- [#97](https://github.com/cephalization/oi-agent/pull/97) [`7af32e4`](https://github.com/cephalization/oi-agent/commit/7af32e42af1b491ff550cd5667d4a9b4475f6fec) Thanks [@cephalization](https://github.com/cephalization)! - Show provider-reported LLM session cost in the terminal status bar, separately from decision cost. Costs survive resume and appear in shared sessions. If some calls do not report a charge, the status bar marks the subtotal as partial instead of treating those calls as free.
+
+### Patch Changes
+
+- [#96](https://github.com/cephalization/oi-agent/pull/96) [`0d3f239`](https://github.com/cephalization/oi-agent/commit/0d3f239ebd709b5077a02536d930b3f79ec22370) Thanks [@cephalization](https://github.com/cephalization)! - Keep typing in the prompt composer when text arrives in the same terminal read as Enter or Escape.
+
 ## 0.13.1
 
 ### Patch Changes
