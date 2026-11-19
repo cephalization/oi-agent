@@ -464,7 +464,7 @@ class App {
 
   // --- drawing ------------------------------------------------------------
 
-  private status(): string {
+  private status(): ReadonlyArray<string> {
     const { transcript, options } = this
     const engine = options.engine
     const ref = this.currentRef()
@@ -490,7 +490,7 @@ class App {
 
     if (engine !== undefined) {
       if (ref !== undefined && effortsFor(this.catalog(), ref).length > 0) {
-        add(style.gray(`effort ${engine.config.effort}`), true)
+        add(style.gray(`effort ${engine.config.effort}`), false)
       }
 
       add(approvalLabel(engine.approvals), false)
@@ -499,7 +499,7 @@ class App {
     if (this.share !== undefined) {
       const peers = this.share.server.peers()
 
-      add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), true)
+      add(style.green(`● shared${peers.length === 0 ? "" : ` with ${peers.join(", ")}`}`), false)
     }
 
     if (transcript.contextTokens > 0) {
@@ -515,16 +515,6 @@ class App {
         style.green(`◆ ${transcript.passedEvals} eval${transcript.passedEvals === 1 ? "" : "s"} passed`),
         false,
       )
-
-    const sessionCost = transcript.sessionCost
-
-    if (sessionCost !== undefined) {
-      const cost = style.gray(sessionCost)
-
-      parts.push(cost)
-      // Keep the cost and its completeness marker together, even on narrower terminals.
-      optional.unshift(cost)
-    }
 
     if (transcript.decisionTokens > 0)
       add(
@@ -560,7 +550,16 @@ class App {
       parts.splice(parts.indexOf(part), 1)
     }
 
-    return line()
+    const status = line()
+    const sessionCost = transcript.sessionCost
+
+    if (sessionCost === undefined) return [status]
+
+    const cost = style.gray(sessionCost)
+    const combined = `${status}${separator}${cost}`
+
+    // Do not make working status, approval mode, or effort disappear to fit a cost.
+    return width(combined) < this.screen.columns ? [combined] : [status, cost]
   }
 
   /** One line per command or task still running, above the status line. */
@@ -751,7 +750,7 @@ class App {
       return
     }
 
-    lines.push(...this.workLines(), ...this.waitingLines(), this.status())
+    lines.push(...this.workLines(), ...this.waitingLines(), ...this.status())
 
     if (this.notice !== "") lines.push(style.yellow(this.notice))
 
