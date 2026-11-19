@@ -226,10 +226,15 @@ export class Sandbox {
     overrides: ReadonlyMap<string, string> = new Map(),
     timeoutMs = 180_000,
   ): Promise<RunResult> {
-    const [command = "", ...rest] = this.oiCommand(args, overrides)
+    const env = Object.fromEntries(this.env(new Map([["OI_AGENT_ENTRY", CLI_ENTRY], ...overrides])))
+    const inner = [process.execPath, LAUNCHER, ...args]
+
+    const [command = "", ...rest] = this.confined
+      ? ["/usr/bin/sandbox-exec", "-f", this.profileFile, ...inner]
+      : inner
 
     return new Promise((resolve) => {
-      const child = spawn(command, rest, { cwd: this.cwd, stdio: ["ignore", "pipe", "pipe"] })
+      const child = spawn(command, rest, { cwd: this.cwd, env, stdio: ["ignore", "pipe", "pipe"] })
       const stdout: Array<Buffer> = []
       const stderr: Array<Buffer> = []
       const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs)

@@ -12,7 +12,14 @@ const isAddress = Schema.is(AddressInfo)
 
 scenario(
   "Gemini Hydrogen uses a tool and continues from its disk spans",
-  { model: "google/gemini-4-hydrogen", liveOnly: true, config: new Map([["steering", "off"]]) },
+  {
+    model: "google/gemini-4-hydrogen",
+    liveOnly: true,
+    config: new Map<string, Json>([
+      ["steering", "off"],
+      ["max_tokens", 1024],
+    ]),
+  },
   async ({ run, spans }) => {
     const result = expectOk(
       await run([

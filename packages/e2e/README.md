@@ -109,7 +109,9 @@ A scenario whose model has no credentials (keychain or environment) is
 skipped, not failed. `scenarios/google.e2e.ts` includes a live Hydrogen
 scenario (Google keychain account or `GOOGLE_API_KEY` / `GEMINI_API_KEY`) and
 an always-on local SSE fixture for deterministic signed tool-loop and resume
-coverage. The live scenario has no cassette; the other one needs no key.
+coverage. The live scenario caps output at 1,024 tokens per call and has no
+cassette; the other one needs no key. Google environment credentials are
+passed to headless CLI processes in their environment, not on the command line.
 
 `OI_E2E_MODELS` picks where replies come from:
 
