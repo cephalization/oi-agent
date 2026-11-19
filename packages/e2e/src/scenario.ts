@@ -143,6 +143,8 @@ const hasProvider = (model: string): boolean => {
 
   if (provider === "openai") return process.env["OPENAI_API_KEY"] !== undefined || hasKeychain("openai")
 
+  if (provider === "google" || provider === "gemini") return getSecret("google") !== undefined
+
   if (provider === "chatgpt") return hasKeychain("chatgpt")
 
   return true
@@ -243,6 +245,17 @@ export const scenario = (
       const proxy =
         MODE === "live" || options.liveOnly === true ? undefined : await ModelProxy.start(MODE, slug(name))
 
+      const provider = providerOf(model)
+
+      const google =
+        provider === "google" || provider === "gemini"
+          ? process.env["GOOGLE_API_KEY"] || process.env["GEMINI_API_KEY"]
+          : undefined
+
+      const modelEnv = new Map(proxy?.env())
+
+      if (google !== undefined && google !== "") modelEnv.set("GOOGLE_API_KEY", google)
+
       const phoenix = options.phoenix === true
 
       const sandboxOptions: SandboxOptions = {
@@ -263,7 +276,7 @@ export const scenario = (
         // A developer's decision key must not add auto mode to unrelated TUI tests,
         // or turn replay into real decision calls. Only the live service scenario opts in.
         env: new Map([
-          ...(proxy?.env() ?? []),
+          ...modelEnv,
           ["TYPESAFE_API_KEY", needs.has("typesafe") ? (getSecret("typesafe") ?? "") : ""],
           ...(options.env ?? []),
         ]),

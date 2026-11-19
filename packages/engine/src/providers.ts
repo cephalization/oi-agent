@@ -1,7 +1,7 @@
 /**
  * Model providers: where a model is served and how to authenticate.
  *
- * Three are built in: Anthropic, OpenAI (API key) and ChatGPT (sign in with
+ * Four are built in: Anthropic, Google Gemini, OpenAI (API key) and ChatGPT (sign in with
  * a ChatGPT plan). Any number of OpenAI-compatible servers can be added; they
  * live in the config file as `providers`. No provider entry holds a secret:
  * API keys and ChatGPT tokens are in the keychain, one account per provider.
@@ -10,7 +10,7 @@ import { Schema } from "effect"
 import type { Billing } from "./format.ts"
 import type { ModelOption } from "./model.ts"
 
-export const ProviderKind = Schema.Literals(["anthropic", "openai", "chatgpt", "openai-compatible"])
+export const ProviderKind = Schema.Literals(["anthropic", "openai", "chatgpt", "google", "openai-compatible"])
 
 export type ProviderKind = typeof ProviderKind.Type
 
@@ -58,6 +58,7 @@ export const OPENAI_BASE_URL = process.env["OPENAI_BASE_URL"] ?? "https://api.op
 export const BUILTIN_PROVIDERS: ReadonlyArray<ProviderConfig> = [
   { id: "anthropic", name: "Anthropic", kind: "anthropic" },
   { id: "openai", name: "OpenAI", kind: "openai", base_url: OPENAI_BASE_URL, api: "responses" },
+  { id: "google", name: "Google Gemini", kind: "google" },
   { id: "chatgpt", name: "ChatGPT plan", kind: "chatgpt", base_url: OPENAI_BASE_URL, api: "responses" },
 ]
 
@@ -71,7 +72,14 @@ export const allProviders = (configured: ReadonlyArray<ProviderConfig>): Array<P
 export const findProvider = (
   configured: ReadonlyArray<ProviderConfig>,
   id: string,
-): ProviderConfig | undefined => allProviders(configured).find((provider) => provider.id === id)
+): ProviderConfig | undefined => {
+  const providers = allProviders(configured)
+
+  return (
+    providers.find((provider) => provider.id === id) ??
+    (id === "gemini" ? providers.find((provider) => provider.id === "google") : undefined)
+  )
+}
 
 /**
  * Who serves a provider's calls, for `llm.provider`. A provider is a way of
@@ -163,8 +171,12 @@ export const splitModel = (
   const slash = text.indexOf("/")
   const prefix = slash === -1 ? "" : text.slice(0, slash)
 
-  if (prefix !== "" && findProvider(configured, prefix) !== undefined)
-    return { provider: prefix, model: text.slice(slash + 1) }
+  const provider = prefix === "" ? undefined : findProvider(configured, prefix)
 
-  return { provider: fallback, model: text }
+  if (provider !== undefined) return { provider: provider.id, model: text.slice(slash + 1) }
+
+  return {
+    provider: fallback === "gemini" ? (findProvider(configured, fallback)?.id ?? fallback) : fallback,
+    model: text,
+  }
 }

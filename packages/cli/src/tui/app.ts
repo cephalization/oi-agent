@@ -1366,7 +1366,8 @@ class App {
     if (providers === undefined) return
 
     const menus = new Map<string, () => Promise<boolean>>([
-      ["anthropic", () => this.anthropicMenu(providers)],
+      ["anthropic", () => this.apiKeyMenu(providers, "anthropic", "Anthropic")],
+      ["google", () => this.apiKeyMenu(providers, "google", "Google Gemini")],
       ["openai", () => this.openaiMenu(providers)],
       ["compatible", () => this.compatibleMenu(providers)],
       [
@@ -1403,6 +1404,7 @@ class App {
     return [
       { value: "anthropic", label: "Anthropic", hint: describe("anthropic") },
       { value: "openai", label: "OpenAI", hint: this.openaiHint(providers) },
+      { value: "google", label: "Google Gemini", hint: describe("google") },
       {
         value: DECISION_ACCOUNT,
         label: "TypeSafe decision model",
@@ -1473,10 +1475,10 @@ class App {
     return true
   }
 
-  private async anthropicMenu(providers: Providers): Promise<boolean> {
-    const action = await this.pick("Anthropic", this.keyItems(providers, "anthropic"))
+  private async apiKeyMenu(providers: Providers, id: string, label: string): Promise<boolean> {
+    const action = await this.pick(label, this.keyItems(providers, id))
 
-    return action === undefined ? false : this.keyAction(providers, "anthropic", action)
+    return action === undefined ? false : this.keyAction(providers, id, action)
   }
 
   private async openaiMenu(providers: Providers): Promise<boolean> {

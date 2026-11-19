@@ -1,5 +1,12 @@
 /** Effort-level rules for Shift+Tab and `/model`, kept pure for tests. */
-import { type Effort, EFFORTS, type ModelOption, type ModelRef, openaiEfforts } from "@oi-agent/engine"
+import {
+  type Effort,
+  EFFORTS,
+  googleEfforts,
+  type ModelOption,
+  type ModelRef,
+  openaiEfforts,
+} from "@oi-agent/engine"
 
 /**
  * The levels a model accepts. A model the catalog has not listed (yet) gets
@@ -11,6 +18,8 @@ export const effortsFor = (catalog: ReadonlyArray<ModelOption>, ref: ModelRef): 
   if (listed !== undefined) return listed.efforts
 
   if (ref.provider === "anthropic") return EFFORTS
+
+  if (ref.provider === "google") return googleEfforts(ref.model)
 
   return ref.provider === "openai" || ref.provider === "chatgpt" ? openaiEfforts(ref.model) : []
 }

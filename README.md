@@ -11,8 +11,8 @@ was sent, pick up a session later, or explore it in Phoenix. Experimental.
 
 ## Get started
 
-Requires Node 24+ and an Anthropic or OpenAI API key, a ChatGPT plan, or an
-OpenAI-compatible server such as Ollama, vLLM or LM Studio.
+Requires Node 24+ and an Anthropic, OpenAI or Google Gemini API key, a
+ChatGPT plan, or an OpenAI-compatible server such as Ollama, vLLM or LM Studio.
 
 ```sh
 npm install -g oi-agent    # installs the `oi` command
@@ -28,8 +28,8 @@ session, and run `oi setup` to change your provider or settings.
 
 ## What you can do
 
-- **Work with your models.** Use Anthropic, OpenAI, a ChatGPT plan or local
-  models, and switch providers during a session.
+- **Work with your models.** Use Anthropic, OpenAI, Google Gemini, a ChatGPT
+  plan or local models, and switch providers during a session.
 - **Share images.** Drop image files on the terminal, or press ctrl+v to paste
   one from the clipboard.
 - **Keep working while tasks run.** Background commands and subagents report
