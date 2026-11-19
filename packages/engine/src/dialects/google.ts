@@ -141,7 +141,11 @@ const toTranscript: Dialect["toTranscript"] = (messages) => {
 
     if (content.role === "model") {
       pending = callsIn(content.parts)
-      entries.push({ role: "assistant", text, calls: pending })
+      entries.push({
+        role: "assistant",
+        text,
+        calls: pending.map(({ id, name, input }) => ({ id, name, input })),
+      })
       continue
     }
 
