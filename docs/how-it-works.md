@@ -22,8 +22,8 @@ against the span files of the conversation you are in.
 
 ### Install and set up
 
-Requires Node 24+ and an Anthropic or OpenAI API key, a ChatGPT plan, or any
-OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter, …).
+Requires Node 24+ and an Anthropic, OpenAI or Google Gemini API key, a
+ChatGPT plan, or any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter, …).
 
 ```sh
 npm install -g oi-agent
@@ -98,7 +98,7 @@ from every provider's models (`anthropic/claude-opus-5-5`,
 `openai/gpt-5.1`, `ollama/qwen3`, …), and saves it to the config as the
 default for new sessions; `/model --temp <model>` switches only for the
 running process. `/provider` opens a menu of
-Anthropic, OpenAI and OpenAI-compatible servers. Under each are its options:
+Anthropic, OpenAI, Google Gemini and OpenAI-compatible servers. Under each are its options:
 an API key (hidden as you type, kept in the keychain), signing in with a
 ChatGPT plan in the browser, or adding a server by name, base URL, optional
 key and a comma-separated list of models. A server's models go straight into
@@ -109,6 +109,15 @@ through the levels the current model accepts. The others are `/share`,
 `/share local`, `/unshare`, `/evals`, `/verdicts`, `/metrics`, `/rules`, `/revert`, `/export`,
 `/yolo`, `/auto`, `/compact`, `/handoff`, `/inbox`, `/tasks`, `/attach`, `/detach`, `/image`, `/phoenix`,
 `/session`, `/tour`, `/feedback`, `/reload`, `/help` and `/quit`.
+
+For Gemini, choose **Google Gemini** in setup, run `oi auth login google`, or
+set `GOOGLE_API_KEY` (also accepts `GEMINI_API_KEY`; `GOOGLE_API_KEY` wins if
+both are set). Select `google/gemini-4-hydrogen`, `google/gemini-4-neon`, or
+`google/gemini-4-carbon` with `-m` or `/model`. `gemini/` is an alias unless
+that ID already names a configured server. `google` is now reserved for the
+built-in provider; rename a compatible server with that ID and re-add its
+key if needed. Carbon accepts `low`, `medium`, and `high`; Neon and Hydrogen
+also accept `xhigh`. Gemini uses oi's regular tools, not Google's hosted tools.
 
 Use `/feedback` for filing instructions, or `/feedback <short description>` to
 preview a public issue for `cephalization/oi-agent`. The configured model drafts
@@ -1016,17 +1025,24 @@ These work best on the session you are in, because the evidence is right there.
   before OpenAI's 60-minute limit and after an interrupt, which costs one
   uncached call; if a socket cannot be opened the call goes over HTTP.
   `OI_AGENT_OPENAI_TRANSPORT=http` turns it off.
-- **"How do you talk to OpenAI or a local model?"** Each API is a dialect
+- **"How do you talk to different providers?"** Each API is a dialect
   (`source/engine/src/dialect.ts`): Anthropic Messages, OpenAI Chat
-  Completions (what "OpenAI-compatible" servers speak) and OpenAI
-  Responses (OpenAI and ChatGPT plans). A dialect knows how to read its
+  Completions (what "OpenAI-compatible" servers speak), OpenAI
+  Responses (OpenAI and ChatGPT plans), and Gemini GenerateContent. A dialect knows how to read its
   stored bodies, continue a conversation, and convert to and from a neutral
   transcript of text, tool calls and tool results. The fold continues in the
   dialect of the turn's last call, replaying it verbatim; when `/model` moves
   to a provider with another dialect, `contextFor` translates through the
   transcript, so reasoning blocks, signatures and other provider-specific
   parts stay behind. Responses requests use `store: false` and carry
-  reasoning forward as `encrypted_content`, so OpenAI holds no state either.
+  reasoning forward as `encrypted_content`. Gemini streams over its native
+  API (`source/engine/src/google.ts`); oi stores the assembled response
+  without coalescing its parts. The fold replays each original part in order,
+  including thought summaries, signed function calls and empty text parts
+  carrying signatures. Parallel tool responses are grouped after the model's
+  calls and matched by ID when Google provides one, otherwise by call order.
+  Switching into Gemini from another dialect uses Google's migration marker
+  for translated tool calls, never as a replacement for a native signature.
   Providers are config entries without secrets
   (`source/engine/src/providers.ts`). An OpenAI-compatible entry can name
   its `models`; then `/model` offers those rather than the server's own
@@ -1035,7 +1051,7 @@ These work best on the session you are in, because the evidence is right there.
   is a keychain entry holding a refreshable token.
   A provider is a way of reaching models, not a vendor: `chatgpt` and
   `openai` both reach OpenAI. So an `LLM` span has the vendor in
-  `llm.provider` (`vendorOf`: `openai`, `anthropic`, a compatible entry's
+  `llm.provider` (`vendorOf`: `openai`, `anthropic`, `google`, a compatible entry's
   optional `vendor`, else its id), oi's provider id in
   `metadata.oi_agent.provider`, which is what oi itself reads, and
   `metadata.oi_agent.billing`: `plan` for the ChatGPT sign-in, whose calls

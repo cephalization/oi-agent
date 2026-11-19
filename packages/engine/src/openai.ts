@@ -1,3 +1,4 @@
+import { serverEvents } from "./sse.ts"
 /**
  * Models behind OpenAI's APIs: OpenAI itself, ChatGPT plan usage, and any
  * server that speaks Chat Completions ("OpenAI-compatible").
@@ -103,36 +104,6 @@ const describe = (settings: OpenAISettings, cause: unknown): ModelError => {
   return new ModelError({
     message: `Could not reach ${settings.provider} at ${settings.baseUrl}: ${message}`,
   })
-}
-
-// --- server-sent events ---------------------------------------------------------
-
-/** The `data:` payloads of a server-sent event stream. */
-async function* events(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-  const decoder = new TextDecoder()
-  let buffer = ""
-
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true })
-
-    let boundary = /\r?\n\r?\n/.exec(buffer)
-
-    while (boundary !== null) {
-      const event = buffer.slice(0, boundary.index)
-
-      buffer = buffer.slice(boundary.index + boundary[0].length)
-
-      const data = event
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n")
-
-      if (data !== "" && data !== "[DONE]") yield data
-
-      boundary = /\r?\n\r?\n/.exec(buffer)
-    }
-  }
 }
 
 // --- Chat Completions -------------------------------------------------------------
@@ -376,7 +347,7 @@ const runChat = async (
   const response = await post(settings, "chat/completions", body, signal)
   const accumulator = new ChatAccumulator()
 
-  for await (const data of events(response.body ?? new ReadableStream())) accumulator.add(data, hooks)
+  for await (const data of serverEvents(response.body ?? new ReadableStream())) accumulator.add(data, hooks)
 
   return { response: JSON.stringify(accumulator.completion()), transport: "http" }
 }
@@ -467,7 +438,7 @@ const runResponsesHttp = async (
   const response = await post(settings, "responses", body, signal)
   const items: StreamedItems = new Map()
 
-  for await (const data of events(response.body ?? new ReadableStream())) {
+  for await (const data of serverEvents(response.body ?? new ReadableStream())) {
     const done = responsesEvent(settings, data, hooks, items)
 
     if (done !== undefined) return done

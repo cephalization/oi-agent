@@ -3,13 +3,15 @@ import type { Dialect } from "../dialect.ts"
 import type { Api } from "../format.ts"
 import type { Json } from "../wire.ts"
 import { anthropicMessages } from "./anthropic.ts"
+import { googleGenerateContent } from "./google.ts"
 import { openaiChat } from "./openai-chat.ts"
 import { openaiResponses } from "./openai-responses.ts"
 
-export { anthropicMessages, openaiChat, openaiResponses }
+export { anthropicMessages, googleGenerateContent, openaiChat, openaiResponses }
 
 const DIALECTS = new Map<Api, Dialect>([
   ["anthropic-messages", anthropicMessages],
+  ["google-generate-content", googleGenerateContent],
   ["openai-chat", openaiChat],
   ["openai-responses", openaiResponses],
 ])

@@ -106,7 +106,10 @@ and the session remains. Like other Rex tests it skips if Rex is not installed.
 | `OI_E2E_ANTHROPIC_MODEL` | `anthropic/claude-haiku-5-5` | what only Anthropic offers (built-in search) |
 
 A scenario whose model has no credentials (keychain or environment) is
-skipped, not failed.
+skipped, not failed. `scenarios/google.e2e.ts` includes a live Hydrogen
+scenario (Google keychain account or `GOOGLE_API_KEY` / `GEMINI_API_KEY`) and
+an always-on local SSE fixture for deterministic signed tool-loop and resume
+coverage. The live scenario has no cassette; the other one needs no key.
 
 `OI_E2E_MODELS` picks where replies come from:
 

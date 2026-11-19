@@ -296,7 +296,12 @@ export const reportedCost = (value: Schema.Json | AttrValue | undefined): number
 export const SpanRef = Schema.Struct({ trace_id: Schema.String, span_id: Schema.String })
 
 /** The wire format of a model call's stored request and response bodies (see `dialect.ts`). */
-export const Api = Schema.Literals(["anthropic-messages", "openai-chat", "openai-responses"])
+export const Api = Schema.Literals([
+  "anthropic-messages",
+  "openai-chat",
+  "openai-responses",
+  "google-generate-content",
+])
 
 export type Api = typeof Api.Type
 

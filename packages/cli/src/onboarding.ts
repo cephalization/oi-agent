@@ -16,6 +16,8 @@ import {
   defaultHome,
   type Effort,
   getSecret,
+  GOOGLE_MODELS,
+  googleEfforts,
   hasConfig,
   loadConfig,
   saveConfig,
@@ -63,7 +65,7 @@ const step = (title: string, detail: string): void => {
 }
 
 /** The version a Phoenix server reports, or `undefined` if none answers. */
-type ProviderChoice = "anthropic" | "openai" | "chatgpt" | "compatible"
+type ProviderChoice = "anthropic" | "openai" | "chatgpt" | "google" | "compatible"
 
 const providerStep = async (current: Config): Promise<ProviderChoice> => {
   step(
@@ -72,7 +74,10 @@ const providerStep = async (current: Config): Promise<ProviderChoice> => {
   )
 
   const initial: ProviderChoice =
-    current.provider === "anthropic" || current.provider === "openai" || current.provider === "chatgpt"
+    current.provider === "anthropic" ||
+    current.provider === "openai" ||
+    current.provider === "chatgpt" ||
+    current.provider === "google"
       ? current.provider
       : "compatible"
 
@@ -82,6 +87,7 @@ const providerStep = async (current: Config): Promise<ProviderChoice> => {
       { value: "anthropic", label: "Anthropic", hint: "Claude, with an API key" },
       { value: "openai", label: "OpenAI", hint: "sign in with ChatGPT, or an API key" },
       { value: "compatible", label: "OpenAI-compatible", hint: "Ollama, vLLM, LM Studio, OpenRouter, …" },
+      { value: "google", label: "Google Gemini", hint: "Gemini 4, with an API key" },
     ],
     initial === "chatgpt" ? "openai" : initial,
   )
@@ -409,6 +415,12 @@ export const runOnboarding = async (): Promise<Config> => {
     const apiKey = await apiKeyStep("anthropic", "Anthropic", false)
 
     model = await modelStep(current.provider === "anthropic" ? current.model : "claude-opus-5-5", apiKey)
+  } else if (choice === "google") {
+    await apiKeyStep("google", "Google Gemini", false)
+
+    model = await listedModelStep(current.provider === "google" ? current.model : "gemini-4-hydrogen", () =>
+      Promise.resolve(GOOGLE_MODELS.map((option) => option.id)),
+    )
   } else {
     let server: ProviderConfig | undefined
     let token: string | undefined
@@ -445,7 +457,9 @@ export const runOnboarding = async (): Promise<Config> => {
 
   step("Effort", "How hard the model works on each turn.")
 
-  const effort = await choose("Reasoning effort?", EFFORTS, current.effort)
+  const levels = provider === "google" ? googleEfforts(model) : []
+  const choices = levels.length === 0 ? EFFORTS : EFFORTS.filter((option) => levels.includes(option.value))
+  const effort = await choose("Reasoning effort?", choices, current.effort)
 
   step("Tool approvals", "Reading files needs no approval. This covers shell commands and file edits.")
 

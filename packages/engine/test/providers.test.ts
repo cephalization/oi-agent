@@ -5,10 +5,14 @@ import {
   billingOf,
   BUILTIN_PROVIDERS,
   describeModels,
+  findProvider,
+  googleEfforts,
   listOpenAIModels,
   openaiEfforts,
   parseModelIds,
   providerIdFrom,
+  secretAccount,
+  splitModel,
   vendorOf,
 } from "../src/index.ts"
 
@@ -134,5 +138,34 @@ describe("OpenAI reasoning capabilities", () => {
     expect(levels.get("new-reasoner")).toEqual(["high"])
     expect(levels.get("gpt-5-no-effort")).toEqual([])
     expect(levels.get("gpt-5.6-luna")).toEqual(["low", "medium", "high"])
+  })
+})
+
+describe("Google Gemini", () => {
+  it("canonicalizes the Gemini alias without taking over an existing compatible server", () => {
+    const ref = { provider: "google", model: "gemini-4-neon" }
+
+    expect(splitModel([], "gemini/gemini-4-neon", "anthropic")).toEqual(ref)
+    expect(splitModel([], "gemini-4-neon", "gemini")).toEqual(ref)
+
+    const google = findProvider([], "gemini")!
+
+    expect(vendorOf(google)).toBe("google")
+    expect(secretAccount(google)).toBe("google")
+
+    const compatible = { id: "gemini", kind: "openai-compatible" as const, name: "Existing server" }
+
+    expect(findProvider([compatible], "gemini")).toBe(compatible)
+    expect(splitModel([compatible], "gemini/org/custom", "anthropic")).toEqual({
+      provider: "gemini",
+      model: "org/custom",
+    })
+  })
+
+  it("only offers documented thinking levels for the supported model IDs", () => {
+    expect(googleEfforts("gemini-4-carbon")).toEqual(["low", "medium", "high"])
+    expect(googleEfforts("gemini-4-neon")).toEqual(["low", "medium", "high", "xhigh"])
+    expect(googleEfforts("gemini-4-hydrogen")).toEqual(["low", "medium", "high", "xhigh"])
+    expect(googleEfforts("gemini-unknown")).toEqual([])
   })
 })

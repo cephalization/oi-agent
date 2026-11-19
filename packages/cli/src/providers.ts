@@ -14,12 +14,15 @@ import {
   chatgptSignOut,
   billingOf,
   chatgptToken,
+  checkGoogleModel,
   checkModel,
   type Config,
   deleteSecret,
   DECISION_ACCOUNT,
   findProvider,
   getSecret,
+  GOOGLE_MODELS,
+  googleModel,
   listModels,
   listOpenAIModels,
   loadConfig,
@@ -95,7 +98,9 @@ export class Providers {
   keys(): Array<string> {
     return [
       ...this.all().flatMap((provider) => this.key(provider) ?? []),
-      ...[getSecret(DECISION_ACCOUNT)].filter((key) => key !== undefined),
+      ...[getSecret(DECISION_ACCOUNT), process.env["GOOGLE_API_KEY"], process.env["GEMINI_API_KEY"]].filter(
+        (key) => key !== undefined,
+      ),
     ]
   }
 
@@ -142,6 +147,8 @@ export class Providers {
         maxOutput: model.max_output,
       }))
 
+    if (provider.kind === "google") return [...GOOGLE_MODELS]
+
     if (provider.kind === "anthropic") return listModels(this.key(provider) ?? "")
 
     const token = provider.kind === "chatgpt" ? await chatgptToken() : this.key(provider)
@@ -156,8 +163,10 @@ export class Providers {
 
   /** List the models of one provider, or of every usable one. Failures are kept for `/provider`. */
   async refresh(id?: string): Promise<void> {
+    const targetId = id === undefined ? undefined : (this.find(id)?.id ?? id)
+
     const targets = this.all().filter(
-      (provider) => (id === undefined || provider.id === id) && this.usable(provider),
+      (provider) => (targetId === undefined || provider.id === targetId) && this.usable(provider),
     )
 
     await Promise.all(
@@ -206,6 +215,17 @@ export class Providers {
     }
 
     const key = this.key(provider)
+
+    if (provider.kind === "google") {
+      if (key === undefined) throw new Error("No Google Gemini API key. Run `oi auth login google`.")
+
+      return googleModel({
+        apiKey: key,
+        model: settings.model,
+        effort: settings.effort,
+        maxTokens: settings.max_tokens,
+      })
+    }
 
     if (provider.kind === "openai" && key === undefined)
       throw new Error(
@@ -256,6 +276,8 @@ export class Providers {
     const config = this.find(provider)
 
     if (config === undefined) throw new Error(`No provider named ${provider}.`)
+
+    if (config.kind === "google") return checkGoogleModel(this.key(config) ?? "", model)
 
     if (config.kind === "anthropic") return checkModel(this.key(config) ?? "", model)
 
@@ -371,7 +393,7 @@ export class Providers {
 
     const done = provider.kind === "chatgpt" ? await chatgptSignOut() : deleteSecret(secretAccount(provider))
 
-    this.replace(id, [])
+    this.replace(provider.id, [])
 
     return done ? undefined : `${id} had no key or sign-in to remove.`
   }

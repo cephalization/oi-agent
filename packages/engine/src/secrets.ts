@@ -36,6 +36,13 @@ const keychainGet = (account: string): string | undefined =>
     : run("secret-tool", ["lookup", "service", service(), "account", account])
 
 export const getSecret = (account: string): string | undefined => {
+  if (account === "google")
+    return (
+      [process.env["GOOGLE_API_KEY"], process.env["GEMINI_API_KEY"]].find(
+        (key) => key !== undefined && key !== "",
+      ) ?? keychainGet(account)
+    )
+
   const envName = ENV_NAMES.get(account)
   const fromEnv = envName === undefined ? undefined : process.env[envName]
   const value = fromEnv ?? keychainGet(account)

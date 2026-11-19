@@ -37,7 +37,7 @@ export const Web = Schema.Literals(["auto", "off"])
 export type Web = typeof Web.Type
 
 export const Config = Schema.Struct({
-  /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
+  /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`, `google`) or one in `providers`. */
   provider: Schema.String,
   /** Model id at that provider, for example `claude-opus-5-5`. */
   model: Schema.String,
