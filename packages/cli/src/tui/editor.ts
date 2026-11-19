@@ -8,7 +8,7 @@ export type EditorAction =
 
 // One key: a CSI sequence, an alt-modified key, or a single character.
 // oxlint-disable-next-line no-control-regex
-const KEYS = /\u001B\[[0-9;]*[A-Za-z~]|\u001B[\s\S]|[\s\S]/gu
+const KEYS = /\u001B\[[0-?]*[ -/]*[@-~]|\u001B[\s\S]|[\s\S]/gu
 
 const PASTE_START = "\u001B[200~"
 const PASTE_END = "\u001B[201~"
@@ -50,10 +50,6 @@ export class Editor {
 
   /** The app may allow an empty line (e.g. with attachments) or stop a failed drop from sending. */
   canSubmit: (text: string) => boolean = (text) => text !== ""
-
-  get inPaste(): boolean {
-    return this.pasting
-  }
 
   get text(): string {
     return this.buffer

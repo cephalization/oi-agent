@@ -16,6 +16,7 @@ import {
 } from "../src/tui/commands.ts"
 import { approvalAction } from "../src/tui/approvals.ts"
 import { Editor, normalizeKeys } from "../src/tui/editor.ts"
+import { TerminalInput } from "../src/tui/input.ts"
 import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "../src/tui/modes.ts"
 import { type AnnotationFile, EFFORTS, DECISION_ATTR, type EndedSpan, OI } from "@oi-agent/engine"
 import { Screen } from "../src/tui/screen.ts"
@@ -33,6 +34,39 @@ describe("text measurement", () => {
   it("wraps at word boundaries and keeps list indentation", () => {
     expect(wrap("the quick brown fox jumps", 11)).toEqual(["the quick", "brown fox", "jumps"])
     expect(wrap("- alpha beta gamma", 12)).toEqual(["- alpha beta", "  gamma"])
+  })
+})
+
+describe("terminal input", () => {
+  it("frames mixed text and control keys before interpreting shortcuts", () => {
+    const input = new TerminalInput()
+
+    expect([...input.feed("one\rTWO\u001B[27u THREE\u001B[13;2uFOUR\t")]).toEqual([
+      "one",
+      "\r",
+      "TWO",
+      "\u001B[27u",
+      " THREE",
+      "\u001B[13;2u",
+      "FOUR",
+      "\t",
+    ])
+  })
+
+  it("keeps a split paste and its payload opaque, and returns subsequent input separately", () => {
+    const input = new TerminalInput()
+
+    expect([...input.feed("before\u001B[20")]).toEqual(["before"])
+    expect([...input.feed("0~literal\u001B[27u\r\u001B[20")]).toEqual([])
+    expect([...input.feed("1~\rAFTER")]).toEqual(["\u001B[200~literal\u001B[27u\r\u001B[201~", "\r", "AFTER"])
+  })
+
+  it("retains an incomplete CSI but accepts legacy Escape by itself", () => {
+    const input = new TerminalInput()
+
+    expect([...input.feed("\u001B[27")]).toEqual([])
+    expect([...input.feed("uX")]).toEqual(["\u001B[27u", "X"])
+    expect([...input.feed("\u001B")]).toEqual(["\u001B"])
   })
 })
 

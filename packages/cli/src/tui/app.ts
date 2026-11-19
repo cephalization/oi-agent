@@ -75,6 +75,7 @@ import {
 } from "./commands.ts"
 import { approvalAction } from "./approvals.ts"
 import { Editor, normalizeKeys } from "./editor.ts"
+import { TerminalInput } from "./input.ts"
 import { effortsFor, fitEffort, nextEffort, parseModelArgument } from "./modes.ts"
 import { Screen } from "./screen.ts"
 import { compact, Transcript } from "./transcript.ts"
@@ -2127,12 +2128,6 @@ class App {
   }
 
   private input(raw: string): void {
-    this.program.acknowledge()
-    this.lastKeyMs = Date.now()
-
-    // A continuation may look like a shortcut on its own. Leave it to the paste parser.
-    if (this.editor.inPaste) return this.editInput(raw)
-
     const data = raw.includes("\u001B[200~") ? raw : normalizeKeys(raw)
 
     if (this.failedDrop && data === "\r") return this.editInput(raw)
@@ -2314,11 +2309,13 @@ class App {
     }, 100)
 
     const decoder = new StringDecoder("utf8")
+    const input = new TerminalInput()
 
     const onData = (data: Buffer): void => {
-      const input = decoder.write(data)
+      this.program.acknowledge()
+      this.lastKeyMs = Date.now()
 
-      if (input !== "") this.input(input)
+      for (const event of input.feed(decoder.write(data))) this.input(event)
     }
 
     const onResize = (): void => this.draw()
