@@ -5,7 +5,7 @@
  * approvals. Every interface (terminal, share peer, viewer) talks to this and
  * to the store's event stream; none of them holds session state of its own.
  */
-import { Effect, Exit, Fiber, Layer, Option } from "effect"
+import { Effect, Exit, Fiber, Layer, Option, type Schema } from "effect"
 import { attachmentsFrom, isProblem, type NewImage } from "./attachments.ts"
 import {
   type Approval,
@@ -17,6 +17,13 @@ import {
   type TurnResult,
 } from "./agent.ts"
 import type { Config } from "./config.ts"
+import {
+  correctionAfter,
+  correctionEvidence,
+  recordCorrection,
+  type CorrectionCheckpoint,
+  type CorrectionStop,
+} from "./correction.ts"
 import {
   askDecision,
   APPROVAL_QUESTIONS,
@@ -34,6 +41,7 @@ import {
   type EngineMetadata,
   type InboxFile,
   OI,
+  readMetadata,
   writeMetadata,
   type SessionHeader,
   stringAttr,
@@ -147,10 +155,19 @@ export interface EngineOptions {
 export interface TurnHooks {
   /** Feedback to inject into the next turn of a session. */
   readonly pendingFeedback: (sessionId: string) => ReadonlyArray<AnnotationFile>
-  readonly afterTurn: (sessionId: string, traceId: string) => Promise<void>
+  readonly afterTurn: (
+    sessionId: string,
+    traceId: string,
+    obligations?: CorrectionCheckpoint["obligations"],
+  ) => Promise<EvaluationResults | void>
 }
 
-const NO_HOOKS: TurnHooks = { pendingFeedback: () => [], afterTurn: () => Promise.resolve() }
+interface EvaluationResults {
+  readonly annotations: ReadonlyArray<AnnotationFile>
+  readonly corrections: ReadonlyMap<string, Schema.Json>
+}
+
+const NO_HOOKS: TurnHooks = { pendingFeedback: () => [], afterTurn: () => Promise.resolve(undefined) }
 
 interface Running {
   readonly fiber: Fiber.Fiber<TurnResult, ModelError>
@@ -188,6 +205,8 @@ export class Engine {
   private readonly modelFor: ((config: Config) => Layer.Layer<Model>) | undefined
   private approvalMode: ApprovalMode
   private readonly queues = new Map<string, Promise<void>>()
+  private readonly queuedInputs = new Map<string, number>()
+  private readonly interruptions = new Map<string, number>()
   private readonly running = new Map<string, Running>()
   private readonly pending = new Map<string, (decision: ApprovalDecision) => void>()
   private readonly approvalListeners = new Set<(request: ApprovalRequest) => void>()
@@ -408,6 +427,8 @@ export class Engine {
    * started as the turn ends. It runs when the session is next served.
    */
   interrupt(sessionId: string, leaving: boolean = false): void {
+    this.interruptions.set(sessionId, (this.interruptions.get(sessionId) ?? 0) + 1)
+
     // Before the check below: with no turn running, one may still be waiting behind evaluators.
     if (leaving) this.away.add(sessionId)
 
@@ -485,10 +506,229 @@ export class Engine {
   }
 
   /** Evaluators run after the answer is delivered but before the next turn starts. */
-  private afterTurn(sessionId: string, outcome: TurnOutcome | undefined): Promise<void> {
-    return outcome?.ok === true
-      ? this.hooks.afterTurn(sessionId, outcome.result.traceId).catch(() => undefined)
-      : Promise.resolve()
+  private async afterTurn(sessionId: string, outcome: TurnOutcome | undefined): Promise<void> {
+    if (outcome?.ok !== true) return
+
+    const interruption = this.interruptions.get(sessionId)
+    const traceId = outcome.result.traceId
+
+    // Repeated delivery of the same evaluation cycle cannot reopen a chain.
+    if (this.settings.auto_correction && correctionAfter(this.store, sessionId, traceId) !== undefined) return
+
+    const results = await this.hooks.afterTurn(sessionId, traceId).catch(() => undefined)
+
+    if (!this.settings.auto_correction || this.served || results === undefined) return
+
+    const root = this.store.readTraceRoots(sessionId, traceId).ended[0]
+    const failures = results.annotations.filter((entry) => entry.annotation.metadata?.["feedback"] === true)
+
+    if (root === undefined || failures.length === 0) return
+
+    const state: CorrectionCheckpoint = {
+      origin: root.context,
+      after: root.context,
+      attempts: 0,
+      budget: this.settings.max_correction_turns,
+      triggers: failures.map((entry) => entry.id),
+      obligations: failures.flatMap((entry) => {
+        const definition = results.corrections.get(entry.id)
+
+        return definition === undefined ? [] : [{ original: entry.id, latest: entry.id, definition }]
+      }),
+      fingerprint: "",
+    }
+
+    const { fingerprint } = correctionEvidence(this.store, sessionId, state)
+
+    const stop =
+      this.correctionGuard(sessionId, interruption) ??
+      (state.obligations.length === 0 ? "unrepairable" : undefined)
+
+    const next = { ...state, fingerprint }
+
+    if (stop !== undefined) await recordCorrection(this.store, sessionId, { ...next, stop })
+    else await this.continueCorrection(sessionId, next, interruption)
+  }
+
+  private correctionGuard(sessionId: string, interruption: number | undefined): CorrectionStop | undefined {
+    if (this.away.has(sessionId) || interruption !== this.interruptions.get(sessionId)) return "interrupted"
+
+    if (!this.settings.auto_correction) return "disabled"
+
+    if (
+      (this.queuedInputs.get(sessionId) ?? 0) > 0 ||
+      pendingInbox(this.store, sessionId).some((entry) => entry.delivers === undefined)
+    )
+      return "superseded"
+
+    return undefined
+  }
+
+  private async continueCorrection(
+    sessionId: string,
+    state: CorrectionCheckpoint,
+    interruption: number | undefined,
+  ) {
+    const ref = await recordCorrection(this.store, sessionId, state)
+
+    this.queueCorrection(sessionId, state, ref, interruption)
+  }
+
+  private queueCorrection(
+    sessionId: string,
+    state: CorrectionCheckpoint,
+    ref: CorrectionCheckpoint["after"],
+    interruption: number | undefined,
+  ): void {
+    void this.enqueue(
+      sessionId,
+      async () => {
+        const latest = correctionAfter(this.store, sessionId, state.after.trace_id)
+
+        if (latest?.ref.span_id !== ref.span_id || latest.state.stop !== undefined) return
+
+        const view = loadSession(this.store, sessionId)
+
+        const started = view.turns.some(
+          (turn) => readMetadata(turn.root).correction?.checkpoint.span_id === ref.span_id,
+        )
+
+        if (started) return
+
+        const stop =
+          this.correctionGuard(sessionId, interruption) ??
+          (view.head?.trace_id !== state.after.trace_id ? "superseded" : undefined)
+
+        const latestIds = new Set(
+          state.obligations.flatMap((entry) => (entry.latest === undefined ? [] : [entry.latest])),
+        )
+
+        const feedback = this.hooks.pendingFeedback(sessionId).filter((entry) => latestIds.has(entry.id))
+
+        if (stop !== undefined || feedback.length !== latestIds.size) {
+          await recordCorrection(this.store, sessionId, { ...state, stop: stop ?? "unrepairable" })
+
+          return
+        }
+
+        const attempt = state.attempts + 1
+
+        const outcome = await this.execute(
+          sessionId,
+          {
+            text: `Automatic evaluator correction attempt ${attempt} of ${state.budget} (not a user message). Inspect the recorded failures above, correct the original work where possible, and verify the correction. Follow the original user instructions, including any verification steps, and report anything you cannot fix.`,
+            userId: SYSTEM_USER,
+            previous: state.after.trace_id,
+          },
+          {
+            origin: state.origin,
+            checkpoint: ref,
+            attempt,
+            budget: state.budget,
+            triggers: feedback.map((entry) => entry.id),
+          },
+          feedback,
+        )
+
+        const root = loadSession(this.store, sessionId).head?.root
+        const updated = { ...state, attempts: attempt, after: root?.context ?? state.after }
+
+        if (!outcome.ok) {
+          await recordCorrection(this.store, sessionId, {
+            ...updated,
+            stop: outcome.interrupted ? "interrupted" : "unrepairable",
+          })
+
+          return
+        }
+
+        await this.recheckCorrection(sessionId, updated, interruption)
+      },
+      () => Promise.resolve(),
+    )
+  }
+
+  private async recheckCorrection(
+    sessionId: string,
+    state: CorrectionCheckpoint,
+    interruption: number | undefined,
+  ) {
+    const results = await this.hooks
+      .afterTurn(sessionId, state.after.trace_id, state.obligations)
+      .catch(() => undefined)
+
+    const verdicts = state.obligations.map((entry) =>
+      results?.annotations.find(
+        (annotation) =>
+          annotation.target.trace_id === state.after.trace_id &&
+          annotation.annotation.metadata?.["rechecks"] === entry.original &&
+          annotation.annotation.label !== "skipped" &&
+          annotation.annotation.label !== "pending",
+      ),
+    )
+
+    const obligations = state.obligations.map((entry, index) => {
+      const verdict = verdicts[index]
+
+      if (verdict === undefined) return entry
+
+      if (verdict.annotation.metadata?.["failed"] === true) return { ...entry, latest: verdict.id }
+
+      return { original: entry.original, definition: entry.definition }
+    })
+
+    const next = { ...state, obligations }
+    const { denied, fingerprint } = correctionEvidence(this.store, sessionId, next)
+    const guard = this.correctionGuard(sessionId, interruption)
+    let stop: CorrectionStop | undefined = guard
+
+    if (stop === undefined) {
+      if (verdicts.some((entry) => entry === undefined)) stop = "unrepairable"
+      else if (obligations.every((entry) => entry.latest === undefined)) stop = "passed"
+      else if (denied) stop = "unrepairable"
+      else if (state.attempts >= state.budget) stop = "budget exhausted"
+      else if (state.fingerprint === fingerprint) stop = "stalled"
+    }
+
+    const updated = { ...next, fingerprint }
+
+    if (stop !== undefined) await recordCorrection(this.store, sessionId, { ...updated, stop })
+    else await this.continueCorrection(sessionId, updated, interruption)
+  }
+
+  /** A started attempt without a completed decision is never replayed. */
+  private async resumeCorrection(sessionId: string, supersede: boolean = false): Promise<void> {
+    const root = loadSession(this.store, sessionId).head?.root
+
+    if (root === undefined) return
+
+    const checkpoint = correctionAfter(this.store, sessionId, root.context.trace_id)
+
+    if (checkpoint !== undefined) {
+      if (checkpoint.state.stop !== undefined) return
+
+      if (supersede)
+        await recordCorrection(this.store, sessionId, { ...checkpoint.state, stop: "superseded" })
+      else
+        this.queueCorrection(sessionId, checkpoint.state, checkpoint.ref, this.interruptions.get(sessionId))
+
+      return
+    }
+
+    const attempt = readMetadata(root).correction
+    const previous = readMetadata(root).previous
+
+    if (attempt === undefined || previous === undefined || previous === null) return
+
+    const prior = correctionAfter(this.store, sessionId, previous.trace_id)
+
+    if (prior?.ref.span_id === attempt.checkpoint.span_id)
+      await recordCorrection(this.store, sessionId, {
+        ...prior.state,
+        after: root.context,
+        attempts: attempt.attempt,
+        stop: "interrupted",
+      })
   }
 
   /**
@@ -498,11 +738,17 @@ export class Engine {
   submit(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
     const cancellation = this.cancellations.get(sessionId)
 
-    if (prompt.inboxId === undefined) this.away.delete(sessionId)
+    if (prompt.inboxId === undefined) {
+      this.away.delete(sessionId)
+      this.queuedInputs.set(sessionId, (this.queuedInputs.get(sessionId) ?? 0) + 1)
+    }
 
     return this.enqueue(
       sessionId,
       async () => {
+        if (prompt.inboxId === undefined)
+          this.queuedInputs.set(sessionId, (this.queuedInputs.get(sessionId) ?? 1) - 1)
+
         // Read from the inbox before the session was left: it stays there for whoever serves it next.
         if (
           cancellation !== this.cancellations.get(sessionId) ||
@@ -520,6 +766,10 @@ export class Engine {
 
         if (cancellation !== this.cancellations.get(sessionId)) return LEFT
 
+        await this.resumeCorrection(sessionId, true)
+
+        if (cancellation !== this.cancellations.get(sessionId)) return LEFT
+
         return this.execute(sessionId, prompt)
       },
       (outcome) => (prompt.operation === undefined ? this.afterTurn(sessionId, outcome) : Promise.resolve()),
@@ -529,7 +779,7 @@ export class Engine {
   /** Consume a durable destination seed once, serialized with all other turns.
    * An interrupted first turn is not retried automatically: tools may have run.
    */
-  resumeHandoff(sessionId: string): Promise<TurnOutcome | undefined> {
+  resumeHandoff(sessionId: string, resumeAutoCorrection: boolean = true): Promise<TurnOutcome | undefined> {
     return this.enqueue(
       sessionId,
       () => {
@@ -538,7 +788,8 @@ export class Engine {
 
         return this.pickupHandoff(sessionId)
       },
-      () => Promise.resolve(),
+      (outcome) =>
+        outcome === undefined ? this.resumeCorrection(sessionId, !resumeAutoCorrection) : Promise.resolve(),
     )
   }
 
@@ -859,14 +1110,20 @@ export class Engine {
       handoffSeed: seed.context,
     })
 
-    if (outcome.ok) await this.hooks.afterTurn(sessionId, outcome.result.traceId).catch(() => undefined)
+    await this.afterTurn(sessionId, outcome)
 
     return outcome
   }
 
   /** Resolves when a session has no turn or evaluator still running. */
-  idle(sessionId: string): Promise<void> {
-    return this.queues.get(sessionId) ?? Promise.resolve()
+  async idle(sessionId: string): Promise<void> {
+    for (;;) {
+      const queue = this.queues.get(sessionId)
+
+      await queue
+
+      if (queue === this.queues.get(sessionId)) return
+    }
   }
 
   private resolvePrevious(sessionId: string, prompt: Prompt): { trace_id: string; span_id: string } | null {
@@ -882,7 +1139,12 @@ export class Engine {
     return turn === undefined ? null : { trace_id: turn.trace_id, span_id: turn.root.context.span_id }
   }
 
-  private async execute(sessionId: string, prompt: Prompt): Promise<TurnOutcome> {
+  private async execute(
+    sessionId: string,
+    prompt: Prompt,
+    correction?: EngineMetadata["correction"],
+    feedback?: ReadonlyArray<AnnotationFile>,
+  ): Promise<TurnOutcome> {
     const header = this.store.readHeader(sessionId)
 
     if (header === undefined)
@@ -908,7 +1170,8 @@ export class Engine {
       text: prompt.text,
       userId: prompt.userId,
       previous: this.resolvePrevious(sessionId, prompt),
-      injected: prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId),
+      correction,
+      injected: feedback ?? (prompt.operation !== undefined ? [] : this.hooks.pendingFeedback(sessionId)),
       inboxId: prompt.inboxId,
       attachments: prompt.attachments,
       delivers: prompt.delivers,

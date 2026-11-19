@@ -21,13 +21,13 @@ const use = (name: string, input: Json): Json => ({
   stop_reason: "tool_use",
 })
 
-const setup = (respond: (call: ModelCall, step: number) => Json) => {
+const setup = (respond: (call: ModelCall, step: number) => Json, autoCorrection = false) => {
   const store = tempStore()
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "oi-agent-evals-"))
 
   const engine = new Engine({
     store,
-    config: loadConfig({ OI_AGENT_CONFIG_DIR: store.home }),
+    config: { ...loadConfig({ OI_AGENT_CONFIG_DIR: store.home }), auto_correction: autoCorrection },
     model: scriptedModel(respond),
     approvals: "allow",
     tools: [...builtinTools, createEvalTool],
@@ -240,5 +240,90 @@ describe("engine settings", () => {
     expect(engine.approvals).toBe("ask")
     engine.setApprovalMode("allow")
     expect(engine.approvals).toBe("allow")
+  })
+})
+
+describe("automatic correction scheduling", () => {
+  it("stops after repeated unchanged work even with budget left", async () => {
+    const { engine, store, cwd, sessionId } = setup(() => say("unrepaired"), true)
+
+    saveEval(cwd, {
+      name: "must_fix",
+      description: "Needs repair",
+      kind: "code",
+      target: "output",
+      pattern: "^fixed$",
+      match_label: "pass",
+      otherwise_label: "fail",
+      fail_labels: ["fail"],
+      feedback: true,
+      learn: false,
+    })
+
+    await engine.submit(sessionId, { text: "Try repairing it", userId: "user" })
+    await engine.idle(sessionId)
+    expect(loadSession(store, sessionId).turns).toHaveLength(2)
+
+    const decisions = store
+      .listTraceIds(sessionId)
+      .flatMap((trace) => store.readTraceRoots(sessionId, trace).ended)
+      .flatMap((span) => readMetadata(span).correction_checkpoint ?? [])
+
+    expect(decisions).toContainEqual(expect.objectContaining({ attempts: 1, budget: 2, stop: "stalled" }))
+  })
+
+  it.each(["local", "peer"])("gives a queued %s prompt priority over a correction", async (source) => {
+    const { engine, store, cwd, sessionId } = setup(
+      (_call, step) => say(step === 0 ? "unrepaired" : "fixed"),
+      true,
+    )
+
+    const evaluating = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const hooks = engine.hooks
+
+    saveEval(cwd, {
+      name: "must_fix",
+      description: "Needs repair",
+      kind: "code",
+      target: "output",
+      pattern: "^fixed$",
+      match_label: "pass",
+      otherwise_label: "fail",
+      fail_labels: ["fail"],
+      feedback: true,
+      learn: false,
+    })
+    engine.hooks = {
+      ...hooks,
+      afterTurn: async (...args) => {
+        evaluating.resolve()
+        await release.promise
+
+        return hooks.afterTurn(...args)
+      },
+    }
+
+    void engine.submit(sessionId, { text: "Try repairing it", userId: "user" })
+    await evaluating.promise
+    const prompt = { text: "Check my next instruction", userId: source }
+
+    if (source === "peer") engine.queue(sessionId, prompt)
+    else void engine.submit(sessionId, prompt)
+
+    release.resolve()
+    await engine.idle(sessionId)
+    const turns = loadSession(store, sessionId).turns
+
+    expect(turns).toHaveLength(2)
+    expect(turns[1]?.user_id).toBe(source)
+    expect(readMetadata(turns[1]!.root).injected?.map((entry) => entry.name)).toEqual(["must_fix"])
+
+    const decisions = store
+      .listTraceIds(sessionId)
+      .flatMap((trace) => store.readTraceRoots(sessionId, trace).ended)
+      .flatMap((span) => readMetadata(span).correction_checkpoint ?? [])
+
+    expect(decisions).toContainEqual(expect.objectContaining({ attempts: 0, stop: "superseded" }))
   })
 })

@@ -106,6 +106,8 @@ export interface Opened {
   readonly notes: ReadonlyArray<string>
   /** The session was written on another machine. */
   readonly foreign: boolean
+  /** Phoenix snapshots cannot prove that a still-open attempt did not start. */
+  readonly phoenixBacked?: boolean | undefined
 }
 
 export class Sessions {
@@ -176,7 +178,12 @@ export class Sessions {
     const local = this.store.resolveSession(identifier)
 
     if (local !== undefined && this.store.readHeader(local) !== undefined)
-      return { sessionId: local, notes: [], foreign: false }
+      return {
+        sessionId: local,
+        notes: [],
+        foreign: false,
+        phoenixBacked: readMarker(this.store, local) !== undefined,
+      }
 
     if (this.phoenix === undefined)
       throw new Error(`No session "${identifier}" on disk, and no Phoenix endpoint is configured to look in.`)
@@ -199,6 +206,7 @@ export class Sessions {
       sessionId: result.sessionId,
       notes: [`Opened ${result.sessionId.slice(0, 13)} from Phoenix.`, ...drift],
       foreign: result.header.device.id !== this.store.device().id,
+      phoenixBacked: true,
     }
   }
 

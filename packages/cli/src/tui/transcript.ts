@@ -173,7 +173,19 @@ export class Transcript {
   }
 
   private prompt(span: SpanFile): void {
-    const delivers = readMetadata(span).delivers
+    const { correction, delivers, injected } = readMetadata(span)
+
+    if (correction !== undefined) {
+      this.screen.commit([
+        "",
+        style.gray(
+          `⏵ Automatic correction ${correction.attempt}/${correction.budget}: ${injected?.map((entry) => entry.name).join(", ") ?? ""}`,
+        ),
+        "",
+      ])
+
+      return
+    }
 
     // Nobody typed this turn: oi is handing the model results, which the model's answer will describe.
     if (delivers !== undefined) {
@@ -332,7 +344,15 @@ export class Transcript {
     if (kind === "TOOL") this.tools.set(span.context.span_id, { span, tail: "" })
   }
 
+  private correctionStopped(span: EndedSpan): void {
+    const stop = readMetadata(span).correction_checkpoint?.stop
+
+    if (stop !== undefined) this.screen.commit([style.gray(`  Automatic correction stopped: ${stop}`)])
+  }
+
   private ended(span: EndedSpan): void {
+    if (span.name === "correction.decision") this.correctionStopped(span)
+
     const kind = kindOf(span)
 
     if (kind === "LLM") this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
@@ -402,6 +422,7 @@ export class Transcript {
     const view = loadSession(store, sessionId)
     const branch = view.head === undefined ? [] : branchTo(view, view.head.trace_id)
     const annotations = store.listAnnotations(sessionId)
+    const stops = new Map<string, EndedSpan>()
 
     // History is rendered from turn summaries, not live span events. Restore
     // usage separately without replaying tool output or counting turns as active.
@@ -414,6 +435,11 @@ export class Transcript {
     for (const traceId of store.listTraceIds(sessionId)) {
       for (const span of store.readTrace(sessionId, traceId).ended) {
         const kind = kindOf(span)
+
+        const checkpoint =
+          span.name === "correction.decision" ? readMetadata(span).correction_checkpoint : undefined
+
+        if (checkpoint?.stop !== undefined) stops.set(checkpoint.after.trace_id, span)
 
         if (kind === "LLM") {
           this.tokens += numberAttr(span, OI.TOKENS_TOTAL)
@@ -442,13 +468,23 @@ export class Transcript {
         if (file.target.trace_id === turn.trace_id) this.annotation(file)
       }
 
+      const stop = stops.get(turn.trace_id)
+
+      if (stop !== undefined) this.correctionStopped(stop)
+
       if (readMetadata(turn.root).injected !== undefined) {
         this.screen.commit([style.gray("  (eval feedback was injected into this turn)")])
       }
     }
 
     // Input history is what people typed, not the results oi delivered.
-    return branch.filter((turn) => readMetadata(turn.root).delivers === undefined).map((turn) => turn.input)
+    return branch
+      .filter((turn) => {
+        const metadata = readMetadata(turn.root)
+
+        return metadata.delivers === undefined && metadata.correction === undefined
+      })
+      .map((turn) => turn.input)
   }
 }
 

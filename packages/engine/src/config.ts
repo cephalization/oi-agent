@@ -36,6 +36,8 @@ export const Web = Schema.Literals(["auto", "off"])
 
 export type Web = typeof Web.Type
 
+const CorrectionBudget = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 }))
+
 export const Config = Schema.Struct({
   /** The provider serving `model`: a built-in (`anthropic`, `openai`, `chatgpt`) or one in `providers`. */
   provider: Schema.String,
@@ -53,6 +55,8 @@ export const Config = Schema.Struct({
   judge_model: Schema.String,
   /** `auto`: a correction that applies beyond the current task becomes an evaluator. */
   steering: Steering,
+  auto_correction: Schema.Boolean,
+  max_correction_turns: CorrectionBudget,
   /**
    * What reads each prompt for durable corrections: `provider/model` (a
    * bare id is an Anthropic model) for one model call per prompt, or
@@ -99,6 +103,8 @@ const PartialConfig = Schema.fromJsonString(
     approvals: Schema.optionalKey(Approvals),
     judge_model: Schema.optionalKey(Schema.String),
     steering: Schema.optionalKey(Steering),
+    auto_correction: Schema.optionalKey(Schema.Boolean),
+    max_correction_turns: Schema.optionalKey(CorrectionBudget),
     steering_model: Schema.optionalKey(Schema.String),
     decision: Schema.optionalKey(
       Schema.Struct({
@@ -251,6 +257,8 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     approvals: file?.approvals ?? "ask",
     judge_model: env["OI_AGENT_JUDGE_MODEL"] ?? file?.judge_model ?? "claude-haiku-5-5",
     steering: Option.getOrUndefined(decodeSteering(env["OI_AGENT_STEERING"])) ?? file?.steering ?? "auto",
+    auto_correction: file?.auto_correction ?? false,
+    max_correction_turns: file?.max_correction_turns ?? 2,
     steering_model: env["OI_AGENT_STEERING_MODEL"] ?? file?.steering_model ?? "",
     decision: {
       kind: "systemone",

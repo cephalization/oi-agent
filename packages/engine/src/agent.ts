@@ -120,6 +120,7 @@ export interface TurnInput {
   /** Results of background work that this turn's text delivers to the model. */
   readonly delivers?: EngineMetadata["delivers"]
   /** Eval feedback to put in front of the user's text. */
+  readonly correction?: EngineMetadata["correction"]
   readonly injected?: ReadonlyArray<AnnotationFile>
 }
 
@@ -600,6 +601,8 @@ export const runTurn = (
   if (input.delivers !== undefined) metadata.delivers = input.delivers
 
   if (input.origin !== undefined) metadata.origin = input.origin
+
+  if (input.correction !== undefined) metadata.correction = input.correction
 
   if (injected.length > 0) metadata.injected = injected
 

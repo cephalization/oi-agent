@@ -117,6 +117,7 @@ export interface AppOptions {
   readonly reload?: (() => Promise<string | undefined>) | undefined
   /** Called once the terminal is drawn: from then on, a crash is not a failed start. */
   readonly onStart?: (() => void) | undefined
+  readonly resumeAutoCorrection?: boolean | undefined
   /**
    * Who answers tool approvals from this terminal, when not `engine`: a
    * terminal attached to a task answers through the session that delegated it.
@@ -2322,7 +2323,7 @@ class App {
     this.program.report("idle")
     this.draw()
     this.options.onStart?.()
-    void engine?.resumeHandoff(sessionId).then((outcome) => {
+    void engine?.resumeHandoff(sessionId, this.options.resumeAutoCorrection !== false).then((outcome) => {
       if (outcome !== undefined && !outcome.ok && !outcome.interrupted) this.say([outcome.message])
 
       this.draw()

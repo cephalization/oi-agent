@@ -48,6 +48,7 @@ import {
   PhoenixExporter,
   phoenixJudge,
   Redactor,
+  readMetadata,
   setSecret,
   shownInTerminal,
   splitModel,
@@ -555,6 +556,19 @@ const printEvents =
 
     if (event.type === "delta" && event.delta.k === "text") process.stdout.write(event.delta.d)
 
+    if (event.type === "span_open" && event.span.name === "turn") {
+      const correction = readMetadata(event.span).correction
+
+      if (correction !== undefined)
+        process.stderr.write(`\nAutomatic correction ${correction.attempt}/${correction.budget}\n`)
+    }
+
+    if (event.type === "span_end" && event.span.name === "correction.decision") {
+      const stop = readMetadata(event.span).correction_checkpoint?.stop
+
+      if (stop !== undefined) process.stderr.write(`Automatic correction stopped: ${stop}\n`)
+    }
+
     if (event.type === "span_open" && event.span.attributes["openinference.span.kind"] === "TOOL") {
       process.stderr.write(
         `\n\u001B[2m⏵ ${event.span.name} ${String(event.span.attributes["input.value"] ?? "")}\u001B[0m\n`,
@@ -830,6 +844,7 @@ const interactive = async (): Promise<void> => {
       providers,
       reload: reloadEntry === undefined ? undefined : preflight(reloadEntry),
       onStart: signalReady,
+      resumeAutoCorrection: !opened.phoenixBacked && from === undefined,
     })
   }
 

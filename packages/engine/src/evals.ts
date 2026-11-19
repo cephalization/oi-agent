@@ -20,6 +20,7 @@ import {
   type AttachmentRef,
   type Billing,
   type EndedSpan,
+  type EngineMetadata,
   type SessionSpanRef,
   type SpanFile,
   kindOf,
@@ -963,16 +964,33 @@ const backgroundEvals = (
 
 const failed = (annotation: AnnotationFile): boolean => annotation.annotation.metadata?.["failed"] === true
 
+export type CorrectionObligations = NonNullable<EngineMetadata["correction_checkpoint"]>["obligations"]
+
+interface EvaluationCycle {
+  readonly corrections?: Map<string, Schema.Json> | undefined
+  readonly obligations?: CorrectionObligations | undefined
+}
+
+const repairable = (definition: EvalDefinition): boolean =>
+  (definition.kind === "llm" && definition.wait_for_background !== true) ||
+  (definition.kind === "code" && definition.target === "output")
+
 /** Run every evaluator in the project against a finished turn. */
 export const runEvals = async (
   runtime: EvalRuntime,
   sessionId: string,
   traceId: string,
+  cycle: EvaluationCycle = {},
 ): Promise<Array<AnnotationFile>> => {
   const cwd = runtime.store.readHeader(sessionId)?.cwd
-  const definitions = cwd === undefined ? [] : loadEvals(cwd)
 
-  if (cwd === undefined || definitions.length === 0) return []
+  if (cwd === undefined) return []
+
+  const obligations = cycle.obligations ?? []
+  const pinned = new Set(obligations.map((entry) => decodeEvalDefinition(entry.definition)?.name))
+  const definitions = loadEvals(cwd).filter((definition) => !pinned.has(definition.name))
+
+  if (definitions.length === 0 && obligations.length === 0) return []
 
   const record = turnRecord(runtime.store, sessionId, traceId)
 
@@ -1037,6 +1055,9 @@ export const runEvals = async (
       if (annotation === undefined) continue
       annotations.push(annotation)
 
+      if (repairable(definition) && wantsFeedback(annotation))
+        cycle.corrections?.set(annotation.id, encodeDefinition(definition))
+
       if (definition.learn && failed(annotation)) {
         const origin = annotation.annotation.metadata?.["deferred_from"]
 
@@ -1049,7 +1070,33 @@ export const runEvals = async (
     }
   }
 
-  return annotations
+  if (obligations.length === 0) return annotations
+
+  const byId = new Map(runtime.store.listAnnotations(sessionId).map((entry) => [entry.id, entry]))
+
+  const rechecked = await Effect.runPromise(
+    Effect.forEach(
+      obligations,
+      (entry) => {
+        const definition = decodeEvalDefinition(entry.definition)
+        const original = byId.get(entry.original)
+
+        if (definition === undefined || original === undefined) return Effect.succeed(undefined)
+
+        return runOne(
+          runtime,
+          sessionId,
+          traceId,
+          obligation(definition),
+          recheckRecord(runtime, sessionId, original, record),
+          { rechecks: original.id },
+        )
+      },
+      { concurrency: 4 },
+    ),
+  )
+
+  return [...annotations, ...rechecked.filter((entry) => entry !== undefined)]
 }
 
 // --- feedback --------------------------------------------------------------
