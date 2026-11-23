@@ -981,7 +981,7 @@ const authLogin = async (id: string): Promise<void> => {
 
   const provider =
     providers.find(id) ??
-    fail(`No provider named ${id}. Built in: anthropic, openai, chatgpt, google (alias gemini).`)
+    fail(`No provider named ${id}. Built in: anthropic, openai, chatgpt, google (alias gemini), llama-cpp.`)
 
   if (provider.kind === "chatgpt") {
     const account = await providers

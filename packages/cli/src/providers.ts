@@ -26,6 +26,8 @@ import {
   listModels,
   listOpenAIModels,
   loadConfig,
+  llamaCppBaseUrl,
+  LLAMA_CPP_PROVIDER,
   type ModelLayer,
   type ModelOption,
   describeModels,
@@ -294,8 +296,16 @@ export class Providers {
    */
   async saveServer(form: ServerForm, id?: string): Promise<string> {
     const name = form.name.trim()
-    const baseUrl = form.baseUrl.trim().replace(/\/+$/, "")
-    const existing = id === undefined ? undefined : this.configured().find((entry) => entry.id === id)
+    const llama = id === LLAMA_CPP_PROVIDER.id
+    const baseUrl = llama ? llamaCppBaseUrl(form.baseUrl) : form.baseUrl.trim().replace(/\/+$/, "")
+
+    const existing =
+      id === undefined
+        ? undefined
+        : llama
+          ? this.find(id)
+          : this.configured().find((entry) => entry.id === id)
+
     const target = existing?.id ?? providerIdFrom(name)
 
     if (id !== undefined && existing === undefined) throw new Error(`No added provider named ${id}.`)
@@ -305,10 +315,15 @@ export class Providers {
     if (existing === undefined && this.find(target) !== undefined)
       throw new Error(`There is already a provider named ${target}. Pick another name.`)
 
-    if (!URL.canParse(baseUrl) || !/^https?:$/.test(new URL(baseUrl).protocol))
+    const url = URL.parse(baseUrl)
+
+    if (url === null || !/^https?:$/.test(url.protocol))
       throw new Error(
         `${baseUrl} is not an http(s) URL. It should be the API root, like http://localhost:11434/v1.`,
       )
+
+    if (llama && (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== ""))
+      throw new Error("Enter a server URL without credentials, a query, or a fragment.")
 
     const key = form.key.trim()
 
@@ -340,6 +355,10 @@ export class Providers {
       base_url: baseUrl,
     }
 
+    if (existing?.api !== undefined) Object.assign(server, { api: existing.api })
+
+    if (existing?.vendor !== undefined) Object.assign(server, { vendor: existing.vendor })
+
     const saved = ids.length === 0 ? server : { ...server, models: describeModels(ids, listed) }
 
     saveProviders([...this.configured().filter((entry) => entry.id !== target), saved])
@@ -349,6 +368,8 @@ export class Providers {
 
   /** Remove an added provider and its key. Built-in providers cannot be removed. */
   remove(id: string): string | undefined {
+    if (id === LLAMA_CPP_PROVIDER.id) return `${id} is built in; it cannot be removed.`
+
     const provider = this.configured().find((entry) => entry.id === id)
 
     if (provider === undefined)

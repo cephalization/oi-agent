@@ -14,6 +14,7 @@ const service = (): string => process.env["OI_AGENT_KEYCHAIN_SERVICE"] ?? "oi-ag
 const ENV_NAMES = new Map([
   ["anthropic", "ANTHROPIC_API_KEY"],
   ["openai", "OPENAI_API_KEY"],
+  ["provider:llama-cpp", "LLAMA_CPP_API_KEY"],
   ["phoenix", "PHOENIX_API_KEY"],
   ["typesafe", "TYPESAFE_API_KEY"],
 ])

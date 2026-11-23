@@ -2,6 +2,7 @@ import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { describe, expect, it } from "vite-plus/test"
 import {
+  allProviders,
   billingOf,
   BUILTIN_PROVIDERS,
   describeModels,
@@ -176,5 +177,40 @@ describe("Google Gemini", () => {
     expect(googleEfforts("gemini-4-neon")).toEqual(["low", "medium", "high", "xhigh"])
     expect(googleEfforts("gemini-4-hydrogen")).toEqual(["low", "medium", "high", "xhigh"])
     expect(googleEfforts("gemini-unknown")).toEqual([])
+  })
+})
+
+describe("llama.app / llama.cpp", () => {
+  it("resolves full model IDs and uses the local llama.app API by default", () => {
+    const provider = findProvider([], "llama-cpp")!
+
+    expect(provider).toMatchObject({
+      kind: "openai-compatible",
+      api: "chat",
+      base_url: "http://localhost:9931/v1",
+    })
+    expect(vendorOf(provider)).toBe("llama-cpp")
+    expect(secretAccount(provider)).toBe("provider:llama-cpp")
+    expect(splitModel([], "llama-cpp/org/local:BF16", "anthropic")).toEqual({
+      provider: "llama-cpp",
+      model: "org/local:BF16",
+    })
+  })
+
+  it("uses a compatible entry's URL and models without adding a duplicate provider", () => {
+    const custom = {
+      id: "llama-cpp",
+      name: "My llama.cpp",
+      kind: "openai-compatible" as const,
+      base_url: "http://localhost:8080/",
+      models: [{ id: "org/local:BF16", max_output: 100 }],
+    }
+
+    expect(allProviders([custom]).filter((provider) => provider.id === custom.id)).toEqual([
+      { ...custom, api: "chat", base_url: "http://localhost:8080/v1" },
+    ])
+    expect(
+      findProvider([{ ...custom, base_url: "https://example.test/proxy/v1/" }], custom.id)?.base_url,
+    ).toBe("https://example.test/proxy/v1")
   })
 })

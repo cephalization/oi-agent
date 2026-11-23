@@ -8,6 +8,8 @@ import {
   type Config,
   chatgptSignIn,
   listOpenAIModels,
+  LLAMA_CPP_PROVIDER,
+  secretAccount,
   chatgptToken,
   OPENAI_BASE_URL,
   openBrowser,
@@ -65,7 +67,13 @@ const step = (title: string, detail: string): void => {
 }
 
 /** The version a Phoenix server reports, or `undefined` if none answers. */
-type ProviderChoice = "anthropic" | "openai" | "chatgpt" | "google" | "compatible"
+type ProviderChoice =
+  | "anthropic"
+  | "openai"
+  | "chatgpt"
+  | "google"
+  | "compatible"
+  | typeof LLAMA_CPP_PROVIDER.id
 
 const providerStep = async (current: Config): Promise<ProviderChoice> => {
   step(
@@ -77,7 +85,8 @@ const providerStep = async (current: Config): Promise<ProviderChoice> => {
     current.provider === "anthropic" ||
     current.provider === "openai" ||
     current.provider === "chatgpt" ||
-    current.provider === "google"
+    current.provider === "google" ||
+    current.provider === LLAMA_CPP_PROVIDER.id
       ? current.provider
       : "compatible"
 
@@ -88,6 +97,11 @@ const providerStep = async (current: Config): Promise<ProviderChoice> => {
       { value: "openai", label: "OpenAI", hint: "sign in with ChatGPT, or an API key" },
       { value: "compatible", label: "OpenAI-compatible", hint: "Ollama, vLLM, LM Studio, OpenRouter, …" },
       { value: "google", label: "Google Gemini", hint: "Gemini 4, with an API key" },
+      {
+        value: LLAMA_CPP_PROVIDER.id,
+        label: LLAMA_CPP_PROVIDER.name,
+        hint: "local or remote, optional API key",
+      },
     ],
     initial === "chatgpt" ? "openai" : initial,
   )
@@ -274,7 +288,9 @@ const compatibleStep = async (current: Config, providers: Providers): Promise<st
     "Any server with an OpenAI-style /chat/completions endpoint. The key, if any, goes to the keychain.",
   )
 
-  const existing = current.providers.find((provider) => provider.id === current.provider)
+  const existing = current.providers.find(
+    (provider) => provider.id === current.provider && provider.id !== LLAMA_CPP_PROVIDER.id,
+  )
 
   for (;;) {
     const name = await ask("Name", existing?.name ?? "Ollama")
@@ -298,6 +314,33 @@ const compatibleStep = async (current: Config, providers: Providers): Promise<st
       ok(`Saved ${name} as ${id}.`)
 
       return id
+    } catch (error) {
+      warn(error instanceof Error ? error.message : String(error))
+    }
+  }
+}
+
+/** Configure the built-in llama.cpp server without asking for a name or model overrides. */
+const llamaCppStep = async (providers: Providers): Promise<ProviderConfig> => {
+  const existing: ProviderConfig = providers.find(LLAMA_CPP_PROVIDER.id) ?? LLAMA_CPP_PROVIDER
+
+  step(LLAMA_CPP_PROVIDER.name, "Use the server address from llama.app or your llama.cpp server.")
+
+  for (;;) {
+    const baseUrl = await ask("Server URL", existing.base_url ?? LLAMA_CPP_PROVIDER.base_url)
+
+    try {
+      await providers.saveServer(
+        {
+          name: existing.name,
+          baseUrl,
+          key: "",
+          models: existing.models?.map((model) => model.id).join(", ") ?? "",
+        },
+        LLAMA_CPP_PROVIDER.id,
+      )
+
+      return providers.find(LLAMA_CPP_PROVIDER.id) ?? LLAMA_CPP_PROVIDER
     } catch (error) {
       warn(error instanceof Error ? error.message : String(error))
     }
@@ -430,6 +473,10 @@ export const runOnboarding = async (): Promise<Config> => {
       providers = loadConfig().providers
       server = providers.find((entry) => entry.id === provider)
       token = server === undefined ? undefined : servers.key(server)
+    } else if (choice === LLAMA_CPP_PROVIDER.id) {
+      server = await llamaCppStep(servers)
+      providers = loadConfig().providers
+      token = await apiKeyStep(secretAccount(server), server.name, true)
     } else if (choice === "openai") {
       token = await apiKeyStep("openai", "OpenAI", false)
     } else if (await signInStep()) {
@@ -442,13 +489,13 @@ export const runOnboarding = async (): Promise<Config> => {
       if (server?.models !== undefined && server.models.length > 0)
         return server.models.map((entry) => entry.id)
 
-      if (choice !== "compatible" && token === undefined) return []
+      if (server === undefined && token === undefined) return []
 
       const listed = await listOpenAIModels({
         provider,
         baseUrl,
         token,
-        openaiCatalog: choice !== "compatible",
+        openaiCatalog: server === undefined,
       })
 
       return listed.map((entry) => entry.id)

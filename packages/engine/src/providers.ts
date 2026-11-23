@@ -1,8 +1,8 @@
 /**
  * Model providers: where a model is served and how to authenticate.
  *
- * Four are built in: Anthropic, Google Gemini, OpenAI (API key) and ChatGPT (sign in with
- * a ChatGPT plan). Any number of OpenAI-compatible servers can be added; they
+ * Anthropic, Google Gemini, OpenAI (API key), ChatGPT (plan) and llama.cpp
+ * are built in. Any number of OpenAI-compatible servers can be added; they
  * live in the config file as `providers`. No provider entry holds a secret:
  * API keys and ChatGPT tokens are in the keychain, one account per provider.
  */
@@ -55,18 +55,47 @@ export type ProviderConfig = typeof ProviderConfig.Type
  */
 export const OPENAI_BASE_URL = process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1"
 
+export const LLAMA_CPP_PROVIDER = {
+  id: "llama-cpp" as const,
+  name: "llama.app / llama.cpp",
+  kind: "openai-compatible",
+  base_url: "http://localhost:9931/v1",
+  api: "chat",
+} satisfies ProviderConfig
+
+/** Accept a server origin as shorthand for its OpenAI API root. */
+export const llamaCppBaseUrl = (baseUrl: string): string => {
+  const root = baseUrl.trim().replace(/\/+$/, "")
+
+  const url = URL.parse(root)
+
+  return url?.pathname === "/" && url.search === "" && url.hash === "" ? `${root}/v1` : root
+}
+
 export const BUILTIN_PROVIDERS: ReadonlyArray<ProviderConfig> = [
   { id: "anthropic", name: "Anthropic", kind: "anthropic" },
   { id: "openai", name: "OpenAI", kind: "openai", base_url: OPENAI_BASE_URL, api: "responses" },
   { id: "google", name: "Google Gemini", kind: "google" },
   { id: "chatgpt", name: "ChatGPT plan", kind: "chatgpt", base_url: OPENAI_BASE_URL, api: "responses" },
+  LLAMA_CPP_PROVIDER,
 ]
 
-/** Built-in providers, then the configured ones (which cannot replace a built-in). */
+/** Built-ins, including the configurable llama.cpp server, then additional servers. */
 export const allProviders = (configured: ReadonlyArray<ProviderConfig>): Array<ProviderConfig> => {
   const builtin = new Set(BUILTIN_PROVIDERS.map((provider) => provider.id))
 
-  return [...BUILTIN_PROVIDERS, ...configured.filter((provider) => !builtin.has(provider.id))]
+  const llama = configured.find(
+    (provider) => provider.id === LLAMA_CPP_PROVIDER.id && provider.kind === LLAMA_CPP_PROVIDER.kind,
+  )
+
+  return [
+    ...BUILTIN_PROVIDERS.map((provider) =>
+      provider.id !== LLAMA_CPP_PROVIDER.id || llama === undefined
+        ? provider
+        : { ...provider, ...llama, base_url: llamaCppBaseUrl(llama.base_url ?? LLAMA_CPP_PROVIDER.base_url) },
+    ),
+    ...configured.filter((provider) => !builtin.has(provider.id)),
+  ]
 }
 
 export const findProvider = (
