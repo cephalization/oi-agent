@@ -98,7 +98,7 @@ from every provider's models (`anthropic/claude-opus-5-5`,
 `openai/gpt-5.1`, `ollama/qwen3`, …), and saves it to the config as the
 default for new sessions; `/model --temp <model>` switches only for the
 running process. `/provider` opens a menu of
-Anthropic, OpenAI, Google Gemini and OpenAI-compatible servers. Under each are its options:
+Anthropic, OpenAI, Google Gemini, llama.app / llama.cpp, and other OpenAI-compatible servers. Under each are its options:
 an API key (hidden as you type, kept in the keychain), signing in with a
 ChatGPT plan in the browser, or adding a server by name, base URL, optional
 key and a comma-separated list of models. A server's models go straight into
@@ -120,6 +120,33 @@ key if needed. Carbon accepts `low`, `medium`, and `high`; Neon and Hydrogen
 also accept `xhigh`. oi caps synchronous output at 32,768 tokens for
 Carbon and 65,536 for Neon and Hydrogen, matching Google's model catalog.
 Gemini uses oi's regular tools, not Google's hosted tools.
+
+For **llama.app / llama.cpp**, choose it in `oi setup` or open its own entry
+in `/provider` to change the server URL. The default is
+`http://localhost:9931/v1` for llama.app; for a standalone `llama-server` on
+port 8080, enter `http://localhost:8080`. A bare server URL gets `/v1`
+appended, and you can enter a full API root for a reverse proxy. No API key
+is sent by default. If your server requires one, use `oi auth login llama-cpp`
+(to store it in the keychain) or set `LLAMA_CPP_API_KEY`. Use `/model` to pick
+from the server's `/v1/models` list, or use `oi -m llama-cpp/<model-id>`.
+Model IDs that contain slashes work as returned by the server. This provider
+uses streaming Chat Completions; tools and image input depend on the model and
+server configuration.
+
+To configure a different server directly in `config.json`, add this entry
+under `providers` (leave other entries intact):
+
+```json
+{
+  "id": "llama-cpp",
+  "name": "llama.app / llama.cpp",
+  "kind": "openai-compatible",
+  "base_url": "http://localhost:8080/v1"
+}
+```
+
+An existing compatible `llama-cpp` entry keeps its URL, model overrides,
+and keychain account.
 
 Use `/feedback` for filing instructions, or `/feedback <short description>` to
 preview a public issue for `cephalization/oi-agent`. The configured model drafts

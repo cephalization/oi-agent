@@ -12,7 +12,7 @@ was sent, pick up a session later, or explore it in Phoenix. Experimental.
 ## Get started
 
 Requires Node 24+ and an Anthropic, OpenAI or Google Gemini API key, a
-ChatGPT plan, or an OpenAI-compatible server such as Ollama, vLLM or LM Studio.
+ChatGPT plan, or an OpenAI-compatible server such as llama.app, llama.cpp, Ollama, vLLM or LM Studio.
 
 ```sh
 npm install -g oi-agent    # installs the `oi` command

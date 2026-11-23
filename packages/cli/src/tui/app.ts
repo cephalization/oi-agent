@@ -41,6 +41,7 @@ import {
   type ModelDefault,
   type PeerConnection,
   type PeerServer,
+  LLAMA_CPP_PROVIDER,
   type ProviderConfig,
   readRules,
   revertRules,
@@ -1370,6 +1371,7 @@ class App {
       ["google", () => this.apiKeyMenu(providers, "google", "Google Gemini")],
       ["openai", () => this.openaiMenu(providers)],
       ["compatible", () => this.compatibleMenu(providers)],
+      [LLAMA_CPP_PROVIDER.id, () => this.serverMenu(providers, LLAMA_CPP_PROVIDER.id)],
       [
         DECISION_ACCOUNT,
         async () => {
@@ -1405,6 +1407,7 @@ class App {
       { value: "anthropic", label: "Anthropic", hint: describe("anthropic") },
       { value: "openai", label: "OpenAI", hint: this.openaiHint(providers) },
       { value: "google", label: "Google Gemini", hint: describe("google") },
+      { value: LLAMA_CPP_PROVIDER.id, label: LLAMA_CPP_PROVIDER.name, hint: describe(LLAMA_CPP_PROVIDER.id) },
       {
         value: DECISION_ACCOUNT,
         label: "TypeSafe decision model",
@@ -1430,7 +1433,9 @@ class App {
   }
 
   private servers(providers: Providers): Array<ProviderConfig> {
-    return providers.configured().filter((provider) => provider.kind === "openai-compatible")
+    return providers
+      .configured()
+      .filter((provider) => provider.kind === "openai-compatible" && provider.id !== LLAMA_CPP_PROVIDER.id)
   }
 
   /** Add or replace a provider's key, and forget it once there is one. */
@@ -1540,18 +1545,22 @@ class App {
   }
 
   private async serverMenu(providers: Providers, id: string): Promise<boolean> {
-    const server = this.servers(providers).find((entry) => entry.id === id)
+    const server = providers.find(id)
 
     if (server === undefined) return false
 
     const models = server.models?.map((model) => model.id).join(", ") ?? ""
 
-    const action = await this.pick(`${server.name} (${server.id})`, [
+    const items: Array<Suggestion> = [
       { value: "models", label: "Edit models", hint: models === "" ? "using the server's own list" : models },
       { value: "url", label: "Change the base URL", hint: server.base_url ?? "" },
       ...this.keyItems(providers, id),
-      { value: "remove", label: "Remove", hint: "forget this server and its key" },
-    ])
+    ]
+
+    if (id !== LLAMA_CPP_PROVIDER.id)
+      items.push({ value: "remove", label: "Remove", hint: "forget this server and its key" })
+
+    const action = await this.pick(`${server.name} (${server.id})`, items)
 
     if (action === undefined) return false
 
