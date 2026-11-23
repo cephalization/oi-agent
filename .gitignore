@@ -3,6 +3,7 @@ dist
 .DS_Store
 *.log
 .oi/
+.env*
 packages/cli/README.md
 packages/cli/self/
 packages/cli/LICENSE
